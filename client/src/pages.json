@@ -1,0 +1,66 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": { "navigationBarTitleText": "材料库" }
+    },
+    {
+      "path": "pages/settings/index",
+      "style": { "navigationBarTitleText": "我的" }
+    },
+    {
+      "path": "pages/import/index",
+      "style": { "navigationBarTitleText": "导入材料" }
+    },
+    {
+      "path": "pages/player/index",
+      "style": { "navigationBarTitleText": "精听" }
+    },
+    {
+      "path": "pages/training/index",
+      "style": { "navigationBarTitleText": "选择训练模式" }
+    },
+    {
+      "path": "pages/training/puzzle",
+      "style": { "navigationBarTitleText": "九宫格" }
+    },
+    {
+      "path": "pages/training/dictation",
+      "style": { "navigationBarTitleText": "单句听写" }
+    },
+    {
+      "path": "pages/training/read-aloud",
+      "style": { "navigationBarTitleText": "跟读评分" }
+    },
+    {
+      "path": "pages/training/shadowing",
+      "style": { "navigationBarTitleText": "影子跟读" }
+    },
+    {
+      "path": "pages/training/recitation",
+      "style": { "navigationBarTitleText": "全文背诵" }
+    },
+    {
+      "path": "pages/training/report",
+      "style": { "navigationBarTitleText": "分析报告" }
+    },
+    {
+      "path": "pages/tts/index",
+      "style": { "navigationBarTitleText": "文字转语音" }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "英语精听助手",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f7f8fa"
+  },
+  "tabBar": {
+    "color": "#8a9199",
+    "selectedColor": "#3b6ef0",
+    "list": [
+      { "pagePath": "pages/index/index", "text": "材料" },
+      { "pagePath": "pages/settings/index", "text": "我的" }
+    ]
+  }
+}
