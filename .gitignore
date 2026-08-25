@@ -141,3 +141,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# 会话测试产物（e2e 截图/音频 fixture）
+e2e-fixtures/
