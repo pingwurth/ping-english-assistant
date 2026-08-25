@@ -1,0 +1,5 @@
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 导入音频文件的时候 /html/body/div[2]/main/div/div[2]/div/div[1] 的高度被拉的非常大是什么原因？
+
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 还是会因为字幕切换高度时大时小，这是为什么？
+
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[2] 字幕滚动区正在播放的字幕我希望
