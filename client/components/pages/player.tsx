@@ -222,16 +222,10 @@ function Player() {
     clearTimeout(controlsTimerRef.current)
     controlsTimerRef.current = setTimeout(() => setShowControls(false), 2000)
   }
-  /** 视频区域鼠标移动：靠近底部时显示控制栏 */
-  const handleVideoMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect()
-    const ratioFromBottom = (rect.bottom - e.clientY) / rect.height
-    if (ratioFromBottom < 0.2) {
-      clearTimeout(controlsTimerRef.current)
-      setShowControls(true)
-    } else if (showControls) {
-      scheduleHideControls()
-    }
+  /** 视频区域鼠标移动：进入区域即显示控制栏 */
+  const handleVideoMouseMove = () => {
+    clearTimeout(controlsTimerRef.current)
+    setShowControls(true)
   }
   const handleVideoMouseLeave = () => scheduleHideControls()
   const handleControlsMouseEnter = () => clearTimeout(controlsTimerRef.current)

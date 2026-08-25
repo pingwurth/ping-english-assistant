@@ -56,3 +56,9 @@
 
 13.
 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 为什么屏幕尺寸宽度 768px ~ 1024px 的时候 /html/body/div[2]/main/div/div[2]/div/div[2] 会隐藏？
+
+
+14.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/shared/player-parts.tsx PlayerControlBar 显示和隐藏条件调整一下：
+- 鼠标进入 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 区域就显示
+- 鼠标离开 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 区域就淡出
