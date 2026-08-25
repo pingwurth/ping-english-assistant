@@ -11,7 +11,7 @@
 
 export type StoreName = 'materials' | 'blobs' | 'records'
 const DB_NAME = 'ping-english-assistant'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORES: StoreName[] = ['materials', 'blobs', 'records']
 
 /** 内存兜底（SSR、无 indexedDB、或打开失败时启用） */
@@ -34,9 +34,18 @@ function openDb(): Promise<IDBDatabase | null> {
         for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s)
       }
       req.onsuccess = () => resolve(req.result)
-      req.onerror = () => { useMemory = true; resolve(null) }
-      req.onblocked = () => { useMemory = true; resolve(null) }
-    } catch { useMemory = true; resolve(null) }
+      req.onerror = () => {
+        console.error('[IDB] open failed, falling back to memory:', req.error)
+        useMemory = true; resolve(null)
+      }
+      req.onblocked = () => {
+        console.warn('[IDB] open blocked (other tabs holding old connection?), falling back to memory')
+        useMemory = true; resolve(null)
+      }
+    } catch (e) {
+      console.error('[IDB] open threw, falling back to memory:', e)
+      useMemory = true; resolve(null)
+    }
   })
   return dbPromise
 }
@@ -47,8 +56,14 @@ function tx<T>(store: StoreName, mode: IDBTransactionMode, fn: (os: IDBObjectSto
     try {
       const req = fn(db.transaction(store, mode).objectStore(store))
       req.onsuccess = () => resolve(req.result as T)
-      req.onerror = () => reject(req.error ?? new Error('idb'))
-    } catch (e) { reject(e) }
+      req.onerror = () => {
+        console.error(`[IDB] transaction error on "${store}" (${mode}):`, req.error)
+        reject(req.error ?? new Error('idb'))
+      }
+    } catch (e) {
+      console.error(`[IDB] transaction threw on "${store}" (${mode}):`, e)
+      reject(e)
+    }
   }))
 }
 
@@ -56,7 +71,10 @@ function tx<T>(store: StoreName, mode: IDBTransactionMode, fn: (os: IDBObjectSto
 async function guarded<T>(store: StoreName, idb: () => Promise<T>, memFn: (m: Map<string, unknown>) => T): Promise<T> {
   if (useMemory) return memFn(mem(store))
   try { return await idb() }
-  catch { useMemory = true; return memFn(mem(store)) }
+  catch (e) {
+    console.error(`[IDB] guarded() catch on "${store}", permanently switching to memory:`, e)
+    useMemory = true; return memFn(mem(store))
+  }
 }
 
 /** 单个 object store 的最小 KV API */
