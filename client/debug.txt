@@ -1,5 +1,0 @@
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 导入音频文件的时候 /html/body/div[2]/main/div/div[2]/div/div[1] 的高度被拉的非常大是什么原因？
-
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 还是会因为字幕切换高度时大时小，这是为什么？
-
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[2] 我希望每次字幕滚动的时候把正在播放的字幕滚动到垂直居中的位置，要实现这个效果该怎么做？要考虑边界问题（第一条字幕和最后一条字幕）

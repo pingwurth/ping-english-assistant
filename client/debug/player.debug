@@ -1,0 +1,22 @@
+1.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 导入音频文件的时候 /html/body/div[2]/main/div/div[2]/div/div[1] 的高度被拉的非常大是什么原因？
+
+
+2.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 还是会因为字幕切换高度时大时小，这是为什么？
+
+
+3.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[2] 我希望每次字幕滚动的时候把正在播放的字幕滚动到垂直居中的位置，要实现这个效果该怎么做？要考虑边界问题（第一条字幕和最后一条字幕）
+
+
+4.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2]/div[2]/button[6] 字幕切换按钮的图标为什么是声音？
+
+
+5.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2]/div[2] 增加一个音量调节按钮
+
+
+6.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2] 播放控件可以放到视频区域 `/html/body/div[2]/main/div/div[2]/div/div[1]` 的底部吗 ？仅当鼠标移动到视频区域的底部时显示
