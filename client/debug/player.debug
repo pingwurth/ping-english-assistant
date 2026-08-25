@@ -44,3 +44,7 @@
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[1]
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[3]
 这两个按钮的图标太突兀了，请换成风格一致的图标
+
+
+11.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 为什么导入视频只有声音没有画面？
