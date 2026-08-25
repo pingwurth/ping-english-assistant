@@ -4,3 +4,9 @@
 
 2.
 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/import.tsx 最大支持导入多大的音频/视频文件？
+
+
+3.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/import.tsx 样式优化：
+- 文件上传鼠标点击互动效果
+- 步骤 1,2,3 不显眼，无法达到引导作用
