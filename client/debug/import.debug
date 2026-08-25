@@ -10,3 +10,7 @@
 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/import.tsx 样式优化：
 - 文件上传鼠标点击互动效果
 - 步骤 1,2,3 不显眼，无法达到引导作用
+
+
+4.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/import.tsx 不上传字幕文件允许点击“完成导入”按钮，@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 没有字幕也应该能正常使用，但字幕滚动区（/html/body/div[2]/main/div/div[2]/section/div[2]）添加两个按钮：导入字幕文件、AI音频转字幕

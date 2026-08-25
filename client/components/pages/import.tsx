@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Navigate, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, Check } from 'lucide-react'
+import { AlertTriangle, Check, Upload, FileText } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -29,6 +29,87 @@ function probeMediaDuration(file: File): Promise<number | null> {
 }
 function formatBytes(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB` }
 function baseName(fileName: string): string { return fileName.replace(/\.[^.]+$/, '').slice(0, 50) }
+
+/** 步骤状态 */
+type StepStatus = 'done' | 'current' | 'pending'
+
+/** 圆形步骤徽章 */
+function StepBadge({ step, status }: { step: number; status: StepStatus }) {
+  return (
+    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors" data-status={status} style={{
+      backgroundColor: status === 'pending' ? 'var(--muted)' : 'var(--primary)',
+      color: status === 'pending' ? 'var(--muted-foreground)' : 'var(--primary-foreground)',
+      boxShadow: status === 'current' ? '0 0 0 4px oklch(from var(--primary) l c h / 0.2)' : 'none',
+    }}>
+      {status === 'done' ? <Check className="h-4 w-4" /> : step}
+    </div>
+  )
+}
+
+/** 步骤标签 + 步骤号组合 */
+function StepHeader({ step, status, label }: { step: number; status: StepStatus; label: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <StepBadge step={step} status={status} />
+      <span className="text-sm font-medium" style={{ color: status === 'pending' ? 'var(--muted-foreground)' : 'var(--foreground)' }}>{label}</span>
+    </div>
+  )
+}
+
+/** 连接两个步骤的横线 */
+function StepConnector({ done }: { done: boolean }) {
+  return (
+    <div className="ml-4 h-6 w-px" style={{ backgroundColor: done ? 'var(--primary)' : 'var(--muted)' }} />
+  )
+}
+
+/** 文件上传 dropzone 卡片 */
+function FileDropzone({
+  icon: Icon,
+  accept,
+  hint,
+  selected,
+  onChange,
+}: {
+  icon: typeof Upload | typeof FileText
+  accept: string
+  hint: string
+  selected: React.ReactNode | null
+  onChange: (file: File) => void
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        role="button"
+        tabIndex={0}
+        className="group flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-all duration-150 hover:scale-[1.01] active:scale-[0.99]"
+        style={{
+          borderColor: dragging ? 'var(--primary)' : 'var(--border)',
+          backgroundColor: dragging ? 'oklch(from var(--primary) l c h / 0.05)' : 'transparent',
+        }}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click() } }}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragging(false)
+          const f = e.dataTransfer.files[0]
+          if (f) onChange(f)
+        }}
+      >
+        <Icon className="h-8 w-8 transition-colors" style={{ color: dragging ? 'var(--primary)' : 'var(--muted-foreground)' }} />
+        <span className="text-sm" style={{ color: 'var(--muted-foreground)' }}>点击选择或拖拽文件到此处</span>
+        <span className="text-xs" style={{ color: 'var(--muted-foreground)', opacity: 0.7 }}>{hint}</span>
+        <Input ref={inputRef} type="file" accept={accept} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onChange(f) }} />
+      </div>
+      {selected}
+    </div>
+  )
+}
 
 function ImportPage() {
   const [searchParams] = useSearchParams()
@@ -137,7 +218,88 @@ function ImportPage() {
 
   if (doneId) return <Navigate to={`/player/${doneId}`} replace />
 
-  return <Shell back><div className="mx-auto max-w-xl px-4 py-10"><PageIntro title="导入材料" eyebrow="ADD MATERIAL">{fromTts && <Badge variant="secondary">由文字转语音生成</Badge>}</PageIntro><Card><CardContent className="flex flex-col gap-6 p-6"><label className="flex flex-col gap-2 text-sm font-medium">1. 选择音视频文件<Input type="file" accept="audio/*,video/*" onChange={e => { void handleMediaFile(e.target.files?.[0] ?? null) }} /></label>{mediaFile ? <div className="rounded-xl bg-primary/10 p-4 text-sm text-primary"><Check data-icon="inline-start" />{mediaFile.name} · {mediaFile.type.startsWith('video') ? '视频' : '音频'}{mediaDurationMs != null && ` · ${formatDuration(mediaDurationMs)}`} · {formatBytes(mediaFile.size)}</div> : <div className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">支持 mp3、wav、m4a、mp4、mov 等格式</div>}<label className="flex flex-col gap-2 text-sm font-medium">2. 选择字幕文件<Input type="file" accept=".srt,.lrc" onChange={e => { const f = e.target.files?.[0]; if (f) f.text().then((t) => applySubtitle(t)).catch(() => setParseError({ message: '无法读取文件内容', line: 0 })) }} /></label>{subtitle && <div className="rounded-xl bg-primary/10 p-4 text-sm text-primary"><Check data-icon="inline-start" />{subtitle.data.format.toUpperCase()} 字幕 · {subtitle.data.isBilingual ? '双语' : '仅英文'} · {subtitle.data.sentences.length} 句 · 总时长 {formatDuration(subtitle.data.totalDurationMs)} · 解析成功</div>}{parseError && <div className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive">{parseError.message}{parseError.line > 0 && `，第 ${parseError.line} 行`}，请重新选择字幕文件</div>}{deviationMs != null && deviationMs > 5000 && <div className="rounded-xl border p-4 text-sm text-muted-foreground"><AlertTriangle data-icon="inline-start" />字幕与媒体时长偏差超过 5 秒，可能不匹配（不影响导入）</div>}<label className="flex flex-col gap-2 text-sm font-medium">3. 材料名称<Input value={name} onChange={e=>setName(e.target.value)} maxLength={50} placeholder="默认取文件名" /></label>{finishError && <p className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{finishError}</p>}<Button className="w-full" onClick={finish} disabled={!canFinish}>{saving ? '导入中…' : '完成导入'}</Button>{done && <p className="text-center text-sm text-primary">导入成功，正在打开播放器…</p>}</CardContent></Card></div></Shell>
+  // 步骤状态计算
+  const step1Status: StepStatus = mediaFile ? 'done' : 'current'
+  const step2Status: StepStatus = subtitle ? 'done' : mediaFile ? 'current' : 'pending'
+  const step3Status: StepStatus = mediaFile && subtitle && name.trim() ? 'done' : mediaFile && subtitle ? 'current' : 'pending'
+
+  return (
+    <Shell back>
+      <div className="mx-auto max-w-xl px-4 py-10">
+        <PageIntro title="导入材料" eyebrow="ADD MATERIAL">
+          {fromTts && <Badge variant="secondary">由文字转语音生成</Badge>}
+        </PageIntro>
+
+        <Card>
+          <CardContent className="flex flex-col gap-6 p-6">
+
+            {/* ── 步骤 1：选择音视频文件 ── */}
+            <StepHeader step={1} status={step1Status} label="选择音视频文件" />
+            <FileDropzone
+              icon={Upload}
+              accept="audio/*,video/*"
+              hint="支持 mp3、wav、m4a、mp4、mov 等格式"
+              selected={
+                mediaFile ? (
+                  <div className="rounded-xl bg-primary/10 p-4 text-sm text-primary">
+                    <Check data-icon="inline-start" />
+                    {mediaFile.name} · {mediaFile.type.startsWith('video') ? '视频' : '音频'}
+                    {mediaDurationMs != null && ` · ${formatDuration(mediaDurationMs)}`}
+                    {' · '}{formatBytes(mediaFile.size)}
+                  </div>
+                ) : null
+              }
+              onChange={(f) => void handleMediaFile(f)}
+            />
+
+            <StepConnector done={!!mediaFile} />
+
+            {/* ── 步骤 2：选择字幕文件 ── */}
+            <StepHeader step={2} status={step2Status} label="选择字幕文件" />
+            <FileDropzone
+              icon={FileText}
+              accept=".srt,.lrc"
+              hint="支持 SRT 和 LRC 字幕格式"
+              selected={
+                subtitle ? (
+                  <div className="rounded-xl bg-primary/10 p-4 text-sm text-primary">
+                    <Check data-icon="inline-start" />
+                    {subtitle.data.format.toUpperCase()} 字幕 · {subtitle.data.isBilingual ? '双语' : '仅英文'} · {subtitle.data.sentences.length} 句 · 总时长 {formatDuration(subtitle.data.totalDurationMs)} · 解析成功
+                  </div>
+                ) : parseError ? (
+                  <div className="rounded-xl bg-destructive/10 p-4 text-sm text-destructive">
+                    {parseError.message}{parseError.line > 0 && `，第 ${parseError.line} 行`}，请重新选择字幕文件
+                  </div>
+                ) : null
+              }
+              onChange={(f) => f.text().then((t) => applySubtitle(t)).catch(() => setParseError({ message: '无法读取文件内容', line: 0 }))}
+            />
+
+            {/* 时长偏差预警 */}
+            {deviationMs != null && deviationMs > 5000 && (
+              <div className="rounded-xl border p-4 text-sm text-muted-foreground">
+                <AlertTriangle data-icon="inline-start" />字幕与媒体时长偏差超过 5 秒，可能不匹配（不影响导入）
+              </div>
+            )}
+
+            <StepConnector done={!!mediaFile && !!subtitle} />
+
+            {/* ── 步骤 3：材料名称 ── */}
+            <StepHeader step={3} status={step3Status} label="材料名称" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={50} placeholder="默认取文件名" />
+
+            {/* 提交区域 */}
+            {finishError && <p className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{finishError}</p>}
+            <Button className="w-full" onClick={finish} disabled={!canFinish}>
+              {saving ? '导入中…' : '完成导入'}
+            </Button>
+            {done && <p className="text-center text-sm text-primary">导入成功，正在打开播放器…</p>}
+
+          </CardContent>
+        </Card>
+      </div>
+    </Shell>
+  )
 }
 
 export { ImportPage }
