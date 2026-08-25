@@ -42,7 +42,7 @@ type Status = 'idle' | 'running' | 'done' | 'error'
 
 const methodData: { id: Method; icon: typeof Cpu; title: string; desc: string; meta: string }[] = [
   { id: 'local', icon: Cpu, title: 'faster-whisper', desc: '本机 GPU 推理，隐私优先', meta: '推荐 · 支持 CUDA' },
-  { id: 'model', icon: Brain, title: '调用大模型', desc: '云端高精度识别与智能断句', meta: '需要 AI Gateway' },
+  { id: 'model', icon: Brain, title: '调用大模型', desc: '云端高精度识别与智能断句', meta: '需要 API Key' },
   { id: 'third-party', icon: ExternalLink, title: '第三方工具', desc: '跳转通义听悟、飞书妙记处理', meta: '适合长音频' },
 ]
 

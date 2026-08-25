@@ -74,3 +74,13 @@
 
 17.
 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 视频播放的时候点击“进入训练” （/html/body/div[2]/main/div/div[1]/a/button）一直提示 Rendering, 只有手动暂停播放才能返回成功，这是为什么？
+
+
+18.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/span 这里换成两个图标，鼠标悬停的时候分别显示：导入字幕文件、AI音频转字幕，图标点击逻辑复用：
+- /html/body/div[2]/main/div/div[2]/section/div[2]/div/div/button[1]
+- /html/body/div[2]/main/div/div[2]/section/div[2]/div/div/button[2]
+
+
+19.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/div/button[2] 图标换成 "AI"

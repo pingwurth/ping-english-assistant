@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { Brain, Cpu, ExternalLink, FileAudio, Upload } from 'lucide-react'
+import { Brain, Cpu, ExternalLink, FileAudio } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -29,9 +29,9 @@ type Method = 'local' | 'model' | 'third-party'
 type Status = 'idle' | 'running' | 'done' | 'error'
 
 const methodData: { id: Method; icon: typeof Cpu; title: string; desc: string; meta: string }[] = [
+  { id: 'third-party', icon: ExternalLink, title: '第三方工具', desc: '跳转通义听悟、飞书妙记、讯飞听见处理', meta: '适合长音频' },
+  { id: 'model', icon: Brain, title: '调用大模型', desc: '云端高精度识别与智能断句', meta: '需要 API Key' },
   { id: 'local', icon: Cpu, title: 'faster-whisper', desc: '本机 GPU 推理，隐私优先', meta: '推荐 · 支持 CUDA' },
-  { id: 'model', icon: Brain, title: '调用大模型', desc: '云端高精度识别与智能断句', meta: '需要 AI Gateway' },
-  { id: 'third-party', icon: ExternalLink, title: '第三方工具', desc: '跳转通义听悟、飞书妙记处理', meta: '适合长音频' },
 ]
 
 /* ── 组件 ── */
@@ -44,7 +44,7 @@ interface AiTranscribeDialogProps {
 }
 
 export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGenerated }: AiTranscribeDialogProps) {
-  const [method, setMethod] = useState<Method>('local')
+  const [method, setMethod] = useState<Method>('third-party')
   const [status, setStatus] = useState<Status>('idle')
   const [result, setResult] = useState('')
   const [srt, setSrt] = useState('')
@@ -180,6 +180,14 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
                   className={buttonVariants({ variant: 'outline', size: 'sm' })}
                 >
                   打开飞书妙记 <ExternalLink data-icon="inline-end" />
+                </a>
+                <a
+                  href="https://www.iflyrec.com/home"
+                  target="_blank"
+                  rel="noreferrer"
+                  className={buttonVariants({ variant: 'outline', size: 'sm' })}
+                >
+                  打开讯飞听见 <ExternalLink data-icon="inline-end" />
                 </a>
               </div>
             )}
