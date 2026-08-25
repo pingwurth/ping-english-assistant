@@ -23,4 +23,17 @@
 
 
 7.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1]/div[2] 背景色用黑色，然后设计一个合理的透明度（要先做调研），容器内的元素、字体颜色也要调整，确保眼睛观看舒适，先设计一版ui图给我审核
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/shared/player-parts.tsx PlayerControlBar 背景色用黑色，然后设计一个合理的透明度（要先做调研），容器内的元素、字体颜色也要调整，确保眼睛观看舒适，先设计一版ui图给我审核
+
+
+8.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 我导入 759MB 的视频提示 Blood, 为什么？
+
+
+9.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 
+/html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[1]
+/html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[3]
+/html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[5]
+/html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[6]
+这几个按钮的背景颜色不对，调整成跟 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2] 一致
