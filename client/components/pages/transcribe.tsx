@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { useTranscribe, MethodSelector, MethodHint, TranscribeResult, downloadBlob } from '@/components/shared/transcribe-shared'
+import { LlmSettingsDialog } from '@/components/shared/llm-settings-dialog'
 
 export function TranscribePage() {
   const [file, setFile] = useState<File | null>(null)
@@ -22,6 +23,9 @@ export function TranscribePage() {
     start,
     cancel,
     handleSrtChange,
+    showLlmSettings,
+    setShowLlmSettings,
+    handleLlmSettingsSaved,
   } = useTranscribe()
 
   const handleDownloadSrt = useCallback(() => {
@@ -62,7 +66,10 @@ export function TranscribePage() {
                 <MethodSelector method={method} setMethod={setMethod} />
               </div>
 
-              <MethodHint method={method} />
+              <MethodHint
+                method={method}
+                onConfigureLlm={() => setShowLlmSettings(true)}
+              />
 
               {status === 'running' ? (
                 <Button className="w-full" variant="destructive" onClick={cancel}>
@@ -123,6 +130,12 @@ export function TranscribePage() {
           </Card>
         </div>
       </div>
+
+      <LlmSettingsDialog
+        open={showLlmSettings}
+        onOpenChange={setShowLlmSettings}
+        onSaved={handleLlmSettingsSaved}
+      />
     </Shell>
   )
 }

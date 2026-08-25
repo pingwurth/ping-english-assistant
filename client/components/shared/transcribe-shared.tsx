@@ -44,6 +44,37 @@ export const methodData: { id: Method; icon: typeof Cpu; title: string; desc: st
   { id: 'local', icon: Cpu, title: 'faster-whisper', desc: '本机 GPU 推理，隐私优先', meta: '推荐 · 支持 CUDA' },
 ]
 
+/* ── LLM API 调用 ── */
+
+async function callLlmTranscribe(file: File, signal?: AbortSignal): Promise<{ text: string; segments: AsrTranscribeSegment[] }> {
+  const formData = new FormData()
+  formData.append('audio', file)
+  formData.append('lang', 'en')
+
+  const res = await fetch('/api/transcribe', {
+    method: 'POST',
+    body: formData,
+    signal,
+  })
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `Transcription failed (${res.status})`)
+  }
+
+  return res.json()
+}
+
+async function checkLlmConfigured(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/settings/llm')
+    const data = await res.json()
+    return data.configured === true
+  } catch {
+    return false
+  }
+}
+
 /* ── Hook ── */
 
 export function useTranscribe() {
@@ -53,7 +84,29 @@ export function useTranscribe() {
   const [srt, setSrt] = useState('')
   const [editing, setEditing] = useState(false)
   const [error, setError] = useState('')
+  const [showLlmSettings, setShowLlmSettings] = useState(false)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+
+  const executeTranscribe = useCallback(async (file: File, signal?: AbortSignal) => {
+    setStatus('running')
+    setError('')
+    setEditing(false)
+
+    try {
+      const res = await callLlmTranscribe(file, signal)
+      const srtText = segmentsToSrt(res.segments)
+      setResult(res.text)
+      setSrt(srtText)
+      setStatus('done')
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
+      const apiErr = toApiError(err)
+      if (apiErr.code === 'ABORTED') return
+      setError(apiErr.message)
+      setStatus('error')
+    }
+  }, [])
 
   const start = useCallback(async (file: File | null) => {
     if (!file) return
@@ -63,6 +116,20 @@ export function useTranscribe() {
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
+    // For 'model' method, check if LLM is configured
+    if (method === 'model') {
+      const configured = await checkLlmConfigured()
+      if (!configured) {
+        setPendingFile(file)
+        setShowLlmSettings(true)
+        return
+      }
+
+      await executeTranscribe(file, ctrl.signal)
+      return
+    }
+
+    // For 'local' method, use mock ASR service
     setStatus('running')
     setError('')
     setEditing(false)
@@ -80,7 +147,17 @@ export function useTranscribe() {
       setError(apiErr.message)
       setStatus('error')
     }
-  }, [method])
+  }, [method, executeTranscribe])
+
+  const handleLlmSettingsSaved = useCallback(() => {
+    setShowLlmSettings(false)
+    // Retry transcription with the pending file
+    if (pendingFile) {
+      const file = pendingFile
+      setPendingFile(null)
+      start(file)
+    }
+  }, [pendingFile, start])
 
   const cancel = useCallback(() => {
     abortRef.current?.abort()
@@ -88,6 +165,7 @@ export function useTranscribe() {
     setResult('')
     setSrt('')
     setError('')
+    setPendingFile(null)
   }, [])
 
   const reset = useCallback(() => {
@@ -97,6 +175,7 @@ export function useTranscribe() {
     setSrt('')
     setError('')
     setEditing(false)
+    setPendingFile(null)
   }, [])
 
   const handleSrtChange = useCallback((value: string) => {
@@ -117,6 +196,9 @@ export function useTranscribe() {
     cancel,
     reset,
     handleSrtChange,
+    showLlmSettings,
+    setShowLlmSettings,
+    handleLlmSettingsSaved,
   }
 }
 
@@ -153,7 +235,7 @@ export function MethodSelector({ method, setMethod }: { method: Method; setMetho
   )
 }
 
-export function MethodHint({ method }: { method: Method }) {
+export function MethodHint({ method, onConfigureLlm }: { method: Method; onConfigureLlm?: () => void }) {
   if (method === 'local') {
     return (
       <div className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">
@@ -168,6 +250,16 @@ export function MethodHint({ method }: { method: Method }) {
       <div className="rounded-xl bg-primary/10 p-4 text-sm text-primary">
         <p className="font-medium">大模型转写设置</p>
         <p className="mt-1">自动识别语言、断句并生成时间轴字幕。音频会发送到云端模型处理。</p>
+        {onConfigureLlm && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={onConfigureLlm}
+          >
+            配置模型
+          </Button>
+        )}
       </div>
     )
   }

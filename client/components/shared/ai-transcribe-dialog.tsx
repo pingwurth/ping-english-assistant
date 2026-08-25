@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { useTranscribe, MethodSelector, MethodHint, TranscribeResult } from './transcribe-shared'
+import { LlmSettingsDialog } from './llm-settings-dialog'
 
 interface AiTranscribeDialogProps {
   open: boolean
@@ -24,6 +25,9 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
     cancel,
     reset,
     handleSrtChange,
+    showLlmSettings,
+    setShowLlmSettings,
+    handleLlmSettingsSaved,
   } = useTranscribe()
 
   const handleImport = useCallback(() => {
@@ -41,60 +45,71 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
   }, [onOpenChange, cancel])
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogHeader>
-        <DialogTitle>AI 音频转字幕</DialogTitle>
-        <DialogDescription>
-          {mediaFile
-            ? `使用 ${mediaFile.name} 生成字幕`
-            : '当前材料没有媒体文件，无法生成字幕'}
-        </DialogDescription>
-      </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogHeader>
+          <DialogTitle>AI 音频转字幕</DialogTitle>
+          <DialogDescription>
+            {mediaFile
+              ? `使用 ${mediaFile.name} 生成字幕`
+              : '当前材料没有媒体文件，无法生成字幕'}
+          </DialogDescription>
+        </DialogHeader>
 
-      <DialogContent>
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          {/* 左栏：方式选择 */}
-          <div className="flex flex-col gap-4">
-            <MethodSelector method={method} setMethod={setMethod} />
-            <MethodHint method={method} />
+        <DialogContent>
+          <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+            {/* 左栏：方式选择 */}
+            <div className="flex flex-col gap-4">
+              <MethodSelector method={method} setMethod={setMethod} />
+              <MethodHint
+                method={method}
+                onConfigureLlm={() => setShowLlmSettings(true)}
+              />
 
-            {status === 'running' ? (
-              <Button className="w-full" variant="destructive" onClick={cancel}>
-                取消转换
-              </Button>
-            ) : (
-              <Button
-                className="w-full"
-                disabled={!mediaFile || method === 'third-party'}
-                onClick={() => start(mediaFile)}
-              >
-                {status === 'error' ? '重新转换' : '开始转换'}
-              </Button>
+              {status === 'running' ? (
+                <Button className="w-full" variant="destructive" onClick={cancel}>
+                  取消转换
+                </Button>
+              ) : (
+                <Button
+                  className="w-full"
+                  disabled={!mediaFile || method === 'third-party'}
+                  onClick={() => start(mediaFile)}
+                >
+                  {status === 'error' ? '重新转换' : '开始转换'}
+                </Button>
+              )}
+            </div>
+
+            {/* 右栏：结果 */}
+            <TranscribeResult
+              status={status}
+              method={method}
+              result={result}
+              srt={srt}
+              editing={editing}
+              error={error}
+              onRetry={() => start(mediaFile)}
+              onToggleEdit={() => setEditing(!editing)}
+              onSrtChange={handleSrtChange}
+            />
+
+            {status === 'done' && !editing && (
+              <div className="flex justify-end">
+                <Button onClick={handleImport}>
+                  导入字幕
+                </Button>
+              </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
 
-          {/* 右栏：结果 */}
-          <TranscribeResult
-            status={status}
-            method={method}
-            result={result}
-            srt={srt}
-            editing={editing}
-            error={error}
-            onRetry={() => start(mediaFile)}
-            onToggleEdit={() => setEditing(!editing)}
-            onSrtChange={handleSrtChange}
-          />
-
-          {status === 'done' && !editing && (
-            <div className="flex justify-end">
-              <Button onClick={handleImport}>
-                导入字幕
-              </Button>
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+      <LlmSettingsDialog
+        open={showLlmSettings}
+        onOpenChange={setShowLlmSettings}
+        onSaved={handleLlmSettingsSaved}
+      />
+    </>
   )
 }
