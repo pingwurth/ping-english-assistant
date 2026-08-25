@@ -37,3 +37,10 @@
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[5]
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[6]
 这几个按钮的背景颜色不对，调整成跟 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2] 一致
+
+
+10.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 
+/html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[1]
+/html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[3]
+这两个按钮的图标太突兀了，请换成风格一致的图标
