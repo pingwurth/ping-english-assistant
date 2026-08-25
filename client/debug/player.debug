@@ -62,3 +62,15 @@
 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/shared/player-parts.tsx PlayerControlBar 显示和隐藏条件调整一下：
 - 鼠标进入 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 区域就显示
 - 鼠标离开 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 区域就淡出
+
+
+15.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 如果导入的不是视频，就用 @client/public/background/ 下的图片铺满 /html/body/div[2]/main/div/div[2]/div/div[1] 区域，实现自动轮播，无需额外控制元素
+
+
+16.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 每次使用 BACKGROUND_IMAGES 的时候都随机打乱图片顺序
+
+
+17.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 视频播放的时候点击“进入训练” （/html/body/div[2]/main/div/div[1]/a/button）一直提示 Rendering, 只有手动暂停播放才能返回成功，这是为什么？
