@@ -34,6 +34,8 @@ function Player() {
   const [durationMs, setDurationMs] = useState(0)
   const [volume, setVolumeState] = useState(1)
   const [favSet, setFavSet] = useState<Set<number>>(new Set())
+  const [showControls, setShowControls] = useState(false)
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playerRef = useRef<SentencePlayer | null>(null)
@@ -204,6 +206,26 @@ function Player() {
     setFavSet(nextSet)
   }
 
+  /** 延迟隐藏控制栏（鼠标移出后 2s） */
+  const scheduleHideControls = () => {
+    clearTimeout(controlsTimerRef.current)
+    controlsTimerRef.current = setTimeout(() => setShowControls(false), 2000)
+  }
+  /** 视频区域鼠标移动：靠近底部时显示控制栏 */
+  const handleVideoMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const ratioFromBottom = (rect.bottom - e.clientY) / rect.height
+    if (ratioFromBottom < 0.2) {
+      clearTimeout(controlsTimerRef.current)
+      setShowControls(true)
+    } else if (showControls) {
+      scheduleHideControls()
+    }
+  }
+  const handleVideoMouseLeave = () => scheduleHideControls()
+  const handleControlsMouseEnter = () => clearTimeout(controlsTimerRef.current)
+  const handleControlsMouseLeave = () => scheduleHideControls()
+
   if (notFound) return <Navigate to="/" replace />
   if (!record) return <Shell back><div className="flex min-h-[50vh] items-center justify-center text-muted-foreground">正在加载材料…</div></Shell>
 
@@ -212,7 +234,7 @@ function Player() {
   const current = sentences[safeActive]
   const favorited = favSet.has(safeActive)
 
-  return <Shell back><div className="mx-auto flex max-w-[1440px] flex-col px-4 py-6 md:px-8"><div className="mb-6 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">正在学习 · {record.material.mediaType === 'video' ? '视频' : '音频'} · {formatDuration(record.material.durationMs)}</p><h1 className="font-serif text-2xl font-semibold md:text-3xl">{record.material.name}</h1></div><Link to={`/training/${record.material.id}`}><Button><Sparkles data-icon="inline-start" />进入训练</Button></Link></div><div className="grid h-[calc(100vh-180px)] gap-6 overflow-hidden lg:grid-cols-[1.6fr_1fr]"><div className="flex min-h-0 flex-col gap-4"><div className="flex min-h-72 flex-1 flex-col justify-end rounded-3xl bg-primary p-6 shadow-inner md:min-h-[480px]">{isSeedDemo && <p className="mb-3 self-start rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs text-primary-foreground/90">演示材料（无音频）——导入真实材料后即可播放音视频</p>}<div className="w-full rounded-2xl bg-primary-foreground/10 p-5 text-primary-foreground backdrop-blur"><p className="text-xs uppercase tracking-[0.2em] opacity-70">{sentences.length ? `${safeActive + 1} / ${sentences.length}` : '无字幕'}</p>{current ? <><p className="mt-2 text-xl font-medium leading-relaxed">{current.textEn}</p>{mode !== 'english' && current.textZh && <p className="mt-1 text-sm opacity-80">{current.textZh}</p>}</> : <p className="mt-2 text-xl font-medium leading-relaxed opacity-70">{record.material.name}</p>}</div></div><PlayerControlBar {...{playing,setPlaying:togglePlay,mode,setMode,loop,setLoop:cycleLoop,sentenceIndex:safeActive,setSentenceIndex:selectSentence,items:sentences,currentMs,durationMs,onSeek:(ms)=>playerRef.current?.seekTo(ms),rate,onRateCycle:cycleRate,volume,onVolumeChange:handleVolumeChange,disabled:!playable,isBilingual:record.subtitleData ? record.subtitleData.isBilingual : true}} /><Card><CardContent className="flex h-[7.5rem] items-center justify-between gap-4 p-5"><div><p className="text-xs font-semibold uppercase tracking-wider text-primary">当前句</p>{current ? <><p className="mt-2 line-clamp-2 text-lg leading-relaxed">{current.textEn}</p><p className="line-clamp-1 text-muted-foreground">{current.textZh}</p></> : <p className="mt-2 text-lg leading-relaxed text-muted-foreground">该材料暂无字幕</p>}</div><Button variant="outline" className="shrink-0" disabled={sentences.length === 0} onClick={() => void toggleFavorite(safeActive)} aria-pressed={favorited} aria-label={favorited ? '取消收藏当前句' : '收藏当前句'}><Star data-icon="inline-start" className={favorited ? 'fill-primary text-primary' : ''} /><span className="hidden sm:inline">{favorited ? '已收藏' : '收藏'}</span></Button></CardContent></Card>{mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}</div><SubtitleList mode={mode} active={safeActive} onSelect={selectSentence} items={sentences} favoriteIndexes={favSet} /></div></div></Shell>
+  return <Shell back><div className="mx-auto flex max-w-[1440px] flex-col px-4 py-6 md:px-8"><div className="mb-6 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">正在学习 · {record.material.mediaType === 'video' ? '视频' : '音频'} · {formatDuration(record.material.durationMs)}</p><h1 className="font-serif text-2xl font-semibold md:text-3xl">{record.material.name}</h1></div><Link to={`/training/${record.material.id}`}><Button><Sparkles data-icon="inline-start" />进入训练</Button></Link></div><div className="grid h-[calc(100vh-180px)] gap-6 overflow-hidden lg:grid-cols-[1.6fr_1fr]"><div className="flex min-h-0 flex-col gap-4"><div className="relative flex min-h-72 flex-1 flex-col justify-end rounded-3xl bg-primary p-6 shadow-inner md:min-h-[480px]" onMouseMove={handleVideoMouseMove} onMouseLeave={handleVideoMouseLeave}>{isSeedDemo && <p className="mb-3 self-start rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs text-primary-foreground/90">演示材料（无音频）——导入真实材料后即可播放音视频</p>}<div className="w-full rounded-2xl bg-primary-foreground/10 p-5 text-primary-foreground backdrop-blur"><p className="text-xs uppercase tracking-[0.2em] opacity-70">{sentences.length ? `${safeActive + 1} / ${sentences.length}` : '无字幕'}</p>{current ? <><p className="mt-2 text-xl font-medium leading-relaxed">{current.textEn}</p>{mode !== 'english' && current.textZh && <p className="mt-1 text-sm opacity-80">{current.textZh}</p>}</> : <p className="mt-2 text-xl font-medium leading-relaxed opacity-70">{record.material.name}</p>}</div><div className={`absolute inset-x-0 bottom-0 px-6 pb-4 pt-16 bg-gradient-to-t from-black/60 to-transparent rounded-b-3xl transition-opacity duration-300 max-md:pointer-events-auto max-md:opacity-100 ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onMouseEnter={handleControlsMouseEnter} onMouseLeave={handleControlsMouseLeave}><PlayerControlBar {...{playing,setPlaying:togglePlay,mode,setMode,loop,setLoop:cycleLoop,sentenceIndex:safeActive,setSentenceIndex:selectSentence,items:sentences,currentMs,durationMs,onSeek:(ms)=>playerRef.current?.seekTo(ms),rate,onRateCycle:cycleRate,volume,onVolumeChange:handleVolumeChange,disabled:!playable,isBilingual:record.subtitleData ? record.subtitleData.isBilingual : true}} /></div></div><Card><CardContent className="flex h-[7.5rem] items-center justify-between gap-4 p-5"><div><p className="text-xs font-semibold uppercase tracking-wider text-primary">当前句</p>{current ? <><p className="mt-2 line-clamp-2 text-lg leading-relaxed">{current.textEn}</p><p className="line-clamp-1 text-muted-foreground">{current.textZh}</p></> : <p className="mt-2 text-lg leading-relaxed text-muted-foreground">该材料暂无字幕</p>}</div><Button variant="outline" className="shrink-0" disabled={sentences.length === 0} onClick={() => void toggleFavorite(safeActive)} aria-pressed={favorited} aria-label={favorited ? '取消收藏当前句' : '收藏当前句'}><Star data-icon="inline-start" className={favorited ? 'fill-primary text-primary' : ''} /><span className="hidden sm:inline">{favorited ? '已收藏' : '收藏'}</span></Button></CardContent></Card>{mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}</div><SubtitleList mode={mode} active={safeActive} onSelect={selectSentence} items={sentences} favoriteIndexes={favSet} /></div></div></Shell>
 }
 
 export { Player }

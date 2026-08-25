@@ -20,3 +20,7 @@
 
 6.
 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2] 播放控件可以放到视频区域 `/html/body/div[2]/main/div/div[2]/div/div[1]` 的底部吗 ？仅当鼠标移动到视频区域的底部时显示
+
+
+7.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1]/div[2] 背景色用黑色，然后设计一个合理的透明度（要先做调研），容器内的元素、字体颜色也要调整，确保眼睛观看舒适，先设计一版ui图给我审核
