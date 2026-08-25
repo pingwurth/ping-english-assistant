@@ -48,3 +48,11 @@
 
 11.
 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 为什么导入视频只有声音没有画面？
+
+
+12.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 视频播放的时候点返回按钮（/html/body/div[2]/header/div/div/a[1]/button）一直提示 Rendering, 只有手动暂停播放才能返回成功，这是为什么？
+
+
+13.
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 为什么屏幕尺寸宽度 768px ~ 1024px 的时候 /html/body/div[2]/main/div/div[2]/div/div[2] 会隐藏？

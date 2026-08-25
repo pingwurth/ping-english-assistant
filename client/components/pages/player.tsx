@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { Sparkles, Star } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -44,6 +44,8 @@ function Player() {
   loopRef.current = loop
   /** 播放过的句子增量收集（5s 节流写 progress: 记录） */
   const playedRef = useRef<{ indexes: Set<number>; dirty: boolean; lastFlush: number }>({ indexes: new Set(), dirty: false, lastFlush: 0 })
+  /** 状态更新节流：记录上次 setCurrentMs 的时间戳 */
+  const lastMsUpdateRef = useRef(0)
 
   // 数据侧：按 :materialId 从 IDB 读取材料与字幕；不存在则跳回材料库。
   // 媒体 Blob → ObjectURL 在进入页面时创建、组件卸载时 revoke（SSR 安全：仅在 useEffect 内访问）。
@@ -99,7 +101,14 @@ function Player() {
     }).catch(() => { /* 加载失败：保持静态展示，控件可用但播放会报错提示 */ })
 
     sp.on('timeupdate', (ms) => {
-      setCurrentMs(ms)
+      // 状态更新节流：每 100ms 最多更新一次 setCurrentMs，减少 React 重新渲染频率
+      // 解决视频播放时主线程被 rAF 循环和 React 状态更新阻塞导致返回按钮无响应的问题
+      const now = Date.now()
+      if (now - lastMsUpdateRef.current >= 100) {
+        lastMsUpdateRef.current = now
+        setCurrentMs(ms)
+      }
+
       // 播放过的句子：随进度增量标记 + 5s 节流落盘
       const idx = sp.getCurrentSentenceIndex()
       if (idx >= 0 && !playedRef.current.indexes.has(idx)) {
