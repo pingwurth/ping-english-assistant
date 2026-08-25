@@ -176,10 +176,10 @@ function ImportPage() {
   const lastStartMs = subtitle ? (subtitle.data.sentences[subtitle.data.sentences.length - 1]?.startMs ?? 0) : 0
   const lrcUnfilled = !!subtitle && subtitle.data.format === 'lrc' && subtitle.data.totalDurationMs <= lastStartMs
   const deviationMs = mediaFile && mediaDurationMs != null && subtitle && !lrcUnfilled ? Math.abs(mediaDurationMs - subtitle.data.totalDurationMs) : null
-  const canFinish = !!mediaFile && !!subtitle && name.trim().length > 0 && !saving
+  const canFinish = !!mediaFile && name.trim().length > 0 && !saving
 
   const finish = async () => {
-    if (!canFinish || !mediaFile || !subtitle) return
+    if (!canFinish || !mediaFile) return
     setFinishError(null)
     setSaving(true)
     const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
@@ -198,11 +198,11 @@ function ImportPage() {
           id, name: name.trim(),
           mediaType: mediaFile.type.startsWith('video') ? 'video' : 'audio',
           mediaRef: `idb://blobs/${id}`, mediaFileName: mediaFile.name, mediaSizeBytes: mediaFile.size,
-          subtitle: { ref: `idb://materials/${id}`, format: subtitle.data.format, isBilingual: subtitle.data.isBilingual, sentenceCount: subtitle.data.sentences.length },
-          durationMs: mediaDurationMs ?? subtitle.data.totalDurationMs,
+          subtitle: subtitle ? { ref: `idb://materials/${id}`, format: subtitle.data.format, isBilingual: subtitle.data.isBilingual, sentenceCount: subtitle.data.sentences.length } : undefined,
+          durationMs: mediaDurationMs ?? subtitle?.data.totalDurationMs ?? 0,
           createdAt: now, lastOpenedAt: now,
         },
-        subtitleData: subtitle.data, // 解析结果随元数据同存，避免重复解析（架构 §4.2）
+        subtitleData: subtitle?.data, // 解析结果随元数据同存，避免重复解析（架构 §4.2）
       }
       await putMaterialRecord(record)
       if (fromTts && taskId) await consumeTtsExport(taskId)
@@ -221,7 +221,7 @@ function ImportPage() {
   // 步骤状态计算
   const step1Status: StepStatus = mediaFile ? 'done' : 'current'
   const step2Status: StepStatus = subtitle ? 'done' : mediaFile ? 'current' : 'pending'
-  const step3Status: StepStatus = mediaFile && subtitle && name.trim() ? 'done' : mediaFile && subtitle ? 'current' : 'pending'
+  const step3Status: StepStatus = mediaFile && name.trim() ? 'done' : mediaFile ? 'current' : 'pending'
 
   return (
     <Shell back>
@@ -254,8 +254,8 @@ function ImportPage() {
 
             <StepConnector done={!!mediaFile} />
 
-            {/* ── 步骤 2：选择字幕文件 ── */}
-            <StepHeader step={2} status={step2Status} label="选择字幕文件" />
+            {/* ── 步骤 2：选择字幕文件（可选） ── */}
+            <StepHeader step={2} status={step2Status} label="选择字幕文件（可选）" />
             <FileDropzone
               icon={FileText}
               accept=".srt,.lrc"
@@ -282,7 +282,7 @@ function ImportPage() {
               </div>
             )}
 
-            <StepConnector done={!!mediaFile && !!subtitle} />
+            <StepConnector done={!!mediaFile} />
 
             {/* ── 步骤 3：材料名称 ── */}
             <StepHeader step={3} status={step3Status} label="材料名称" />
