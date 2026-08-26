@@ -1,37 +1,37 @@
 1.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 导入音频文件的时候 /html/body/div[2]/main/div/div[2]/div/div[1] 的高度被拉的非常大是什么原因？
+@client/components/pages/player.tsx 导入音频文件的时候 /html/body/div[2]/main/div/div[2]/div/div[1] 的高度被拉的非常大是什么原因？
 
 
 2.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 还是会因为字幕切换高度时大时小，这是为什么？
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 还是会因为字幕切换高度时大时小，这是为什么？
 
 
 3.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[2] 我希望每次字幕滚动的时候把正在播放的字幕滚动到垂直居中的位置，要实现这个效果该怎么做？要考虑边界问题（第一条字幕和最后一条字幕）
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[2] 我希望每次字幕滚动的时候把正在播放的字幕滚动到垂直居中的位置，要实现这个效果该怎么做？要考虑边界问题（第一条字幕和最后一条字幕）
 
 
 4.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2]/div[2]/button[6] 字幕切换按钮的图标为什么是声音？
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2]/div[2]/button[6] 字幕切换按钮的图标为什么是声音？
 
 
 5.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2]/div[2] 增加一个音量调节按钮
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2]/div[2] 增加一个音量调节按钮
 
 
 6.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2] 播放控件可以放到视频区域 `/html/body/div[2]/main/div/div[2]/div/div[1]` 的底部吗 ？仅当鼠标移动到视频区域的底部时显示
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[2] 播放控件可以放到视频区域 `/html/body/div[2]/main/div/div[2]/div/div[1]` 的底部吗 ？仅当鼠标移动到视频区域的底部时显示
 
 
 7.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/shared/player-parts.tsx PlayerControlBar 背景色用黑色，然后设计一个合理的透明度（要先做调研），容器内的元素、字体颜色也要调整，确保眼睛观看舒适，先设计一版ui图给我审核
+@client/components/shared/player-parts.tsx PlayerControlBar 背景色用黑色，然后设计一个合理的透明度（要先做调研），容器内的元素、字体颜色也要调整，确保眼睛观看舒适，先设计一版ui图给我审核
 
 
 8.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 我导入 759MB 的视频提示 Blood, 为什么？
+@client/components/pages/player.tsx 我导入 759MB 的视频提示 Blood, 为什么？
 
 
 9.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 
+@client/components/pages/player.tsx 
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[1]
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[3]
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[5]
@@ -40,51 +40,51 @@
 
 
 10.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 
+@client/components/pages/player.tsx 
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[1]
 /html/body/div[2]/main/div/div[2]/div/div[1]/div[2]/div/div[2]/button[3]
 这两个按钮的图标太突兀了，请换成风格一致的图标
 
 
 11.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 为什么导入视频只有声音没有画面？
+@client/components/pages/player.tsx 为什么导入视频只有声音没有画面？
 
 
 12.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 视频播放的时候点返回按钮（/html/body/div[2]/header/div/div/a[1]/button）一直提示 Rendering, 只有手动暂停播放才能返回成功，这是为什么？
+@client/components/pages/player.tsx 视频播放的时候点返回按钮（/html/body/div[2]/header/div/div/a[1]/button）一直提示 Rendering, 只有手动暂停播放才能返回成功，这是为什么？
 
 
 13.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 为什么屏幕尺寸宽度 768px ~ 1024px 的时候 /html/body/div[2]/main/div/div[2]/div/div[2] 会隐藏？
+@client/components/pages/player.tsx 为什么屏幕尺寸宽度 768px ~ 1024px 的时候 /html/body/div[2]/main/div/div[2]/div/div[2] 会隐藏？
 
 
 14.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/shared/player-parts.tsx PlayerControlBar 显示和隐藏条件调整一下：
-- 鼠标进入 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 区域就显示
-- 鼠标离开 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 区域就淡出
+@client/components/shared/player-parts.tsx PlayerControlBar 显示和隐藏条件调整一下：
+- 鼠标进入 @client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 区域就显示
+- 鼠标离开 @client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/div/div[1] 区域就淡出
 
 
 15.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 如果导入的不是视频，就用 @client/public/background/ 下的图片铺满 /html/body/div[2]/main/div/div[2]/div/div[1] 区域，实现自动轮播，无需额外控制元素
+@client/components/pages/player.tsx 如果导入的不是视频，就用 @client/public/background/ 下的图片铺满 /html/body/div[2]/main/div/div[2]/div/div[1] 区域，实现自动轮播，无需额外控制元素
 
 
 16.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 每次使用 BACKGROUND_IMAGES 的时候都随机打乱图片顺序
+@client/components/pages/player.tsx 每次使用 BACKGROUND_IMAGES 的时候都随机打乱图片顺序
 
 
 17.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx 视频播放的时候点击“进入训练” （/html/body/div[2]/main/div/div[1]/a/button）一直提示 Rendering, 只有手动暂停播放才能返回成功，这是为什么？
+@client/components/pages/player.tsx 视频播放的时候点击“进入训练” （/html/body/div[2]/main/div/div[1]/a/button）一直提示 Rendering, 只有手动暂停播放才能返回成功，这是为什么？
 
 
 18.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/span 这里换成两个图标，鼠标悬停的时候分别显示：导入字幕文件、AI音频转字幕，图标点击逻辑复用：
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/span 这里换成两个图标，鼠标悬停的时候分别显示：导入字幕文件、AI音频转字幕，图标点击逻辑复用：
 - /html/body/div[2]/main/div/div[2]/section/div[2]/div/div/button[1]
 - /html/body/div[2]/main/div/div[2]/section/div[2]/div/div/button[2]
 
 
 19.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/div/button[2] 图标换成 "AI"
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/div/button[2] 图标换成 "AI"
 
 
 20. 
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1] 字幕区域新增一个图标：生词标记，点击后弹窗显示全文（仅英文）
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1] 字幕区域新增一个图标：生词标记，点击后弹窗显示全文（仅英文）

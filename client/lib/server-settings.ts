@@ -10,6 +10,8 @@ export interface LlmSettings {
   endpoint?: string
   /** WhisperX alignment service URL (default: http://127.0.0.1:8765) */
   whisperAlignUrl?: string
+  /** faster-whisper transcription service URL (default: http://127.0.0.1:8766) */
+  whisperTranscribeUrl?: string
 }
 
 const SETTINGS_DIR = join(homedir(), '.ping-eng')

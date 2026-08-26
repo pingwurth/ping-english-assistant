@@ -1,2 +1,6 @@
 1.
-@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/settings.tsx /html/body/div[2]/main/div/div[2]/div[4]/div/button 这个清空动作会释放磁盘空间吗？
+@client/components/pages/settings.tsx /html/body/div[2]/main/div/div[2]/div[4]/div/button 这个清空动作会释放磁盘空间吗？
+
+
+2.
+@client/components/pages/settings.tsx 调整布局为标签页切换的风格，当前包含标签页：学习统计、训练设置、存储管理，新增一个标签页“模型配置”

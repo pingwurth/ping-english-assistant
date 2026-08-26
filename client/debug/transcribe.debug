@@ -1,0 +1,6 @@
+1.
+@client/components/shared/transcribe-shared.tsx 实现第三种转换方式：faster-whisper
+
+
+2. 
+@client/components/pages/player.tsx 的 /html/body/div[2]/main/div/div[2]/section/div[1]/div/button[2] 点了没反应？

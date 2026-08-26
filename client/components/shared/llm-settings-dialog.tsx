@@ -24,6 +24,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
   const [model, setModel] = useState('')
   const [endpoint, setEndpoint] = useState('')
   const [whisperAlignUrl, setWhisperAlignUrl] = useState('')
+  const [whisperTranscribeUrl, setWhisperTranscribeUrl] = useState('')
   const [models, setModels] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -48,6 +49,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
           setModel(data.model || '')
           setEndpoint(data.endpoint || '')
           setWhisperAlignUrl(data.whisperAlignUrl || '')
+          setWhisperTranscribeUrl(data.whisperTranscribeUrl || '')
           // Don't fill in masked API key
         }
       })
@@ -120,6 +122,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
           model: model || undefined,
           endpoint: endpoint.trim() || undefined,
           whisperAlignUrl: whisperAlignUrl.trim() || undefined,
+          whisperTranscribeUrl: whisperTranscribeUrl.trim() || undefined,
         }),
       })
 
@@ -135,7 +138,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
     } finally {
       setSaving(false)
     }
-  }, [provider, baseUrl, apiKey, model, endpoint, onOpenChange, onSaved])
+  }, [provider, baseUrl, apiKey, model, endpoint, whisperTranscribeUrl, onOpenChange, onSaved])
 
   const handleClose = useCallback((open: boolean) => {
     if (!open) {
@@ -321,6 +324,19 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
                 </p>
               </div>
             )}
+
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">faster-whisper 转写服务</label>
+              <Input
+                placeholder="http://127.0.0.1:8766"
+                value={whisperTranscribeUrl}
+                onChange={e => setWhisperTranscribeUrl(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                本地 faster-whisper 转写服务地址。留空则使用默认地址 (http://127.0.0.1:8766)。
+                <code className="ml-1 text-xs">./start.sh --server transcribe</code>
+              </p>
+            </div>
 
             {error && (
               <p className="text-sm text-destructive">{error}</p>

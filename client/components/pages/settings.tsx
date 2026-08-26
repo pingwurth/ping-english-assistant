@@ -1,20 +1,22 @@
 /**
  * P10 我的 / 设置 —— 真源：docs/原型设计.md §4.11
  *
- * 播放设置（默认倍速 / 单句循环次数）与训练设置（录音交互方式 / 耳机提示）
- * 读写 platform/storage/prefs.ts；播放器页（P2）读取默认倍速与循环次数。
- * 存储管理：estimateUsage() 已用空间、材料列表删除（material-store 级联清理）、
- * [清空全部数据]（confirm → 清 IDB + localStorage → 刷新回到种子状态）。
- * 学习统计：records store 聚合（训练次数 / 平均成绩 / 收藏数）。
+ * 标签页布局：学习统计 | 播放/训练设置 | 模型配置 | 存储管理
+ * - 学习统计：records store 聚合（训练次数 / 平均成绩 / 收藏数）
+ * - 播放/训练设置：读写 platform/storage/prefs.ts
+ * - 模型配置：LLM provider / API key / model（原 llm-settings-dialog 内联）
+ * - 存储管理：estimateUsage()、材料列表删除、清空全部数据
  * 所有浏览器 API 仅在 effect/回调内访问，SSR 安全。
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { Gauge, Headphones, Mic, Repeat, Trash2 } from 'lucide-react'
+import { ChevronDown, Database, Gauge, Headphones, Mic, RefreshCw, Repeat, Settings2, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { blobsStore, estimateUsage, materialsStore, recordsStore } from '@/platform/storage/idb'
 import { initMaterials, materialStore, removeMaterial } from '@/stores/material-store'
@@ -26,6 +28,8 @@ import {
 } from '@/lib/pref-keys'
 import type { TrainingRecord } from '@/types/training'
 
+/* ── helpers ─────────────────────────────────────────── */
+
 function formatBytes(n: number): string {
   if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`
   if (n >= 1024) return `${Math.round(n / 1024)} KB`
@@ -36,27 +40,12 @@ const loopLabel = (v: PrefLoop) => (v === 0 ? '关' : v === 'inf' ? '∞' : `${v
 
 interface Stats { trainCount: number; avgScore: number; favCount: number }
 
-function SettingsPage() {
+/* ── 学习统计 ─────────────────────────────────────────── */
+
+function LearningStatsSection() {
   const { records } = useStore(materialStore)
-  const [rate, setRate] = useState<PrefRate>(1)
-  const [loop, setLoop] = useState<PrefLoop>(0)
-  const [recordMode, setRecordModeState] = useState<PrefRecordMode>('hold')
-  const [headphoneHint, setHeadphoneHintState] = useState(true)
-  const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null)
   const [stats, setStats] = useState<Stats>({ trainCount: 0, avgScore: 0, favCount: 0 })
-  const [clearing, setClearing] = useState(false)
 
-  // 初值读取 prefs（effect 内，SSR 安全）+ 材料初始化 + 空间/统计聚合
-  useEffect(() => {
-    setRate(getDefaultRate())
-    setLoop(getDefaultLoop())
-    setRecordModeState(getRecordMode())
-    setHeadphoneHintState(getHeadphoneHint())
-    void initMaterials()
-    void estimateUsage().then(setUsage)
-  }, [])
-
-  /** 学习统计聚合：records store 中 train:/fav: 前缀记录 */
   const refreshStats = useCallback(async () => {
     try {
       const keys = await recordsStore.allKeys()
@@ -73,11 +62,43 @@ function SettingsPage() {
 
   useEffect(() => { void refreshStats() }, [refreshStats])
 
-  /** 存储侧刷新（删除/清空后同步空间占用与统计） */
-  const refreshStorage = useCallback(async () => {
-    setUsage(await estimateUsage())
-    await refreshStats()
-  }, [refreshStats])
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-5">
+        <CardTitle className="text-base">📊 学习统计</CardTitle>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl bg-muted p-4 text-center">
+            <p className="font-serif text-3xl font-semibold text-primary">{stats.trainCount}</p>
+            <p className="mt-1 text-xs text-muted-foreground">训练次数</p>
+          </div>
+          <div className="rounded-xl bg-muted p-4 text-center">
+            <p className="font-serif text-3xl font-semibold text-primary">{stats.avgScore}</p>
+            <p className="mt-1 text-xs text-muted-foreground">平均成绩</p>
+          </div>
+          <div className="rounded-xl bg-muted p-4 text-center">
+            <p className="font-serif text-3xl font-semibold text-primary">{stats.favCount}</p>
+            <p className="mt-1 text-xs text-muted-foreground">收藏句子</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ── 播放/训练设置 ─────────────────────────────────────────── */
+
+function TrainingSettingsSection() {
+  const [rate, setRate] = useState<PrefRate>(1)
+  const [loop, setLoop] = useState<PrefLoop>(0)
+  const [recordMode, setRecordModeState] = useState<PrefRecordMode>('hold')
+  const [headphoneHint, setHeadphoneHintState] = useState(true)
+
+  useEffect(() => {
+    setRate(getDefaultRate())
+    setLoop(getDefaultLoop())
+    setRecordModeState(getRecordMode())
+    setHeadphoneHintState(getHeadphoneHint())
+  }, [])
 
   const cycleRate = () => {
     const next = PREF_RATES[(PREF_RATES.indexOf(rate) + 1) % PREF_RATES.length] ?? 1
@@ -99,13 +120,338 @@ function SettingsPage() {
     setHeadphoneHint(!headphoneHint)
   }
 
+  return (
+    <div className="flex flex-col gap-3">
+      {/* 播放设置 */}
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-5">
+          <CardTitle className="text-base"><Gauge data-icon="inline-start" />播放设置</CardTitle>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">默认倍速</p>
+              <CardDescription>进入播放器时的初始播放速度</CardDescription>
+            </div>
+            <Button variant="outline" onClick={cycleRate} aria-label="切换默认倍速">{rate}x</Button>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">单句循环次数</p>
+              <CardDescription>播放器 A-B 循环的默认档位</CardDescription>
+            </div>
+            <Button variant="outline" onClick={cycleLoop} aria-label="切换默认循环次数">
+              <Repeat data-icon="inline-start" />{loopLabel(loop)}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 训练设置 */}
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-5">
+          <CardTitle className="text-base"><Mic data-icon="inline-start" />训练设置</CardTitle>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">录音交互方式</p>
+              <CardDescription>跟读/背诵页的录音按钮操作</CardDescription>
+            </div>
+            <Button variant="outline" onClick={cycleRecordMode} aria-label="切换录音交互方式">
+              {recordMode === 'hold' ? '按住录音' : '点击录音'}
+            </Button>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">耳机提示</p>
+              <CardDescription>开始跟读前提醒佩戴耳机</CardDescription>
+            </div>
+            <Button
+              variant={headphoneHint ? 'secondary' : 'outline'}
+              onClick={toggleHeadphoneHint}
+              aria-pressed={headphoneHint}
+              aria-label="切换耳机提示"
+            >
+              <Headphones data-icon="inline-start" />{headphoneHint ? '已开启' : '已关闭'}
+              <Badge variant={headphoneHint ? 'default' : 'secondary'}>{headphoneHint ? '开' : '关'}</Badge>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/* ── 模型配置 ─────────────────────────────────────────── */
+
+const PROVIDERS = [
+  { value: 'openai', label: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1' },
+  { value: 'anthropic', label: 'Anthropic', defaultBaseUrl: 'https://api.anthropic.com' },
+  { value: 'mimo', label: 'Xiaomi MiMo', defaultBaseUrl: 'https://api.xiaomimimo.com/v1' },
+  { value: 'custom', label: '自定义', defaultBaseUrl: '' },
+]
+
+function ModelConfigSection() {
+  const [provider, setProvider] = useState('openai')
+  const [baseUrl, setBaseUrl] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [model, setModel] = useState('')
+  const [endpoint, setEndpoint] = useState('')
+  const [whisperAlignUrl, setWhisperAlignUrl] = useState('')
+  const [whisperTranscribeUrl, setWhisperTranscribeUrl] = useState('')
+  const [models, setModels] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [showDropdown, setShowDropdown] = useState(false)
+
+  useEffect(() => {
+    setLoading(true)
+    fetch('/api/settings/llm')
+      .then(res => res.json())
+      .then(data => {
+        if (data.configured) {
+          setProvider(data.provider || 'openai')
+          setBaseUrl(data.baseUrl || '')
+          setModel(data.model || '')
+          setEndpoint(data.endpoint || '')
+          setWhisperAlignUrl(data.whisperAlignUrl || '')
+          setWhisperTranscribeUrl(data.whisperTranscribeUrl || '')
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const fetchModels = useCallback(async () => {
+    if (!baseUrl.trim() || !apiKey.trim()) {
+      setError('请先填写 Base URL 和 API Key')
+      return
+    }
+    setFetchingModels(true)
+    setError('')
+    setModels([])
+    try {
+      await fetch('/api/settings/llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, baseUrl: baseUrl.trim(), apiKey: apiKey.trim() }),
+      })
+      const res = await fetch('/api/models')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || '获取模型列表失败')
+      setModels(data.models || [])
+      if (data.models?.length > 0 && !model) setModel(data.models[0])
+      setShowDropdown(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '获取模型列表失败')
+    } finally {
+      setFetchingModels(false)
+    }
+  }, [provider, baseUrl, apiKey, model])
+
+  const handleSave = useCallback(async () => {
+    if (!baseUrl.trim() || !apiKey.trim()) {
+      setError('Base URL 和 API Key 是必填的')
+      return
+    }
+    setSaving(true)
+    setError('')
+    setSuccess('')
+    try {
+      const res = await fetch('/api/settings/llm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          baseUrl: baseUrl.trim(),
+          apiKey: apiKey.trim(),
+          model: model || undefined,
+          endpoint: endpoint.trim() || undefined,
+          whisperAlignUrl: whisperAlignUrl.trim() || undefined,
+          whisperTranscribeUrl: whisperTranscribeUrl.trim() || undefined,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || '保存失败')
+      }
+      setSuccess('配置已保存')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }, [provider, baseUrl, apiKey, model, endpoint, whisperAlignUrl, whisperTranscribeUrl])
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center py-10">
+          <div className="size-8 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-5">
+          <CardTitle className="text-base"><Settings2 data-icon="inline-start" />模型提供商</CardTitle>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">模型提供商 <span className="text-destructive">*</span></label>
+            <select
+              value={provider}
+              onChange={e => {
+                const p = e.target.value
+                setProvider(p)
+                const found = PROVIDERS.find(x => x.value === p)
+                if (found?.defaultBaseUrl) setBaseUrl(found.defaultBaseUrl)
+                if (p === 'mimo') setModel('mimo-v2.5-asr')
+                setShowDropdown(false)
+                setModels([])
+              }}
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Base URL <span className="text-destructive">*</span></label>
+            <Input
+              placeholder="例如: https://api.openai.com/v1"
+              value={baseUrl}
+              onChange={e => { setBaseUrl(e.target.value); setShowDropdown(false); setModels([]) }}
+            />
+            <p className="text-xs text-muted-foreground">API 接口地址，支持 OpenAI 兼容的服务</p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">API Key <span className="text-destructive">*</span></label>
+            <Input
+              type="password"
+              placeholder="sk-..."
+              value={apiKey}
+              onChange={e => { setApiKey(e.target.value); setShowDropdown(false); setModels([]) }}
+            />
+            <p className="text-xs text-muted-foreground">你的 API 密钥，保存后不会再次显示</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-5">
+          <CardTitle className="text-base"><Database data-icon="inline-start" />模型与端点</CardTitle>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">模型</label>
+            <div className="relative">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    placeholder="点击右侧按钮获取模型列表"
+                    value={model}
+                    onChange={e => setModel(e.target.value)}
+                    onClick={() => models.length > 0 && setShowDropdown(!showDropdown)}
+                    className="pr-8"
+                    readOnly={models.length > 0}
+                  />
+                  {models.length > 0 && (
+                    <ChevronDown className="absolute right-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={fetchModels}
+                  disabled={fetchingModels || !baseUrl.trim() || !apiKey.trim()}
+                  title="获取模型列表"
+                >
+                  <RefreshCw className={`size-4 ${fetchingModels ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
+              {showDropdown && models.length > 0 && (
+                <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-background shadow-lg">
+                  {models.map(m => (
+                    <button
+                      key={m}
+                      className={`w-full px-3 py-2 text-left text-sm hover:bg-muted ${m === model ? 'bg-primary/10 text-primary' : ''}`}
+                      onClick={() => { setModel(m); setShowDropdown(false) }}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {models.length > 0 ? `已获取 ${models.length} 个模型，点击下拉选择` : '填写 Base URL 和 API Key 后，点击刷新按钮获取模型列表'}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">转写端点路径</label>
+            <Input
+              placeholder={provider === 'mimo' ? '/chat/completions（MiMo 自动处理）' : '/audio/transcriptions'}
+              value={endpoint}
+              onChange={e => setEndpoint(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              {provider === 'mimo'
+                ? 'MiMo ASR 使用 /chat/completions 端点，通常无需修改'
+                : '默认: /audio/transcriptions。如果 provider 使用不同路径，请修改'}
+            </p>
+          </div>
+
+          {provider === 'mimo' && (
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">WhisperX 对齐服务</label>
+              <Input placeholder="http://127.0.0.1:8765" value={whisperAlignUrl} onChange={e => setWhisperAlignUrl(e.target.value)} />
+              <p className="text-xs text-muted-foreground">本地 WhisperX 服务地址，用于精确时间戳对齐。留空则使用估算时间戳。</p>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">faster-whisper 转写服务</label>
+            <Input placeholder="http://127.0.0.1:8766" value={whisperTranscribeUrl} onChange={e => setWhisperTranscribeUrl(e.target.value)} />
+            <p className="text-xs text-muted-foreground">本地 faster-whisper 转写服务地址。留空则使用默认地址 (http://127.0.0.1:8766)。</p>
+          </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          {success && <p className="text-sm text-emerald-600">{success}</p>}
+
+          <Button onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存配置'}</Button>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/* ── 存储管理 ─────────────────────────────────────────── */
+
+function StorageSection() {
+  const { records } = useStore(materialStore)
+  const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null)
+  const [clearing, setClearing] = useState(false)
+
+  useEffect(() => {
+    void initMaterials()
+    void estimateUsage().then(setUsage)
+  }, [])
+
+  const refreshUsage = useCallback(async () => {
+    setUsage(await estimateUsage())
+  }, [])
+
   const handleRemove = async (id: string, name: string) => {
     if (typeof window !== 'undefined' && !window.confirm(`确定删除材料「${name}」？相关进度与训练记录将一并清理。`)) return
     await removeMaterial(id)
-    await refreshStorage()
+    await refreshUsage()
   }
 
-  /** 清空全部数据：IDB 三 store + 全部 ping-english: 前缀 localStorage → 刷新回到种子状态 */
   const clearAll = async () => {
     if (typeof window !== 'undefined' && !window.confirm('确定清空全部数据？材料、学习进度、训练记录与设置都将删除，并恢复为初始示例内容。')) return
     setClearing(true)
@@ -121,7 +467,7 @@ function SettingsPage() {
           drop.forEach((k) => localStorage.removeItem(k))
         }
       } catch { /* 隐私模式等场景静默 */ }
-      window.location.reload() // 重载后 initMaterials 检测到空库自动注入种子
+      window.location.reload()
     } catch {
       setClearing(false)
     }
@@ -130,87 +476,75 @@ function SettingsPage() {
   const usagePct = usage && usage.quota > 0 ? Math.min(100, Math.max(1, Math.round((usage.usage / usage.quota) * 100))) : 0
 
   return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-5">
+        <CardTitle className="text-base">🗄 存储管理</CardTitle>
+
+        <div className="rounded-xl bg-muted p-4">
+          <div className="mb-2 flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">已用空间</span>
+            <span className="font-medium tabular-nums">{usage ? formatBytes(usage.usage) : '…'}</span>
+          </div>
+          <Progress value={usage ? usagePct : 0} />
+          <p className="mt-2 text-xs text-muted-foreground">材料与学习进度保存在此设备（IndexedDB / localStorage）</p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <p className="text-sm font-medium">本地材料（{records.length}）</p>
+          {records.length === 0 ? (
+            <p className="rounded-xl bg-muted p-3 text-sm text-muted-foreground">暂无材料</p>
+          ) : records.map((r) => (
+            <div key={r.material.id} className="flex items-center justify-between gap-3 rounded-xl border px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{r.material.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {r.material.mediaType === 'video' ? '视频' : '音频'} · {r.material.subtitle?.sentenceCount ?? 0} 句
+                </p>
+              </div>
+              <Button variant="ghost" size="icon" aria-label={`删除材料 ${r.material.name}`} onClick={() => void handleRemove(r.material.id, r.material.name)}>
+                <Trash2 />
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        <Button variant="destructive" onClick={() => void clearAll()} disabled={clearing}>
+          <Trash2 data-icon="inline-start" />{clearing ? '正在清空…' : '清空全部数据'}
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ── 页面主组件 ───────────────────────────────────────── */
+
+function SettingsPage() {
+  return (
     <Shell back>
       <div className="mx-auto max-w-2xl px-4 py-10">
         <PageIntro title="我的 / 设置" eyebrow="PREFERENCES" />
-        <div className="flex flex-col gap-3">
 
-          {/* 学习统计 */}
-          <Card>
-            <CardContent className="flex flex-col gap-4 p-5">
-              <CardTitle className="text-base">📊 学习统计</CardTitle>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-xl bg-muted p-4 text-center"><p className="font-serif text-3xl font-semibold text-primary">{stats.trainCount}</p><p className="mt-1 text-xs text-muted-foreground">训练次数</p></div>
-                <div className="rounded-xl bg-muted p-4 text-center"><p className="font-serif text-3xl font-semibold text-primary">{stats.avgScore}</p><p className="mt-1 text-xs text-muted-foreground">平均成绩</p></div>
-                <div className="rounded-xl bg-muted p-4 text-center"><p className="font-serif text-3xl font-semibold text-primary">{stats.favCount}</p><p className="mt-1 text-xs text-muted-foreground">收藏句子</p></div>
-              </div>
-            </CardContent>
-          </Card>
+        <Tabs defaultValue="stats">
+          <TabsList>
+            <TabsTrigger value="stats">学习统计</TabsTrigger>
+            <TabsTrigger value="training">播放/训练设置</TabsTrigger>
+            <TabsTrigger value="model">模型配置</TabsTrigger>
+            <TabsTrigger value="storage">存储管理</TabsTrigger>
+          </TabsList>
 
-          {/* 播放设置 */}
-          <Card>
-            <CardContent className="flex flex-col gap-4 p-5">
-              <CardTitle className="text-base"><Gauge data-icon="inline-start" />播放设置</CardTitle>
-              <div className="flex items-center justify-between gap-4">
-                <div><p className="text-sm font-medium">默认倍速</p><CardDescription>进入播放器时的初始播放速度</CardDescription></div>
-                <Button variant="outline" onClick={cycleRate} aria-label="切换默认倍速">{rate}x</Button>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <div><p className="text-sm font-medium">单句循环次数</p><CardDescription>播放器 A-B 循环的默认档位</CardDescription></div>
-                <Button variant="outline" onClick={cycleLoop} aria-label="切换默认循环次数"><Repeat data-icon="inline-start" />{loopLabel(loop)}</Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 训练设置 */}
-          <Card>
-            <CardContent className="flex flex-col gap-4 p-5">
-              <CardTitle className="text-base"><Mic data-icon="inline-start" />训练设置</CardTitle>
-              <div className="flex items-center justify-between gap-4">
-                <div><p className="text-sm font-medium">录音交互方式</p><CardDescription>跟读/背诵页的录音按钮操作</CardDescription></div>
-                <Button variant="outline" onClick={cycleRecordMode} aria-label="切换录音交互方式">{recordMode === 'hold' ? '按住录音' : '点击录音'}</Button>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <div><p className="text-sm font-medium">耳机提示</p><CardDescription>开始跟读前提醒佩戴耳机</CardDescription></div>
-                <Button variant={headphoneHint ? 'secondary' : 'outline'} onClick={toggleHeadphoneHint} aria-pressed={headphoneHint} aria-label="切换耳机提示">
-                  <Headphones data-icon="inline-start" />{headphoneHint ? '已开启' : '已关闭'}
-                  <Badge variant={headphoneHint ? 'default' : 'secondary'}>{headphoneHint ? '开' : '关'}</Badge>
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 存储管理 */}
-          <Card>
-            <CardContent className="flex flex-col gap-4 p-5">
-              <CardTitle className="text-base">🗄 存储管理</CardTitle>
-              <div className="rounded-xl bg-muted p-4">
-                <div className="mb-2 flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">已用空间</span>
-                  <span className="font-medium tabular-nums">{usage ? formatBytes(usage.usage) : '…'}</span>
-                </div>
-                <Progress value={usage ? usagePct : 0} />
-                <p className="mt-2 text-xs text-muted-foreground">材料与学习进度保存在此设备（IndexedDB / localStorage）</p>
-              </div>
-              <div className="flex flex-col gap-2">
-                <p className="text-sm font-medium">本地材料（{records.length}）</p>
-                {records.length === 0 ? <p className="rounded-xl bg-muted p-3 text-sm text-muted-foreground">暂无材料</p> : records.map((r) => (
-                  <div key={r.material.id} className="flex items-center justify-between gap-3 rounded-xl border px-4 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{r.material.name}</p>
-                      <p className="text-xs text-muted-foreground">{r.material.mediaType === 'video' ? '视频' : '音频'} · {r.material.subtitle?.sentenceCount ?? 0} 句</p>
-                    </div>
-                    <Button variant="ghost" size="icon" aria-label={`删除材料 ${r.material.name}`} onClick={() => void handleRemove(r.material.id, r.material.name)}><Trash2 /></Button>
-                  </div>
-                ))}
-              </div>
-              <Button variant="destructive" onClick={() => void clearAll()} disabled={clearing}>
-                <Trash2 data-icon="inline-start" />{clearing ? '正在清空…' : '清空全部数据'}
-              </Button>
-            </CardContent>
-          </Card>
-
-        </div>
+          <TabsContent value="stats">
+            <LearningStatsSection />
+          </TabsContent>
+          <TabsContent value="training">
+            <TrainingSettingsSection />
+          </TabsContent>
+          <TabsContent value="model">
+            <ModelConfigSection />
+          </TabsContent>
+          <TabsContent value="storage">
+            <StorageSection />
+          </TabsContent>
+        </Tabs>
       </div>
     </Shell>
   )

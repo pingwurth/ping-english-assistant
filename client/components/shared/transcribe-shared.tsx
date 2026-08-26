@@ -3,7 +3,7 @@ import { Brain, Cpu, ExternalLink, FileAudio } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { getServices, toApiError } from '@/services'
+import { toApiError } from '@/services'
 import type { AsrTranscribeSegment } from '@/types/api'
 
 /* ── SRT 工具 ── */
@@ -75,6 +75,37 @@ async function checkLlmConfigured(): Promise<boolean> {
   }
 }
 
+/* ── Local faster-whisper API 调用 ── */
+
+async function callLocalTranscribe(file: File, signal?: AbortSignal): Promise<{ text: string; segments: AsrTranscribeSegment[] }> {
+  const formData = new FormData()
+  formData.append('audio', file)
+  formData.append('lang', 'en')
+
+  const res = await fetch('/api/transcribe/local', {
+    method: 'POST',
+    body: formData,
+    signal,
+  })
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `Local transcription failed (${res.status})`)
+  }
+
+  return res.json()
+}
+
+async function checkLocalServerReady(): Promise<{ connected: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/transcribe/local')
+    const data = await res.json()
+    return data
+  } catch {
+    return { connected: false, error: '无法连接到转写服务' }
+  }
+}
+
 /* ── Hook ── */
 
 export function useTranscribe() {
@@ -129,19 +160,29 @@ export function useTranscribe() {
       return
     }
 
-    // For 'local' method, use mock ASR service
+    // For 'local' method, call faster-whisper via API proxy
     setStatus('running')
     setError('')
     setEditing(false)
 
     try {
-      const audio = new Blob([await file.arrayBuffer()], { type: file.type || 'audio/wav' })
-      const res = await getServices().asr.transcribe(audio, 'en', ctrl.signal)
+      // Health check: verify the server is running
+      const health = await checkLocalServerReady()
+      if (!health.connected) {
+        throw new Error(
+          'faster-whisper 服务未启动。请先运行:\n' +
+          '  cd server && ./start.sh --server transcribe\n\n' +
+          '或在设置中配置转写服务地址。',
+        )
+      }
+
+      const res = await callLocalTranscribe(file, ctrl.signal)
       const srtText = segmentsToSrt(res.segments)
       setResult(res.text)
       setSrt(srtText)
       setStatus('done')
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return
       const apiErr = toApiError(err)
       if (apiErr.code === 'ABORTED') return
       setError(apiErr.message)
@@ -239,8 +280,9 @@ export function MethodHint({ method, onConfigureLlm }: { method: Method; onConfi
   if (method === 'local') {
     return (
       <div className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">本机环境检查</p>
-        <p className="mt-1">将使用 faster-whisper large-v3 · CUDA · 中文/英文自动识别</p>
+        <p className="font-medium text-foreground">faster-whisper 本地转写</p>
+        <p className="mt-1">使用 faster-whisper large-v3 模型，优先 GPU (CUDA)，自动回退 CPU。</p>
+        <p className="mt-1 text-xs opacity-70">需要先启动服务：cd server && ./start.sh --server transcribe</p>
       </div>
     )
   }

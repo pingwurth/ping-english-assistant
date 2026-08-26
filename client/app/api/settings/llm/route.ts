@@ -16,6 +16,7 @@ export async function GET() {
       model: settings.model || '',
       endpoint: settings.endpoint || '',
       whisperAlignUrl: settings.whisperAlignUrl || '',
+      whisperTranscribeUrl: settings.whisperTranscribeUrl || '',
       apiKey: settings.apiKey.slice(0, 8) + '***',
     })
   } catch (error) {
@@ -29,7 +30,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { provider, baseUrl, apiKey, model, endpoint, whisperAlignUrl } = body
+    const { provider, baseUrl, apiKey, model, endpoint, whisperAlignUrl, whisperTranscribeUrl } = body
 
     if (!baseUrl || !apiKey) {
       return NextResponse.json(
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
       model: model || undefined,
       endpoint: endpoint || undefined,
       whisperAlignUrl: whisperAlignUrl || undefined,
+      whisperTranscribeUrl: whisperTranscribeUrl || undefined,
     }
     await writeLlmSettings(settings)
 
