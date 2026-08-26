@@ -2,13 +2,11 @@
 
 English listening/dictation/shadowing training app. Local-first SPA for PC Web + Mobile H5.
 
-## What this actually is (README is stale)
-
-The root README describes uni-app + Vue 3 + Fastify. **Ignore it.** The real stack:
+## Tech Stack
 
 - **client/** — Next.js 16.3 + React 19 + TypeScript 5.7.3 + Tailwind CSS 4 + shadcn/ui (base-nova)
+- **server/** — Python FastAPI + faster-whisper (转写, port 8766) + WhisperX (对齐, port 8765)
 - **page-prototype/** — standalone Next.js prototype sandbox (no tests, separate deps, for design iteration only)
-- **server/** — planned Fastify backend (does not exist yet); all AI services are mocked client-side
 
 State management: custom `createStore` + `useSyncExternalStore` (zero external deps). No zustand, no Pinia.
 

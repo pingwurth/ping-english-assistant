@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-English listening/dictation/shadowing training app ("ping-english-assistant"). Local-first SPA for PC Web + Mobile H5. The root README describes uni-app + Vue 3 — **ignore it**. `AGENTS.md` is the authoritative project reference.
+English listening/dictation/shadowing training app ("ping-english-assistant"). Local-first SPA for PC Web + Mobile H5. See `README.md` for overview, `AGENTS.md` for conventions.
 
 ## Commands
 

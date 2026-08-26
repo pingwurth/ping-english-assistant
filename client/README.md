@@ -131,7 +131,7 @@ pnpm test         # 运行 core/ 和 services/mock 的单元测试
 
 ### 服务抽象层
 
-AI 服务（ASR、SOE、TTS、报告生成）通过接口抽象，当前使用 Mock 实现（离线可用）。未来可通过环境变量切换为真实 Fastify 后端：
+AI 服务（ASR、SOE、TTS、报告生成）通过接口抽象，当前使用 Mock 实现（离线可用）。未来可通过环境变量切换为真实 API：
 
 ```typescript
 // services/index.ts
