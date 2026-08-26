@@ -34,6 +34,16 @@ export function parseLrcTimestamp(raw: string): number | null {
   return (Number(m[1]) * 60 + Number(m[2])) * 1000 + Number(frac.padEnd(3, '0'))
 }
 
+/** ms → "hh:mm:ss,mmm" 格式（SRT 导出用） */
+export function formatSrtTimestamp(ms: number): string {
+  const totalSec = Math.floor(ms / 1000)
+  const h = Math.floor(totalSec / 3600)
+  const m = Math.floor((totalSec % 3600) / 60)
+  const s = totalSec % 60
+  const millis = ms % 1000
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(millis).padStart(3, '0')}`
+}
+
 /** 提取 LRC 行首的全部时间标签（一行多标签如 [00:12.30][01:12.30] 展开为多个起点） */
 export function extractLrcTimestamp(line: string): number[] {
   const head = line.match(/^((?:\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+)/)

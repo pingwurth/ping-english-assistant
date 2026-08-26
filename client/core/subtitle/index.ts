@@ -10,10 +10,11 @@ import { SubtitleParseError } from './errors'
 import { parseSrt } from './srt'
 import { parseLrc } from './lrc'
 import { detectBilingual, splitBilingual, splitWords } from './bilingual'
+import { formatSrtTimestamp } from './timestamp'
 import type { RawBlock } from './srt'
 
 export { SubtitleParseError } from './errors'
-export { parseSrtTimestamp, parseLrcTimestamp } from './timestamp'
+export { parseSrtTimestamp, parseLrcTimestamp, formatSrtTimestamp } from './timestamp'
 export { parseSrt } from './srt'
 export { parseLrc } from './lrc'
 export { isCJK, splitBilingual, splitWords, detectBilingual } from './bilingual'
@@ -65,4 +66,14 @@ export function parseSubtitle(text: string, format?: 'srt' | 'lrc', knownDuratio
     return blockToSentence({ ...b, endMs }, i)
   })
   return { format: 'lrc', isBilingual: detectBilingual(sentences), sentences, totalDurationMs }
+}
+
+/** 将 SubtitleSentence[] 导出为 SRT 格式文本 */
+export function exportSrt(sentences: SubtitleSentence[]): string {
+  return sentences.map((s, i) => {
+    const timing = `${formatSrtTimestamp(s.startMs)} --> ${formatSrtTimestamp(s.endMs)}`
+    const lines = [s.textEn]
+    if (s.textZh) lines.push(s.textZh)
+    return `${i + 1}\n${timing}\n${lines.join('\n')}\n`
+  }).join('\n')
 }
