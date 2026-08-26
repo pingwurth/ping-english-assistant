@@ -1,6 +1,22 @@
 import { NextResponse } from 'next/server'
 import { readLlmSettings, type LlmSettings } from '@/lib/server-settings'
 
+interface WordTimestamp {
+  word: string
+  start: number // seconds
+  end: number // seconds
+}
+
+interface SegmentResult {
+  startMs: number
+  endMs: number
+  text: string
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 /** Detect whether the configured provider uses MiMo ASR format */
 function isMimoAsr(settings: LlmSettings): boolean {
   return (
@@ -33,11 +49,188 @@ function buildBaseUrl(raw: string): string {
   return base
 }
 
-/** Transcribe via MiMo ASR (chat/completions + base64 audio) */
+// ---------------------------------------------------------------------------
+// WhisperX forced alignment
+// ---------------------------------------------------------------------------
+
+/** Call local WhisperX alignment service to get word-level timestamps */
+async function alignWithWhisperX(
+  audioFile: File,
+  text: string,
+  alignUrl: string,
+): Promise<WordTimestamp[] | null> {
+  try {
+    const formData = new FormData()
+    formData.append('audio', audioFile)
+    formData.append('text', text)
+    formData.append('language', 'en')
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 120_000) // 2min timeout
+
+    const response = await fetch(`${alignUrl}/align`, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    })
+
+    clearTimeout(timeout)
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      console.warn('WhisperX alignment failed:', response.status, errText)
+      return null
+    }
+
+    const result = await response.json()
+    const words: WordTimestamp[] = result.words || []
+
+    if (words.length === 0) {
+      console.warn('WhisperX returned no words')
+      return null
+    }
+
+    return words
+  } catch (err) {
+    // Service not running or network error — silently fall back
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.warn('WhisperX alignment timed out')
+    } else {
+      console.warn('WhisperX alignment unavailable:', err)
+    }
+    return null
+  }
+}
+
+/** Group word-level timestamps into sentence-level segments */
+function groupWordsToSegments(words: WordTimestamp[]): SegmentResult[] {
+  if (words.length === 0) return []
+
+  const segments: SegmentResult[] = []
+  const sentenceEnders = /[.!?]/
+  const clauseBreaks = /[,;:]/
+
+  let currentWords: WordTimestamp[] = []
+
+  for (const word of words) {
+    currentWords.push(word)
+
+    const cleanWord = word.word.trim()
+    const isSentenceEnd = sentenceEnders.test(cleanWord)
+    const isLongClause = clauseBreaks.test(cleanWord) && currentWords.length >= 8
+
+    if (isSentenceEnd || isLongClause) {
+      segments.push(_buildSegment(currentWords))
+      currentWords = []
+    }
+  }
+
+  // Flush remaining words
+  if (currentWords.length > 0) {
+    // If we already have segments and this is just a few leftover words, merge
+    if (segments.length > 0 && currentWords.length <= 3) {
+      const last = segments[segments.length - 1]
+      const merged = _buildSegment(currentWords)
+      segments[segments.length - 1] = {
+        startMs: last.startMs,
+        endMs: merged.endMs,
+        text: `${last.text} ${merged.text}`,
+      }
+    } else {
+      segments.push(_buildSegment(currentWords))
+    }
+  }
+
+  return segments
+}
+
+function _buildSegment(words: WordTimestamp[]): SegmentResult {
+  return {
+    startMs: Math.round((words[0]?.start ?? 0) * 1000),
+    endMs: Math.round((words[words.length - 1]?.end ?? 0) * 1000),
+    text: words.map(w => w.word.trim()).join(' ').trim(),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fallback: sentence splitting + proportional timestamp distribution
+// ---------------------------------------------------------------------------
+
+/** Split text into sentences by punctuation */
+function splitIntoSentences(text: string): string[] {
+  // Split on sentence-ending punctuation
+  const raw = text.split(/(?<=[.!?])\s+/)
+  const sentences: string[] = []
+
+  for (const s of raw) {
+    const trimmed = s.trim()
+    if (!trimmed) continue
+
+    // If sentence is too long, split on clause breaks
+    if (trimmed.length > 100) {
+      const clauses = trimmed.split(/(?<=[,;])\s+/)
+      let buffer = ''
+      for (const clause of clauses) {
+        if (buffer && buffer.length + clause.length > 100) {
+          sentences.push(buffer.trim())
+          buffer = clause
+        } else {
+          buffer = buffer ? `${buffer} ${clause}` : clause
+        }
+      }
+      if (buffer.trim()) sentences.push(buffer.trim())
+    } else {
+      sentences.push(trimmed)
+    }
+  }
+
+  // Merge very short fragments into the previous sentence
+  const merged: string[] = []
+  for (const s of sentences) {
+    if (merged.length > 0 && s.length < 10) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]} ${s}`
+    } else {
+      merged.push(s)
+    }
+  }
+
+  return merged.length > 0 ? merged : [text.trim()]
+}
+
+/** Distribute timestamps proportionally by word count */
+function distributeTimestamps(sentences: string[], totalDurationMs: number): SegmentResult[] {
+  if (sentences.length === 0) return []
+
+  // Count words per sentence
+  const wordCounts = sentences.map(s => s.split(/\s+/).filter(Boolean).length)
+  const totalWords = wordCounts.reduce((a, b) => a + b, 0) || 1
+
+  const segments: SegmentResult[] = []
+  let currentMs = 0
+
+  for (let i = 0; i < sentences.length; i++) {
+    const ratio = wordCounts[i] / totalWords
+    const durationMs = Math.round(totalDurationMs * ratio)
+    const startMs = currentMs
+    const endMs = i === sentences.length - 1 ? totalDurationMs : currentMs + durationMs
+
+    segments.push({ startMs, endMs, text: sentences[i] })
+    currentMs = endMs
+  }
+
+  return segments
+}
+
+// ---------------------------------------------------------------------------
+// MiMo ASR + alignment pipeline
+// ---------------------------------------------------------------------------
+
+/** Transcribe via MiMo ASR, then align timestamps via WhisperX or fallback */
 async function transcribeMimo(
   audioFile: File,
   settings: LlmSettings,
-): Promise<{ text: string; segments: Array<{ startMs: number; endMs: number; text: string }> }> {
+): Promise<{ text: string; segments: SegmentResult[] }> {
+  // Step 1: Get transcription text from MiMo ASR
   const modelName = settings.model || 'mimo-v2.5-asr'
   const baseUrl = buildBaseUrl(settings.baseUrl)
   const url = `${baseUrl}/chat/completions`
@@ -84,20 +277,78 @@ async function transcribeMimo(
   const result = await response.json()
   const text: string = result.choices?.[0]?.message?.content || ''
 
-  // MiMo ASR may not return timestamps — create a single segment
-  const segments =
-    text.length > 0
-      ? [{ startMs: 0, endMs: 0, text: text.trim() }]
-      : []
+  if (!text.trim()) {
+    return { text: '', segments: [] }
+  }
+
+  // Step 2: Try WhisperX forced alignment for precise timestamps
+  const alignUrl = settings.whisperAlignUrl || 'http://127.0.0.1:8765'
+  const words = await alignWithWhisperX(audioFile, text.trim(), alignUrl)
+
+  if (words && words.length > 0) {
+    // WhisperX alignment succeeded — group words into sentence segments
+    const segments = groupWordsToSegments(words)
+    console.log(`WhisperX alignment: ${words.length} words → ${segments.length} segments`)
+    return { text: text.trim(), segments }
+  }
+
+  // Step 3: Fallback — estimate duration + proportional timestamp distribution
+  console.log('Falling back to proportional timestamp distribution')
+  const durationMs = estimateAudioDurationMs(arrayBuffer, audioFile)
+  const sentences = splitIntoSentences(text.trim())
+  const segments = distributeTimestamps(sentences, durationMs)
 
   return { text: text.trim(), segments }
 }
+
+/** Estimate audio duration from file headers or file size */
+function estimateAudioDurationMs(buffer: ArrayBuffer, file: File): number {
+  // Try WAV header parsing
+  const wavMs = probeWavDurationMs(buffer)
+  if (wavMs !== null) return wavMs
+
+  // Fallback: estimate by file size (128kbps for mp3/m4a)
+  const bytesPerSecond = 16_000 // ~128kbps
+  return Math.round((file.size / bytesPerSecond) * 1000)
+}
+
+/** Parse WAV file header for exact duration */
+function probeWavDurationMs(buf: ArrayBuffer): number | null {
+  if (buf.byteLength < 44) return null
+  const dv = new DataView(buf)
+
+  const tag = (off: number, len: number) =>
+    String.fromCharCode(...new Uint8Array(buf, off, len))
+
+  if (tag(0, 4) !== 'RIFF' || tag(8, 4) !== 'WAVE') return null
+
+  const channels = dv.getUint16(22, true)
+  const sampleRate = dv.getUint32(24, true)
+  const blockAlign = dv.getUint16(32, true)
+  if (!channels || !sampleRate || !blockAlign) return null
+
+  // Walk chunks to find 'data'
+  let off = 12
+  while (off + 8 <= buf.byteLength) {
+    const id = tag(off, 4)
+    const size = dv.getUint32(off + 4, true)
+    if (id === 'data') {
+      return Math.round((size / blockAlign / sampleRate) * 1000)
+    }
+    off += 8 + size + (size & 1)
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Whisper (OpenAI-compatible) — unchanged
+// ---------------------------------------------------------------------------
 
 /** Transcribe via OpenAI Whisper (multipart form-data → /audio/transcriptions) */
 async function transcribeWhisper(
   audioFile: File,
   settings: LlmSettings,
-): Promise<{ text: string; segments: Array<{ startMs: number; endMs: number; text: string }> }> {
+): Promise<{ text: string; segments: SegmentResult[] }> {
   const modelName = settings.model || settings.provider
   const baseUrl = buildBaseUrl(settings.baseUrl)
   const endpoint = settings.endpoint || '/audio/transcriptions'
@@ -115,7 +366,11 @@ async function transcribeWhisper(
   parts.push(Buffer.from(`${modelName}\r\n`))
 
   parts.push(Buffer.from(`--${boundary}\r\n`))
-  parts.push(Buffer.from(`Content-Disposition: form-data; name="file"; filename="${audioFile.name}"\r\n`))
+  parts.push(
+    Buffer.from(
+      `Content-Disposition: form-data; name="file"; filename="${audioFile.name}"\r\n`,
+    ),
+  )
   parts.push(Buffer.from(`Content-Type: ${audioFile.type || 'audio/mpeg'}\r\n\r\n`))
   parts.push(buffer)
   parts.push(Buffer.from(`\r\n`))
@@ -151,7 +406,7 @@ async function transcribeWhisper(
 
   const result = await response.json()
 
-  const segments = (result.segments || []).map(
+  const segments: SegmentResult[] = (result.segments || []).map(
     (seg: { start: number; end: number; text: string }) => ({
       startMs: Math.round(seg.start * 1000),
       endMs: Math.round(seg.end * 1000),
@@ -165,6 +420,10 @@ async function transcribeWhisper(
 
   return { text: result.text || '', segments }
 }
+
+// ---------------------------------------------------------------------------
+// Route handler
+// ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
   try {

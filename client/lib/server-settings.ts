@@ -8,6 +8,8 @@ export interface LlmSettings {
   apiKey: string
   model?: string
   endpoint?: string
+  /** WhisperX alignment service URL (default: http://127.0.0.1:8765) */
+  whisperAlignUrl?: string
 }
 
 const SETTINGS_DIR = join(homedir(), '.ping-eng')

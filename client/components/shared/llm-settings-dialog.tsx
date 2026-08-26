@@ -23,6 +23,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('')
   const [endpoint, setEndpoint] = useState('')
+  const [whisperAlignUrl, setWhisperAlignUrl] = useState('')
   const [models, setModels] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [fetchingModels, setFetchingModels] = useState(false)
@@ -46,6 +47,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
           setBaseUrl(data.baseUrl || '')
           setModel(data.model || '')
           setEndpoint(data.endpoint || '')
+          setWhisperAlignUrl(data.whisperAlignUrl || '')
           // Don't fill in masked API key
         }
       })
@@ -117,6 +119,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
           apiKey: apiKey.trim(),
           model: model || undefined,
           endpoint: endpoint.trim() || undefined,
+          whisperAlignUrl: whisperAlignUrl.trim() || undefined,
         }),
       })
 
@@ -296,6 +299,28 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
                   : '默认: /audio/transcriptions。如果 provider 使用不同路径，请修改'}
               </p>
             </div>
+
+            {provider === 'mimo' && (
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium">WhisperX 对齐服务</label>
+                <Input
+                  placeholder="http://127.0.0.1:8765"
+                  value={whisperAlignUrl}
+                  onChange={e => setWhisperAlignUrl(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  本地 WhisperX 服务地址，用于精确时间戳对齐。留空则使用估算时间戳。
+                  <a
+                    href="https://github.com/m-bain/whisperX"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-1 text-primary underline"
+                  >
+                    安装说明
+                  </a>
+                </p>
+              </div>
+            )}
 
             {error && (
               <p className="text-sm text-destructive">{error}</p>

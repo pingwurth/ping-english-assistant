@@ -144,3 +144,7 @@ vite.config.ts.timestamp-*
 
 # 会话测试产物（e2e 截图/音频 fixture）
 e2e-fixtures/
+
+
+# python
+.venv/

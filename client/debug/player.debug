@@ -84,3 +84,7 @@
 
 19.
 @/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/div/button[2] 图标换成 "AI"
+
+
+20. 
+@/home/ping/gitProjects/my/ai/ping-english-assistant/client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1] 字幕区域新增一个图标：生词标记，点击后弹窗显示全文（仅英文）
