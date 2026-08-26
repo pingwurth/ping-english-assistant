@@ -17,7 +17,7 @@ export async function readLlmSettings(): Promise<LlmSettings | null> {
   try {
     const data = await readFile(SETTINGS_FILE, 'utf-8')
     const parsed = JSON.parse(data)
-    if (parsed.llm && parsed.llm.provider && parsed.llm.baseUrl && parsed.llm.apiKey) {
+    if (parsed.llm && parsed.llm.baseUrl && parsed.llm.apiKey) {
       return parsed.llm as LlmSettings
     }
     return null

@@ -10,7 +10,15 @@ interface LlmSettingsDialogProps {
   onSaved?: () => void
 }
 
+const PROVIDERS = [
+  { value: 'openai', label: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1' },
+  { value: 'anthropic', label: 'Anthropic', defaultBaseUrl: 'https://api.anthropic.com' },
+  { value: 'mimo', label: 'Xiaomi MiMo', defaultBaseUrl: 'https://api.xiaomimimo.com/v1' },
+  { value: 'custom', label: '自定义', defaultBaseUrl: '' },
+]
+
 export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDialogProps) {
+  const [provider, setProvider] = useState('openai')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('')
@@ -34,6 +42,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
       .then(res => res.json())
       .then(data => {
         if (data.configured) {
+          setProvider(data.provider || 'openai')
           setBaseUrl(data.baseUrl || '')
           setModel(data.model || '')
           setEndpoint(data.endpoint || '')
@@ -62,6 +71,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          provider,
           baseUrl: baseUrl.trim(),
           apiKey: apiKey.trim(),
         }),
@@ -86,7 +96,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
     } finally {
       setFetchingModels(false)
     }
-  }, [baseUrl, apiKey, model])
+  }, [provider, baseUrl, apiKey, model])
 
   const handleSave = useCallback(async () => {
     if (!baseUrl.trim() || !apiKey.trim()) {
@@ -102,6 +112,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          provider,
           baseUrl: baseUrl.trim(),
           apiKey: apiKey.trim(),
           model: model || undefined,
@@ -121,7 +132,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
     } finally {
       setSaving(false)
     }
-  }, [baseUrl, apiKey, model, endpoint, onOpenChange, onSaved])
+  }, [provider, baseUrl, apiKey, model, endpoint, onOpenChange, onSaved])
 
   const handleClose = useCallback((open: boolean) => {
     if (!open) {
@@ -147,6 +158,37 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
           </div>
         ) : (
           <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <label className="text-sm font-medium">
+                模型提供商
+                <span className="ml-1 text-destructive">*</span>
+              </label>
+              <select
+                value={provider}
+                onChange={e => {
+                  const newProvider = e.target.value
+                  setProvider(newProvider)
+                  const p = PROVIDERS.find(p => p.value === newProvider)
+                  if (p && p.defaultBaseUrl) {
+                    setBaseUrl(p.defaultBaseUrl)
+                  }
+                  if (newProvider === 'mimo') {
+                    setModel('mimo-v2.5-asr')
+                  }
+                  setShowDropdown(false)
+                  setModels([])
+                }}
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {PROVIDERS.map(p => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                选择模型提供商，自动填充对应的 API 地址
+              </p>
+            </div>
+
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">
                 Base URL
@@ -244,12 +286,14 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">转写端点路径</label>
               <Input
-                placeholder="/audio/transcriptions"
+                placeholder={provider === 'mimo' ? '/chat/completions（MiMo 自动处理）' : '/audio/transcriptions'}
                 value={endpoint}
                 onChange={e => setEndpoint(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                默认: /audio/transcriptions。如果 provider 使用不同路径，请修改
+                {provider === 'mimo'
+                  ? 'MiMo ASR 使用 /chat/completions 端点，通常无需修改'
+                  : '默认: /audio/transcriptions。如果 provider 使用不同路径，请修改'}
               </p>
             </div>
 
