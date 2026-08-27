@@ -13,6 +13,7 @@ import { putMaterialRecord, putMediaBlob, deleteMediaBlob } from '@/stores/mater
 import type { MaterialRecord } from '@/platform/storage/schema'
 import { estimateUsage } from '@/platform/storage/idb'
 import { consumeTtsExport, readTtsExport } from '@/lib/tts-export'
+import { consumeTranscribeExport, readTranscribeExport } from '@/lib/transcribe-export'
 
 /** 探测媒体真实时长（loadedmetadata；失败返回 null，不阻断导入） */
 function probeMediaDuration(file: File): Promise<number | null> {
@@ -125,6 +126,7 @@ function ImportPage() {
   const [done, setDone] = useState(false)
   const [doneId, setDoneId] = useState<string | null>(null)
   const [fromTts, setFromTts] = useState(false)
+  const [fromTranscribe, setFromTranscribe] = useState(false)
 
   /** 即时解析字幕文本：成功渲染摘要，失败红字 + 行号（文档 P1 校验规则） */
   const applySubtitle = (text: string, format?: 'srt' | 'lrc') => {
@@ -172,6 +174,23 @@ function ImportPage() {
     return () => { alive = false }
   }, [source, taskId])
 
+  // 转写一键带入：?source=transcribe&taskId= 时自动填充 ①②
+  useEffect(() => {
+    if (source !== 'transcribe' || !taskId) return
+    let alive = true
+    readTranscribeExport(taskId).then(async (payload) => {
+      if (!alive || !payload) return
+      const { meta, audio } = payload
+      const file = new File([audio], meta.audioFileName || 'audio.mp3', { type: audio.type || 'audio/mpeg' })
+      setFromTranscribe(true)
+      setMediaFile(file)
+      setName((meta.name || baseName(file.name)).slice(0, 50))
+      setMediaDurationMs(await probeMediaDuration(file))
+      applySubtitle(meta.subtitleText, meta.subtitleFormat)
+    }).catch(() => { /* 空态兜底：用户可手动选择文件 */ })
+    return () => { alive = false }
+  }, [source, taskId])
+
   // 时长偏差预警：未回填的 LRC（totalDurationMs=末句起点）必然偏差巨大 → 跳过警告避免误报
   const lastStartMs = subtitle ? (subtitle.data.sentences[subtitle.data.sentences.length - 1]?.startMs ?? 0) : 0
   const lrcUnfilled = !!subtitle && subtitle.data.format === 'lrc' && subtitle.data.totalDurationMs <= lastStartMs
@@ -206,6 +225,7 @@ function ImportPage() {
       }
       await putMaterialRecord(record)
       if (fromTts && taskId) await consumeTtsExport(taskId)
+      if (fromTranscribe && taskId) await consumeTranscribeExport(taskId)
       setDone(true)
       setDoneId(id)
     } catch {
@@ -228,6 +248,7 @@ function ImportPage() {
       <div className="mx-auto max-w-xl px-4 py-10">
         <PageIntro title="导入材料" eyebrow="ADD MATERIAL">
           {fromTts && <Badge variant="secondary">由文字转语音生成</Badge>}
+          {fromTranscribe && <Badge variant="secondary">由音频转文字生成</Badge>}
         </PageIntro>
 
         <Card>

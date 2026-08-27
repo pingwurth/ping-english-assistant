@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8,8 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { useTranscribe, MethodSelector, MethodHint, TranscribeResult, downloadBlob } from '@/components/shared/transcribe-shared'
 import { LlmSettingsDialog } from '@/components/shared/llm-settings-dialog'
+import { writeTranscribeExport } from '@/lib/transcribe-export'
 
 export function TranscribePage() {
+  const navigate = useNavigate()
   const [file, setFile] = useState<File | null>(null)
   const {
     method,
@@ -34,6 +36,20 @@ export function TranscribePage() {
     const name = file?.name.replace(/\.[^.]+$/, '') || 'subtitle'
     downloadBlob(blob, `${name}.srt`)
   }, [srt, file])
+
+  const handleImport = useCallback(async () => {
+    if (!file || !srt) return
+    const taskId = crypto.randomUUID()
+    const baseName = file.name.replace(/\.[^.]+$/, '').slice(0, 50)
+    await writeTranscribeExport(taskId, file, {
+      name: baseName,
+      audioFileName: file.name,
+      subtitleText: srt,
+      subtitleFormat: 'srt',
+      createdAt: Date.now(),
+    })
+    navigate(`/import?source=transcribe&taskId=${taskId}`)
+  }, [file, srt, navigate])
 
   return (
     <Shell back>
@@ -121,9 +137,7 @@ export function TranscribePage() {
                   <Button variant="outline" onClick={handleDownloadSrt}>
                     下载 .srt
                   </Button>
-                  <Link to="/import">
-                    <Button>导入为学习材料</Button>
-                  </Link>
+                  <Button onClick={() => void handleImport()}>导入为学习材料</Button>
                 </div>
               )}
             </CardContent>
