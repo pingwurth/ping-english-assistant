@@ -182,18 +182,85 @@ function TrainingSettingsSection() {
 /* ── 模型配置 ─────────────────────────────────────────── */
 
 const PROVIDERS = [
-  { value: 'openai', label: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1' },
-  { value: 'anthropic', label: 'Anthropic', defaultBaseUrl: 'https://api.anthropic.com' },
-  { value: 'mimo', label: 'Xiaomi MiMo', defaultBaseUrl: 'https://api.xiaomimimo.com/v1' },
-  { value: 'custom', label: '自定义', defaultBaseUrl: '' },
+  { value: 'qwen', label: 'QwenAI (通义千问)' },
+  { value: 'whisper', label: 'WhisperAI' },
 ]
 
+/** 通用模型列表下拉组件 */
+function ModelSelect({
+  label, value, models, showDropdown, onValueChange, onDropdownToggle,
+  fetching, onFetch, disabled,
+}: {
+  label: string
+  value: string
+  models: string[]
+  showDropdown: boolean
+  onValueChange: (v: string) => void
+  onDropdownToggle: (show: boolean) => void
+  fetching: boolean
+  onFetch: () => void
+  disabled: boolean
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <label className="text-sm font-medium">{label}</label>
+      <div className="relative">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Input
+              placeholder="点击右侧按钮获取模型列表"
+              value={value}
+              onChange={e => onValueChange(e.target.value)}
+              onFocus={() => { if (models.length > 0) onDropdownToggle(true) }}
+              onBlur={() => { setTimeout(() => onDropdownToggle(false), 200) }}
+              className="pr-8"
+            />
+            {models.length > 0 && (
+              <ChevronDown className="absolute right-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            )}
+          </div>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={onFetch}
+            disabled={fetching || disabled}
+            title="获取模型列表"
+          >
+            <RefreshCw className={`size-4 ${fetching ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
+        {showDropdown && models.length > 0 && (() => {
+          const filtered = models.filter(m => m.toLowerCase().includes(value.toLowerCase()))
+          return filtered.length > 0 ? (
+            <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-background shadow-lg">
+              {filtered.map(m => (
+                <button
+                  key={m}
+                  className={`w-full px-3 py-2 text-left text-sm hover:bg-muted ${m === value ? 'bg-primary/10 text-primary' : ''}`}
+                  onMouseDown={e => { e.preventDefault(); onValueChange(m); onDropdownToggle(false) }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          ) : null
+        })()}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {models.length > 0 ? `已获取 ${models.length} 个模型，可从列表选择或直接输入` : '填写 Base URL 和 API Key 后，点击刷新按钮获取模型列表'}
+      </p>
+    </div>
+  )
+}
+
 function ModelConfigSection() {
-  const [provider, setProvider] = useState('openai')
+  const [provider, setProvider] = useState('qwen')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
-  const [model, setModel] = useState('')
-  const [endpoint, setEndpoint] = useState('')
+  const [asrModel, setAsrModel] = useState('')
+  const [asrEndpoint, setAsrEndpoint] = useState('')
+  const [ttsModel, setTtsModel] = useState('')
+  const [ttsEndpoint, setTtsEndpoint] = useState('')
   const [whisperAlignUrl, setWhisperAlignUrl] = useState('')
   const [whisperTranscribeUrl, setWhisperTranscribeUrl] = useState('')
   const [models, setModels] = useState<string[]>([])
@@ -202,7 +269,8 @@ function ModelConfigSection() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [showDropdown, setShowDropdown] = useState(false)
+  const [showAsrDropdown, setShowAsrDropdown] = useState(false)
+  const [showTtsDropdown, setShowTtsDropdown] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -210,10 +278,12 @@ function ModelConfigSection() {
       .then(res => res.json())
       .then(data => {
         if (data.configured) {
-          setProvider(data.provider || 'openai')
+          setProvider(data.provider || 'qwen')
           setBaseUrl(data.baseUrl || '')
-          setModel(data.model || '')
-          setEndpoint(data.endpoint || '')
+          setAsrModel(data.asrModel || '')
+          setAsrEndpoint(data.asrEndpoint || '')
+          setTtsModel(data.ttsModel || '')
+          setTtsEndpoint(data.ttsEndpoint || '')
           setWhisperAlignUrl(data.whisperAlignUrl || '')
           setWhisperTranscribeUrl(data.whisperTranscribeUrl || '')
         }
@@ -240,14 +310,13 @@ function ModelConfigSection() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '获取模型列表失败')
       setModels(data.models || [])
-      if (data.models?.length > 0 && !model) setModel(data.models[0])
-      setShowDropdown(true)
+      setShowAsrDropdown(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : '获取模型列表失败')
     } finally {
       setFetchingModels(false)
     }
-  }, [provider, baseUrl, apiKey, model])
+  }, [provider, baseUrl, apiKey])
 
   const handleSave = useCallback(async () => {
     if (!baseUrl.trim() || !apiKey.trim()) {
@@ -265,8 +334,10 @@ function ModelConfigSection() {
           provider,
           baseUrl: baseUrl.trim(),
           apiKey: apiKey.trim(),
-          model: model || undefined,
-          endpoint: endpoint.trim() || undefined,
+          asrModel: asrModel || undefined,
+          asrEndpoint: asrEndpoint.trim() || undefined,
+          ttsModel: ttsModel || undefined,
+          ttsEndpoint: ttsEndpoint.trim() || undefined,
           whisperAlignUrl: whisperAlignUrl.trim() || undefined,
           whisperTranscribeUrl: whisperTranscribeUrl.trim() || undefined,
         }),
@@ -282,7 +353,7 @@ function ModelConfigSection() {
     } finally {
       setSaving(false)
     }
-  }, [provider, baseUrl, apiKey, model, endpoint, whisperAlignUrl, whisperTranscribeUrl])
+  }, [provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, whisperAlignUrl, whisperTranscribeUrl])
 
   if (loading) {
     return (
@@ -296,6 +367,7 @@ function ModelConfigSection() {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* 提供商与凭据 */}
       <Card>
         <CardContent className="flex flex-col gap-4 p-5">
           <CardTitle className="text-base"><Settings2 data-icon="inline-start" />模型提供商</CardTitle>
@@ -305,12 +377,7 @@ function ModelConfigSection() {
             <select
               value={provider}
               onChange={e => {
-                const p = e.target.value
-                setProvider(p)
-                const found = PROVIDERS.find(x => x.value === p)
-                if (found?.defaultBaseUrl) setBaseUrl(found.defaultBaseUrl)
-                if (p === 'mimo') setModel('mimo-v2.5-asr')
-                setShowDropdown(false)
+                setProvider(e.target.value)
                 setModels([])
               }}
               className="h-10 rounded-md border border-input bg-background px-3 text-sm"
@@ -322,9 +389,9 @@ function ModelConfigSection() {
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium">Base URL <span className="text-destructive">*</span></label>
             <Input
-              placeholder="例如: https://api.openai.com/v1"
+              placeholder="例如: https://dashscope.aliyuncs.com/compatible-mode/v1 或 https://api.openai.com/v1"
               value={baseUrl}
-              onChange={e => { setBaseUrl(e.target.value); setShowDropdown(false); setModels([]) }}
+              onChange={e => { setBaseUrl(e.target.value); setModels([]) }}
             />
             <p className="text-xs text-muted-foreground">API 接口地址，支持 OpenAI 兼容的服务</p>
           </div>
@@ -335,102 +402,112 @@ function ModelConfigSection() {
               type="password"
               placeholder="sk-..."
               value={apiKey}
-              onChange={e => { setApiKey(e.target.value); setShowDropdown(false); setModels([]) }}
+              onChange={e => { setApiKey(e.target.value); setModels([]) }}
             />
             <p className="text-xs text-muted-foreground">你的 API 密钥，保存后不会再次显示</p>
           </div>
         </CardContent>
       </Card>
 
+      {/* ASR 模型配置 */}
       <Card>
         <CardContent className="flex flex-col gap-4 p-5">
-          <CardTitle className="text-base"><Database data-icon="inline-start" />模型与端点</CardTitle>
+          <CardTitle className="text-base"><Mic data-icon="inline-start" />ASR 语音识别</CardTitle>
+
+          <ModelSelect
+            label="ASR 模型"
+            value={asrModel}
+            models={models}
+            showDropdown={showAsrDropdown}
+            onValueChange={setAsrModel}
+            onDropdownToggle={v => { setShowAsrDropdown(v); setShowTtsDropdown(false) }}
+            fetching={fetchingModels}
+            onFetch={fetchModels}
+            disabled={!baseUrl.trim() || !apiKey.trim()}
+          />
 
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">模型</label>
-            <div className="relative">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <Input
-                    placeholder="点击右侧按钮获取模型列表"
-                    value={model}
-                    onChange={e => setModel(e.target.value)}
-                    onFocus={() => { if (models.length > 0) setShowDropdown(true) }}
-                  onBlur={() => { setTimeout(() => setShowDropdown(false), 200) }}
-                  className="pr-8"
-                  />
-                  {models.length > 0 && (
-                    <ChevronDown className="absolute right-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  )}
-                </div>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={fetchModels}
-                  disabled={fetchingModels || !baseUrl.trim() || !apiKey.trim()}
-                  title="获取模型列表"
-                >
-                  <RefreshCw className={`size-4 ${fetchingModels ? 'animate-spin' : ''}`} />
-                </Button>
-              </div>
-              {showDropdown && models.length > 0 && (() => {
-                const filtered = models.filter(m =>
-                  m.toLowerCase().includes(model.toLowerCase())
-                )
-                return filtered.length > 0 ? (
-                  <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-background shadow-lg">
-                    {filtered.map(m => (
-                      <button
-                        key={m}
-                        className={`w-full px-3 py-2 text-left text-sm hover:bg-muted ${m === model ? 'bg-primary/10 text-primary' : ''}`}
-                        onMouseDown={e => { e.preventDefault(); setModel(m); setShowDropdown(false) }}
-                      >
-                        {m}
-                      </button>
-                    ))}
-                  </div>
-                ) : null
-              })()}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {models.length > 0 ? `已获取 ${models.length} 个模型，可从列表选择或直接输入` : '填写 Base URL 和 API Key 后，点击刷新按钮获取模型列表'}
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">转写端点路径</label>
+            <label className="text-sm font-medium">ASR 端点路径</label>
             <Input
-              placeholder={provider === 'mimo' ? '/chat/completions（MiMo 自动处理）' : '/audio/transcriptions'}
-              value={endpoint}
-              onChange={e => setEndpoint(e.target.value)}
+              placeholder="/audio/transcriptions"
+              value={asrEndpoint}
+              onChange={e => setAsrEndpoint(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              {provider === 'mimo'
-                ? 'MiMo ASR 使用 /chat/completions 端点，通常无需修改'
-                : '默认: /audio/transcriptions。如果 provider 使用不同路径，请修改'}
+              默认: /audio/transcriptions。如果 provider 使用不同路径，请修改
             </p>
           </div>
+        </CardContent>
+      </Card>
 
-          {provider === 'mimo' && (
-            <div className="flex flex-col gap-2">
-              <label className="text-sm font-medium">WhisperX 对齐服务</label>
-              <Input placeholder="http://127.0.0.1:8765" value={whisperAlignUrl} onChange={e => setWhisperAlignUrl(e.target.value)} />
-              <p className="text-xs text-muted-foreground">本地 WhisperX 服务地址，用于精确时间戳对齐。留空则使用估算时间戳。</p>
-            </div>
-          )}
+      {/* TTS 模型配置 */}
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-5">
+          <CardTitle className="text-base"><Headphones data-icon="inline-start" />TTS 语音合成</CardTitle>
+
+          <ModelSelect
+            label="TTS 模型"
+            value={ttsModel}
+            models={models}
+            showDropdown={showTtsDropdown}
+            onValueChange={setTtsModel}
+            onDropdownToggle={v => { setShowTtsDropdown(v); setShowAsrDropdown(false) }}
+            fetching={fetchingModels}
+            onFetch={fetchModels}
+            disabled={!baseUrl.trim() || !apiKey.trim()}
+          />
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">TTS 端点路径</label>
+            <Input
+              placeholder="/audio/speech"
+              value={ttsEndpoint}
+              onChange={e => setTtsEndpoint(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              TTS 接口路径，不同 provider 可能不同
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 本地服务配置 */}
+      <Card>
+        <CardContent className="flex flex-col gap-4 p-5">
+          <CardTitle className="text-base"><Database data-icon="inline-start" />本地服务</CardTitle>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">WhisperX 对齐服务</label>
+            <Input
+              placeholder="http://127.0.0.1:8765"
+              value={whisperAlignUrl}
+              onChange={e => setWhisperAlignUrl(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              WhisperX 词级时间戳对齐服务地址。留空则使用默认地址 (http://127.0.0.1:8765)。
+              <code className="ml-1 text-xs">./start.sh --server align</code>
+            </p>
+          </div>
 
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium">faster-whisper 转写服务</label>
-            <Input placeholder="http://127.0.0.1:8766" value={whisperTranscribeUrl} onChange={e => setWhisperTranscribeUrl(e.target.value)} />
-            <p className="text-xs text-muted-foreground">本地 faster-whisper 转写服务地址。留空则使用默认地址 (http://127.0.0.1:8766)。</p>
+            <Input
+              placeholder="http://127.0.0.1:8766"
+              value={whisperTranscribeUrl}
+              onChange={e => setWhisperTranscribeUrl(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              本地 faster-whisper 转写服务地址。留空则使用默认地址 (http://127.0.0.1:8766)。
+              <code className="ml-1 text-xs">./start.sh --server transcribe</code>
+            </p>
           </div>
-
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          {success && <p className="text-sm text-emerald-600">{success}</p>}
-
-          <Button onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存配置'}</Button>
         </CardContent>
       </Card>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {success && <p className="text-sm text-emerald-600">{success}</p>}
+
+      <Button onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存配置'}</Button>
     </div>
   )
 }

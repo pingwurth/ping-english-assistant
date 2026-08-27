@@ -19,7 +19,7 @@ interface SegmentResult {
 
 /** Detect whether the model should use chat completions for audio transcription */
 function isAudioChatModel(settings: LlmSettings): boolean {
-  const model = (settings.model || '').toLowerCase()
+  const model = (settings.asrModel || '').toLowerCase()
   const baseUrl = settings.baseUrl.toLowerCase()
 
   // MiMo ASR models
@@ -41,7 +41,7 @@ function isAudioChatModel(settings: LlmSettings): boolean {
 
 /** Detect the audio chat API format based on provider/model */
 function detectAudioChatFormat(settings: LlmSettings): 'mimo' | 'dashscope' {
-  const model = (settings.model || '').toLowerCase()
+  const model = (settings.asrModel || '').toLowerCase()
   const baseUrl = settings.baseUrl.toLowerCase()
 
   if (
@@ -260,7 +260,7 @@ async function transcribeMimo(
   settings: LlmSettings,
 ): Promise<{ text: string; segments: SegmentResult[] }> {
   // Step 1: Get transcription text from MiMo ASR
-  const modelName = settings.model || 'mimo-v2.5-asr'
+  const modelName = settings.asrModel || 'mimo-v2.5-asr'
   const baseUrl = buildBaseUrl(settings.baseUrl)
   const url = `${baseUrl}/chat/completions`
 
@@ -391,7 +391,7 @@ async function transcribeDashScopeAudio(
   audioFile: File,
   settings: LlmSettings,
 ): Promise<{ text: string; segments: SegmentResult[] }> {
-  const modelName = settings.model || 'qwen-audio-3.0-asr-flash'
+  const modelName = settings.asrModel || 'qwen-audio-3.0-asr-flash'
   const root = deriveDashScopeRoot(settings.baseUrl)
   const url = `${root}/api/v1/services/aigc/multimodal-generation/generation`
 
@@ -525,9 +525,9 @@ async function transcribeWhisper(
   audioFile: File,
   settings: LlmSettings,
 ): Promise<{ text: string; segments: SegmentResult[] }> {
-  const modelName = settings.model || settings.provider
+  const modelName = settings.asrModel || settings.provider
   const baseUrl = buildBaseUrl(settings.baseUrl)
-  const endpoint = settings.endpoint || '/audio/transcriptions'
+  const endpoint = settings.asrEndpoint || '/audio/transcriptions'
   const url = `${baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
 
   const arrayBuffer = await audioFile.arrayBuffer()

@@ -8,10 +8,9 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  Next.js Client (localhost:3000)                            │
 │                                                             │
-│  POST /api/transcribe ──→ MiMo ASR (云端) ──→ 文本         │
-│                              │                              │
-│                              ▼                              │
-│                    POST /api/transcribe/local               │
+│  POST /api/transcribe ──→ Whisper API (云端) ──→ 文本+时间戳│
+│                                                             │
+│  POST /api/transcribe/local                                 │
 │                              │                              │
 │         ┌────────────────────┼────────────────────┐         │
 │         ▼                    ▼                    ▼         │
@@ -257,10 +256,9 @@ cd server/
 ```json
 {
   "llm": {
-    "provider": "mimo",
-    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "provider": "openai",
+    "baseUrl": "https://api.openai.com/v1",
     "apiKey": "your-api-key",
-    "whisperAlignUrl": "http://127.0.0.1:8765",
     "whisperTranscribeUrl": "http://127.0.0.1:8766"
   }
 }
@@ -269,10 +267,8 @@ cd server/
 **前端调用链路：**
 
 1. 用户录音 → 前端发送音频到 `POST /api/transcribe`
-2. Next.js API 路由根据 `provider` 选择管道：
-   - **MiMo ASR**：音频发到云端 MiMo 获取文本，再调本地 `align_server` 获取词级时间戳
-   - **OpenAI Whisper**：音频发到 provider 的 `/audio/transcriptions` 获取文本+时间戳
-3. 如果 WhisperX 对齐服务不可用，自动降级为按词数比例分配时间戳
+2. Next.js API 路由调用 Whisper 兼容的 `/audio/transcriptions` 接口获取文本+时间戳
+3. 对齐服务可用于为转写结果补充词级时间戳（可选）
 
 **本地转写模式：** 前端也可以直接调用 `POST /api/transcribe/local`，绕过云端，完全使用本地 faster-whisper 服务。
 

@@ -390,11 +390,10 @@ for seg in result["segments"]:
 ```json
 {
   "llm": {
-    "provider": "mimo",
-    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "provider": "openai",
+    "baseUrl": "https://api.openai.com/v1",
     "apiKey": "your-api-key-here",
-    "model": "mimo-v2.5-asr",
-    "whisperAlignUrl": "http://127.0.0.1:8765",
+    "model": "whisper-1",
     "whisperTranscribeUrl": "http://127.0.0.1:8766"
   }
 }
@@ -404,10 +403,9 @@ for seg in result["segments"]:
 
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
-| `whisperAlignUrl` | 对齐服务地址 | `http://127.0.0.1:8765` |
-| `whisperTranscribeUrl` | 转写服务地址 | `http://127.0.0.1:8766` |
+| `whisperTranscribeUrl` | 本地转写服务地址 | `http://127.0.0.1:8766` |
 
-如果服务运行在默认端口（8765/8766），这两个字段可以省略。
+如果服务运行在默认端口（8766），`whisperTranscribeUrl` 字段可以省略。
 
 ### 6.3 首次配置
 
@@ -418,10 +416,9 @@ mkdir -p ~/.ping-eng
 cat > ~/.ping-eng/settings.json << 'EOF'
 {
   "llm": {
-    "provider": "mimo",
-    "baseUrl": "https://api.xiaomimimo.com/v1",
+    "provider": "openai",
+    "baseUrl": "https://api.openai.com/v1",
     "apiKey": "your-api-key-here",
-    "whisperAlignUrl": "http://127.0.0.1:8765",
     "whisperTranscribeUrl": "http://127.0.0.1:8766"
   }
 }
@@ -480,17 +477,16 @@ cd server/ && ./start.sh --server both
    ▼
 前端发送音频到 POST /api/transcribe
    │
-   ├── MiMo ASR 模式（云端 LLM）
-   │   │
-   │   ├── 1. 音频 → MiMo API → 获取文本
-   │   │
-   │   └── 2. 音频 + 文本 → 本地 align_server → 获取词级时间戳
-   │       │
-   │       └── 如果对齐服务不可用 → 降级为按词数比例分配时间戳
-   │
-   └── 本地转写模式
+   └── Whisper 兼容模式（云端 API）
        │
-       └── 音频 → 本地 transcribe_server → 获取文本 + 段落时间戳
+       └── 音频 → Whisper API → 获取文本 + 段落时间戳
+
+用户录音（本地模式）
+   │
+   ▼
+前端发送音频到 POST /api/transcribe/local
+   │
+   └── 音频 → 本地 transcribe_server → 获取文本 + 段落时间戳
 ```
 
 ---

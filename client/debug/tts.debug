@@ -1,0 +1,2 @@
+1.
+@client/components/pages/tts.tsx 文字转语音要先选择模型才能生成，支持选项：当前配置的 asr 模型、本地离线运行的 kokoro

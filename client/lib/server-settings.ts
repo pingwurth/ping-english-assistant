@@ -6,8 +6,17 @@ export interface LlmSettings {
   provider: string
   baseUrl: string
   apiKey: string
-  model?: string
-  endpoint?: string
+
+  /** ASR (语音识别) model name */
+  asrModel?: string
+  /** ASR endpoint path (default: /audio/transcriptions) */
+  asrEndpoint?: string
+
+  /** TTS (语音合成) model name */
+  ttsModel?: string
+  /** TTS endpoint path */
+  ttsEndpoint?: string
+
   /** WhisperX alignment service URL (default: http://127.0.0.1:8765) */
   whisperAlignUrl?: string
   /** faster-whisper transcription service URL (default: http://127.0.0.1:8766) */
@@ -22,7 +31,13 @@ export async function readLlmSettings(): Promise<LlmSettings | null> {
     const data = await readFile(SETTINGS_FILE, 'utf-8')
     const parsed = JSON.parse(data)
     if (parsed.llm && parsed.llm.baseUrl && parsed.llm.apiKey) {
-      return parsed.llm as LlmSettings
+      const raw = parsed.llm as Record<string, unknown>
+      // Backward compat: migrate old model/endpoint → asrModel/asrEndpoint
+      if (raw.model && !raw.asrModel) raw.asrModel = raw.model
+      if (raw.endpoint && !raw.asrEndpoint) raw.asrEndpoint = raw.endpoint
+      delete raw.model
+      delete raw.endpoint
+      return raw as unknown as LlmSettings
     }
     return null
   } catch {

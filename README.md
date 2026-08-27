@@ -142,12 +142,12 @@ Core（平台无关纯 TS）→ Platform（浏览器实现）→ Services（AI �
 | `/training/:materialId` | TrainingCenter | P3 训练中心（选择训练模式） |
 | `/training/puzzle` | Puzzle | P4 九宫格选词拼句 |
 | `/training/dictation` | Dictation | P5 单句听写 |
-| `/transcribe` | TranscribePage | P6 录音转写（MiMo ASR / OpenAI Whisper） |
+| `/transcribe` | TranscribePage | P6 录音转写（OpenAI Whisper 兼容模式） |
 | `/training/shadowing` | Shadowing | P7 影子跟读 + SOE 评分 |
 | `/training/recitation` | Recitation | P8 全文背诵 + LLM 报告 |
 | `/training/read-aloud` | ReadAloud | P8.5 朗读评分 |
 | `/training/report` | Report | P9 分析报告（SSE 流式） |
-| `/settings` | SettingsPage | P10 设置（转写服务、WhisperX、LLM 配置） |
+| `/settings` | SettingsPage | P10 设置（播放/训练、模型配置、存储管理） |
 | `/tts` | TTS | P11 文字转语音 |
 
 ## 设计理念
@@ -161,7 +161,7 @@ Core（平台无关纯 TS）→ Platform（浏览器实现）→ Services（AI �
 | 方向 | 功能 | 说明 |
 |------|------|------|
 | **转写增强** | 双语转写 | 中英双语字幕同时生成 |
-| | 多种模型支持 | 接入更多 ASR 模型（Whisper、MiMo ASR、本地 faster-whisper 等） |
+| | 多种模型支持 | 接入更多 ASR 模型（OpenAI Whisper 兼容、本地 faster-whisper 等） |
 | **词汇学习** | 生词收藏 | 标记生词，集中复习 |
 | | 填空 | AI 思路、逻辑推理 |
 | | 生词出现频率统计 | 统计生词在材料中出现的频次，识别高频词 |

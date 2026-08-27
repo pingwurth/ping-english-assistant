@@ -13,8 +13,10 @@ export async function GET() {
       configured: true,
       provider: settings.provider,
       baseUrl: settings.baseUrl,
-      model: settings.model || '',
-      endpoint: settings.endpoint || '',
+      asrModel: settings.asrModel || '',
+      asrEndpoint: settings.asrEndpoint || '',
+      ttsModel: settings.ttsModel || '',
+      ttsEndpoint: settings.ttsEndpoint || '',
       whisperAlignUrl: settings.whisperAlignUrl || '',
       whisperTranscribeUrl: settings.whisperTranscribeUrl || '',
       apiKey: settings.apiKey.slice(0, 8) + '***',
@@ -30,7 +32,12 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { provider, baseUrl, apiKey, model, endpoint, whisperAlignUrl, whisperTranscribeUrl } = body
+    const {
+      provider, baseUrl, apiKey,
+      asrModel, asrEndpoint,
+      ttsModel, ttsEndpoint,
+      whisperAlignUrl, whisperTranscribeUrl,
+    } = body
 
     if (!baseUrl || !apiKey) {
       return NextResponse.json(
@@ -43,8 +50,10 @@ export async function POST(request: Request) {
       provider: provider || '',
       baseUrl,
       apiKey,
-      model: model || undefined,
-      endpoint: endpoint || undefined,
+      asrModel: asrModel || undefined,
+      asrEndpoint: asrEndpoint || undefined,
+      ttsModel: ttsModel || undefined,
+      ttsEndpoint: ttsEndpoint || undefined,
       whisperAlignUrl: whisperAlignUrl || undefined,
       whisperTranscribeUrl: whisperTranscribeUrl || undefined,
     }
