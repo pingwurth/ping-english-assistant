@@ -17,13 +17,42 @@ interface SegmentResult {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Detect whether the configured provider uses MiMo ASR format */
-function isMimoAsr(settings: LlmSettings): boolean {
-  return (
+/** Detect whether the model should use chat completions for audio transcription */
+function isAudioChatModel(settings: LlmSettings): boolean {
+  const model = (settings.model || '').toLowerCase()
+  const baseUrl = settings.baseUrl.toLowerCase()
+
+  // MiMo ASR models
+  if (
     settings.provider === 'mimo' ||
-    settings.baseUrl.includes('xiaomimimo.com') ||
-    (settings.model || '').startsWith('mimo')
-  )
+    baseUrl.includes('xiaomimimo.com') ||
+    model.startsWith('mimo')
+  ) {
+    return true
+  }
+
+  // DashScope qwen-audio models (ASR and realtime)
+  if (model.startsWith('qwen-audio')) {
+    return true
+  }
+
+  return false
+}
+
+/** Detect the audio chat API format based on provider/model */
+function detectAudioChatFormat(settings: LlmSettings): 'mimo' | 'dashscope' {
+  const model = (settings.model || '').toLowerCase()
+  const baseUrl = settings.baseUrl.toLowerCase()
+
+  if (
+    settings.provider === 'mimo' ||
+    baseUrl.includes('xiaomimimo.com') ||
+    model.startsWith('mimo')
+  ) {
+    return 'mimo'
+  }
+
+  return 'dashscope'
 }
 
 /** Infer MIME type from filename */
@@ -341,6 +370,153 @@ function probeWavDurationMs(buf: ArrayBuffer): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// DashScope qwen-audio — native multimodal-generation API
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the DashScope native API root from the configured base URL.
+ * Handles both standard DashScope (`dashscope.aliyuncs.com`) and
+ * token-plan endpoints (`token-plan.cn-beijing.maas.aliyuncs.com`).
+ */
+function deriveDashScopeRoot(baseUrl: string): string {
+  let root = baseUrl.replace(/\/+$/, '')
+  // Strip OpenAI-compatible path suffixes
+  root = root.replace(/\/compatible-mode\/v1$/i, '')
+  root = root.replace(/\/v1$/i, '')
+  return root
+}
+
+/** Transcribe via DashScope qwen-audio native multimodal-generation API */
+async function transcribeDashScopeAudio(
+  audioFile: File,
+  settings: LlmSettings,
+): Promise<{ text: string; segments: SegmentResult[] }> {
+  const modelName = settings.model || 'qwen-audio-3.0-asr-flash'
+  const root = deriveDashScopeRoot(settings.baseUrl)
+  const url = `${root}/api/v1/services/aigc/multimodal-generation/generation`
+
+  const arrayBuffer = await audioFile.arrayBuffer()
+  const base64 = Buffer.from(arrayBuffer).toString('base64')
+  const mime = inferMimeType(audioFile.name, audioFile.type || 'audio/wav')
+
+  // DashScope native API uses input.messages with input_audio
+  const body = {
+    model: modelName,
+    input: {
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_audio',
+              input_audio: {
+                data: `data:${mime};base64,${base64}`,
+              },
+            },
+          ],
+        },
+      ],
+    },
+    parameters: {
+      format: inferAudioFormat(audioFile.name),
+    },
+  }
+
+  console.log(`DashScope ASR: POST ${url} (model=${modelName}, audio=${(audioFile.size / 1024).toFixed(0)}KB)`)
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${settings.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    console.error('DashScope audio error:', response.status, errorText)
+    throw new Error(`转写失败 (${response.status}): ${errorText.slice(0, 200)}`)
+  }
+
+  const result = await response.json()
+
+  // Response format: { sentence: { text, begin_time, end_time, words: [...] } }
+  // or per docs: { output: { text, output: { sentence: { text } } } }
+  const sentence = result?.sentence
+  const text: string =
+    sentence?.text ||
+    result?.output?.text ||
+    result?.output?.output?.sentence?.text ||
+    ''
+
+  if (!text.trim()) {
+    console.warn('DashScope ASR returned empty text. Response:', JSON.stringify(result).slice(0, 500))
+    return { text: '', segments: [] }
+  }
+
+  // Use word-level timestamps from the API if available
+  const apiWords: Array<{ begin_time: number; end_time: number; text: string; punctuation?: string }> =
+    sentence?.words || []
+
+  if (apiWords.length > 0) {
+    // Convert API word timestamps (ms) to our WordTimestamp format (seconds)
+    // Append punctuation to word text so groupWordsToSegments can detect sentence boundaries
+    const words: WordTimestamp[] = apiWords.map(w => ({
+      word: w.punctuation ? `${w.text}${w.punctuation}` : w.text,
+      start: w.begin_time / 1000,
+      end: w.end_time / 1000,
+    }))
+    const segments = groupWordsToSegments(words)
+    console.log(`DashScope ASR: ${words.length} words → ${segments.length} segments`)
+    return { text: text.trim(), segments }
+  }
+
+  // Fallback: use sentence-level timestamps
+  if (sentence?.begin_time != null && sentence?.end_time != null) {
+    const segments: SegmentResult[] = [{
+      startMs: sentence.begin_time,
+      endMs: sentence.end_time,
+      text: text.trim(),
+    }]
+    return { text: text.trim(), segments }
+  }
+
+  // Last resort: proportional distribution
+  console.log('Falling back to proportional timestamp distribution')
+  const durationMs = estimateAudioDurationMs(arrayBuffer, audioFile)
+  const sentences = splitIntoSentences(text.trim())
+  const segments = distributeTimestamps(sentences, durationMs)
+
+  return { text: text.trim(), segments }
+}
+
+/** Infer audio format from filename extension for DashScope parameters */
+function inferAudioFormat(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase()
+  const map: Record<string, string> = {
+    mp3: 'mp3',
+    wav: 'wav',
+    m4a: 'm4a',
+    ogg: 'ogg',
+    flac: 'flac',
+    webm: 'webm',
+    aac: 'aac',
+    amr: 'amr',
+    avi: 'avi',
+    flv: 'flv',
+    mkv: 'mkv',
+    mov: 'mov',
+    mp4: 'mp4',
+    mpeg: 'mpeg',
+    opus: 'opus',
+    wma: 'wma',
+    wmv: 'wmv',
+  }
+  return map[ext || ''] || 'mp3'
+}
+
+// ---------------------------------------------------------------------------
 // Whisper (OpenAI-compatible) — unchanged
 // ---------------------------------------------------------------------------
 
@@ -439,10 +615,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'LLM settings not configured' }, { status: 400 })
     }
 
-    // Route to MiMo ASR or OpenAI Whisper based on provider
-    const { text, segments } = isMimoAsr(settings)
-      ? await transcribeMimo(audioFile, settings)
-      : await transcribeWhisper(audioFile, settings)
+    // Route to appropriate transcription method
+    let result: { text: string; segments: SegmentResult[] }
+
+    if (isAudioChatModel(settings)) {
+      const format = detectAudioChatFormat(settings)
+      if (format === 'mimo') {
+        result = await transcribeMimo(audioFile, settings)
+      } else {
+        result = await transcribeDashScopeAudio(audioFile, settings)
+      }
+    } else {
+      result = await transcribeWhisper(audioFile, settings)
+    }
+
+    const { text, segments } = result
 
     return NextResponse.json({
       text,

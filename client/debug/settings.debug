@@ -4,3 +4,7 @@
 
 2.
 @client/components/pages/settings.tsx 调整布局为标签页切换的风格，当前包含标签页：学习统计、训练设置、存储管理，新增一个标签页“模型配置”
+
+
+3.
+@client/components/pages/settings.tsx /html/body/div[2]/main/div/div[2]/div[2]/div/div[2]/div/div[2]/div/div/div/input 我希望这里既支持下拉选择又支持手动输入

@@ -355,9 +355,9 @@ function ModelConfigSection() {
                     placeholder="点击右侧按钮获取模型列表"
                     value={model}
                     onChange={e => setModel(e.target.value)}
-                    onClick={() => models.length > 0 && setShowDropdown(!showDropdown)}
-                    className="pr-8"
-                    readOnly={models.length > 0}
+                    onFocus={() => { if (models.length > 0) setShowDropdown(true) }}
+                  onBlur={() => { setTimeout(() => setShowDropdown(false), 200) }}
+                  className="pr-8"
                   />
                   {models.length > 0 && (
                     <ChevronDown className="absolute right-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -373,22 +373,27 @@ function ModelConfigSection() {
                   <RefreshCw className={`size-4 ${fetchingModels ? 'animate-spin' : ''}`} />
                 </Button>
               </div>
-              {showDropdown && models.length > 0 && (
-                <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-background shadow-lg">
-                  {models.map(m => (
-                    <button
-                      key={m}
-                      className={`w-full px-3 py-2 text-left text-sm hover:bg-muted ${m === model ? 'bg-primary/10 text-primary' : ''}`}
-                      onClick={() => { setModel(m); setShowDropdown(false) }}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {showDropdown && models.length > 0 && (() => {
+                const filtered = models.filter(m =>
+                  m.toLowerCase().includes(model.toLowerCase())
+                )
+                return filtered.length > 0 ? (
+                  <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border bg-background shadow-lg">
+                    {filtered.map(m => (
+                      <button
+                        key={m}
+                        className={`w-full px-3 py-2 text-left text-sm hover:bg-muted ${m === model ? 'bg-primary/10 text-primary' : ''}`}
+                        onMouseDown={e => { e.preventDefault(); setModel(m); setShowDropdown(false) }}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                ) : null
+              })()}
             </div>
             <p className="text-xs text-muted-foreground">
-              {models.length > 0 ? `已获取 ${models.length} 个模型，点击下拉选择` : '填写 Base URL 和 API Key 后，点击刷新按钮获取模型列表'}
+              {models.length > 0 ? `已获取 ${models.length} 个模型，可从列表选择或直接输入` : '填写 Base URL 和 API Key 后，点击刷新按钮获取模型列表'}
             </p>
           </div>
 
