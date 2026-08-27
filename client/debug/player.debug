@@ -92,3 +92,7 @@
 
 21.
 @client/components/pages/player.tsx 为什么字幕删除和纠错图标要点击字幕后才会显示？
+
+
+22.
+@client/components/pages/player.tsx 这个AI转写字幕 /html/body/div[2]/main/div/div[2]/section/div[1]/div/button[3] 要保持与 @client/components/shared/transcribe.tsx 页面一致，当前缺少翻译开关和翻译模型选择下拉框，代码不能复用吗？

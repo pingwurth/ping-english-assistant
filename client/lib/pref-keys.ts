@@ -35,3 +35,9 @@ export function getHeadphoneHint(): boolean {
   return getPref<boolean>('pref:headphoneHint', true)
 }
 export function setHeadphoneHint(v: boolean): void { setPref('pref:headphoneHint', v) }
+
+/** 是否启用翻译功能（默认关闭） */
+export function getTranslateEnabled(): boolean {
+  return getPref<boolean>('pref:translateEnabled', false)
+}
+export function setTranslateEnabled(v: boolean): void { setPref('pref:translateEnabled', v) }

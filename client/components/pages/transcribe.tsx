@@ -1,14 +1,16 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { useTranscribe, MethodSelector, MethodHint, TranscribeResult, downloadBlob } from '@/components/shared/transcribe-shared'
-import { LlmSettingsDialog } from '@/components/shared/llm-settings-dialog'
+import { ModelConfigListDialog } from '@/components/shared/model-config-list-dialog'
 import { writeTranscribeExport } from '@/lib/transcribe-export'
+import { getTranslateEnabled, setTranslateEnabled as persistTranslateEnabled } from '@/lib/pref-keys'
 
 export function TranscribePage() {
   const navigate = useNavigate()
@@ -25,13 +27,31 @@ export function TranscribePage() {
     start,
     cancel,
     handleSrtChange,
-    showLlmSettings,
-    setShowLlmSettings,
-    handleLlmSettingsSaved,
+    showModelConfig,
+    setShowModelConfig,
+    handleModelConfigSaved,
+    refreshConfigs,
     asrConfigs,
     selectedAsrConfigId,
     setSelectedAsrConfigId,
+    translateEnabled,
+    setTranslateEnabled,
+    translateConfigs,
+    selectedTranslateConfigId,
+    setSelectedTranslateConfigId,
+    translateWarning,
   } = useTranscribe()
+
+  // 挂载时从偏好初始化翻译开关（仅一次）
+  useEffect(() => {
+    setTranslateEnabled(getTranslateEnabled())
+  }, [setTranslateEnabled])
+
+  // 切换开关时同步持久化偏好
+  const handleToggleTranslate = useCallback((v: boolean) => {
+    setTranslateEnabled(v)
+    persistTranslateEnabled(v)
+  }, [setTranslateEnabled])
 
   const handleDownloadSrt = useCallback(() => {
     if (!srt) return
@@ -87,11 +107,39 @@ export function TranscribePage() {
 
               <MethodHint
                 method={method}
-                onConfigureLlm={() => setShowLlmSettings(true)}
+                onConfigureLlm={() => setShowModelConfig(true)}
                 asrConfigs={asrConfigs}
                 selectedAsrConfigId={selectedAsrConfigId}
                 onAsrConfigChange={setSelectedAsrConfigId}
               />
+
+              {(method === 'model' || method === 'local') && (
+                <div className="flex flex-col gap-2 rounded-xl bg-muted p-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">翻译</span>
+                    <Switch
+                      checked={translateEnabled}
+                      onCheckedChange={handleToggleTranslate}
+                      aria-label="翻译开关"
+                    />
+                    {translateEnabled && (
+                      <select
+                        value={selectedTranslateConfigId || ''}
+                        onChange={e => setSelectedTranslateConfigId(e.target.value)}
+                        disabled={translateConfigs.length === 0}
+                        className="rounded-md border border-input bg-background px-2 py-1 text-xs disabled:opacity-50"
+                      >
+                        {translateConfigs.map(c => (
+                          <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  {translateEnabled && translateConfigs.length === 0 && (
+                    <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置翻译模型</p>
+                  )}
+                </div>
+              )}
 
               {status === 'running' ? (
                 <Button className="w-full" variant="destructive" onClick={cancel}>
@@ -126,6 +174,12 @@ export function TranscribePage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="flex min-h-80 flex-col gap-4">
+              {translateWarning && (
+                <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400">
+                  {translateWarning}
+                </div>
+              )}
+
               <TranscribeResult
                 status={status}
                 method={method}
@@ -151,10 +205,11 @@ export function TranscribePage() {
         </div>
       </div>
 
-      <LlmSettingsDialog
-        open={showLlmSettings}
-        onOpenChange={setShowLlmSettings}
-        onSaved={handleLlmSettingsSaved}
+      <ModelConfigListDialog
+        open={showModelConfig}
+        onOpenChange={setShowModelConfig}
+        onConfigsChanged={refreshConfigs}
+        onSaved={handleModelConfigSaved}
       />
     </Shell>
   )

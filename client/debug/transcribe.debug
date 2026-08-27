@@ -8,3 +8,10 @@
 
 3.
 @client/components/shared/transcribe-shared.tsx 音频转文字成功后选择“导入为学习材料”，音频文件和字幕文件应该自动携带过去
+
+
+4.
+@client/components/shared/transcribe-shared.tsx /html/body/div[2]/main/div[2]/div/div[2]/div/div[1]/div/button 点击这个按钮应该弹窗显示设置里的模型配置列表
+
+
+5. @client/components/shared/transcribe-shared.tsx 选择 faster-whisper (/html/body/div[2]/main/div/div[2]/div[1]/div[2]/div[1]/button[3]) 就不要展示模型选择下拉框了

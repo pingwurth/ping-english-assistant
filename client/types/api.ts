@@ -158,3 +158,22 @@ export interface TtsSubtitleResponse {
   srt: string
   sentenceCount: number
 }
+
+/* ── 契约⑧ POST /api/translate 批量文本翻译（BFF） ── */
+
+/** 翻译方向：英译中 / 中译英 */
+export type TranslateDirection = 'en2zh' | 'zh2en'
+
+export interface TranslateRequest {
+  /** 待翻译文本（每 50 条一块分批提交，上限 500 条） */
+  texts: string[]
+  /** 'auto' 或缺省时由服务端按抽样文本自动判定方向 */
+  direction?: 'auto' | TranslateDirection
+  /** 指定模型配置 id；缺省用默认配置 */
+  configId?: string
+}
+
+export interface TranslateResponse {
+  /** 与输入 texts 等长的译文数组 */
+  translations: string[]
+}

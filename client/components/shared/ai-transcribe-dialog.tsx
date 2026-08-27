@@ -2,7 +2,7 @@ import { useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { useTranscribe, MethodSelector, MethodHint, TranscribeResult } from './transcribe-shared'
-import { LlmSettingsDialog } from './llm-settings-dialog'
+import { ModelConfigListDialog } from './model-config-list-dialog'
 
 interface AiTranscribeDialogProps {
   open: boolean
@@ -25,9 +25,10 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
     cancel,
     reset,
     handleSrtChange,
-    showLlmSettings,
-    setShowLlmSettings,
-    handleLlmSettingsSaved,
+    showModelConfig,
+    setShowModelConfig,
+    handleModelConfigSaved,
+    refreshConfigs,
     asrConfigs,
     selectedAsrConfigId,
     setSelectedAsrConfigId,
@@ -66,7 +67,7 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
               <MethodSelector method={method} setMethod={setMethod} />
               <MethodHint
                 method={method}
-                onConfigureLlm={() => setShowLlmSettings(true)}
+                onConfigureLlm={() => setShowModelConfig(true)}
                 asrConfigs={asrConfigs}
                 selectedAsrConfigId={selectedAsrConfigId}
                 onAsrConfigChange={setSelectedAsrConfigId}
@@ -111,10 +112,11 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
         </DialogContent>
       </Dialog>
 
-      <LlmSettingsDialog
-        open={showLlmSettings}
-        onOpenChange={setShowLlmSettings}
-        onSaved={handleLlmSettingsSaved}
+      <ModelConfigListDialog
+        open={showModelConfig}
+        onOpenChange={setShowModelConfig}
+        onConfigsChanged={refreshConfigs}
+        onSaved={handleModelConfigSaved}
       />
     </>
   )

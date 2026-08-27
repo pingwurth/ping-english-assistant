@@ -17,11 +17,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { formatDuration } from '@/components/shared/player-parts'
 import { TTS_MAX_TEXT_LENGTH } from '@/services/mock/tts'
 import { writeTtsExport } from '@/lib/tts-export'
+import { translateTexts, detectDirection, mergeBilingualSrt } from '@/lib/translate'
+import { getTranslateEnabled, setTranslateEnabled } from '@/lib/pref-keys'
+import { parseSubtitle } from '@/core/subtitle'
 import { generateKokoroTts, KOKORO_VOICES, type KokoroLoadEvent } from '@/platform/kokoro-tts'
 
 /** 云端 TTS 默认音色（settings 加载前的 fallback） */
@@ -73,6 +77,12 @@ function TTS() {
   const [phase, setPhase] = useState<GenPhase>('idle')
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [err, setErr] = useState('')
+  // 翻译开关与翻译模型配置（与生成错误分离的独立降级提示）
+  const [translateEnabled, setTranslateEnabledState] = useState<boolean>(() => getTranslateEnabled())
+  const [translateConfigs, setTranslateConfigs] = useState<Array<{ id: string; name: string; translateModel: string }>>([])
+  const [selectedTranslateConfigId, setSelectedTranslateConfigId] = useState<string>('')
+  const [translateErr, setTranslateErr] = useState('')
+  const [translateProgress, setTranslateProgress] = useState<{ done: number; total: number } | null>(null)
   const [gen, setGen] = useState<GenResult | null>(null)
   const [speaking, setSpeaking] = useState(false)
   const [savedName, setSavedName] = useState('')
@@ -107,12 +117,26 @@ function TTS() {
     return opts
   }, [ttsConfigs])
 
+  // 字幕预览（基于 gen.srt 缓存）：有 textZh 时中英两行，否则仅英文行。
+  // 注意：必须位于 goImport 早返回之前，与其他 hook 一起调用，保证 hook 顺序稳定
+  const previewSentences = useMemo(() => {
+    if (!gen) return []
+    return parseSubtitle(gen.srt).sentences
+  }, [gen?.srt])
+
   useEffect(() => {
     fetch('/api/settings/llm-configs')
       .then(res => res.json())
       .then(data => {
         const configs = (data.configs || []).filter((c: { ttsModel?: string }) => c.ttsModel)
         setTtsConfigs(configs)
+        // 同一响应中顺带提取已配置翻译模型的配置（不发第二次请求）
+        const translateCfgs = (data.configs || []).filter((c: { translateModel?: string }) => c.translateModel)
+        setTranslateConfigs(translateCfgs)
+        if (translateCfgs.length > 0) {
+          const defaultTranslateCfg = translateCfgs.find((c: { id: string }) => c.id === data.defaultId) || translateCfgs[0]
+          setSelectedTranslateConfigId(defaultTranslateCfg.id)
+        }
         if (configs.length > 0) {
           const defaultConfig = configs.find((c: { id: string }) => c.id === data.defaultId) || configs[0]
           setSelectedConfigId(defaultConfig.id)
@@ -158,9 +182,13 @@ function TTS() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  // 依赖收窄为 gen?.url：翻译成功后 setGen 仅替换 srt 而复用同一 Object URL，
+  // 若依赖整个 gen 对象会在 URL 仍在使用时被提前 revoke，导致试听/下载失效；
+  // 仅当 URL 真正变化（新生成）或组件卸载时才释放。
   useEffect(() => {
     return () => { if (gen?.url) URL.revokeObjectURL(gen.url) }
-  }, [gen])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gen?.url])
 
   const generateCloud = async (abort: AbortController, estimatedSentences: number): Promise<GenResult> => {
     const res = await fetch('/api/tts', {
@@ -210,11 +238,20 @@ function TTS() {
     }
   }
 
+  /** 翻译开关切换：同步持久化到 localStorage */
+  const handleTranslateToggle = (v: boolean) => {
+    setTranslateEnabledState(v)
+    setTranslateEnabled(v)
+    setTranslateErr('')
+  }
+
   const startGenerate = async () => {
     stopPreview()
     setPhase('generating')
     setProgress({ done: 0, total: 0 })
     setErr('')
+    setTranslateErr('')
+    setTranslateProgress(null)
     setSavedName('')
     setKokoroLoad(null)
     const abort = new AbortController()
@@ -229,6 +266,33 @@ function TTS() {
       if (abort.signal.aborted) return
 
       setGen(result)
+
+      // 先生成后翻译：开关开启且已选翻译配置时，追加双语字幕；失败降级保留单语
+      if (translateEnabled && selectedTranslateConfigId) {
+        try {
+          const { sentences } = parseSubtitle(result.srt)
+          const texts = sentences.map(s => s.textEn)
+          const direction = detectDirection(texts)
+          setTranslateProgress({ done: 0, total: texts.length })
+          const translations = await translateTexts(
+            texts,
+            selectedTranslateConfigId || undefined,
+            direction,
+            abort.signal,
+            (done, total) => setTranslateProgress({ done, total }),
+          )
+          if (abort.signal.aborted) return
+          const bilingual = mergeBilingualSrt(result.srt, translations, direction)
+          setGen({ ...result, srt: bilingual })
+        } catch (te) {
+          if (abort.signal.aborted) return
+          if (te instanceof DOMException && te.name === 'AbortError') return
+          setTranslateErr('翻译失败，已保留单语字幕：' + (te instanceof Error ? te.message : '未知错误'))
+        } finally {
+          setTranslateProgress(null)
+        }
+      }
+
       setPhase('ready')
     } catch (e) {
       if (abort.signal.aborted) return
@@ -284,8 +348,9 @@ function TTS() {
   if (goImport) return <Navigate to={goImport} replace />
 
   const generating = phase === 'generating'
-  // 生成按钮：云端需有选中配置；本地 kokoro 随时可用
+  // 生成按钮：云端需有选中配置；本地 kokoro 随时可用；翻译开启时需已配置翻译模型
   const canGenerate = !overLimit && !!text.trim() && (engine === 'kokoro' || ttsConfigs.length > 0)
+    && !(translateEnabled && translateConfigs.length === 0)
 
   // kokoro 下载/加载中的进度文案
   const kokoroLoading = engine === 'kokoro' && generating && kokoroLoad !== null && progress.done === 0
@@ -361,12 +426,43 @@ function TTS() {
                   ))}
                 </select>
               </label>
+              <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <span className="text-muted-foreground">翻译：</span>
+                <Switch
+                  checked={translateEnabled}
+                  onCheckedChange={handleTranslateToggle}
+                  disabled={generating}
+                  aria-label="生成后翻译为双语字幕"
+                />
+              </label>
+              {translateEnabled && translateConfigs.length > 0 && (
+                <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                  <span className="text-muted-foreground">翻译模型：</span>
+                  <select
+                    value={selectedTranslateConfigId}
+                    onChange={(e) => setSelectedTranslateConfigId(e.target.value)}
+                    disabled={generating || !settingsLoaded}
+                    aria-label="选择翻译模型"
+                    className="bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {translateConfigs.map((c) => (
+                      <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {generating
                 ? <Button variant="secondary" onClick={cancelGenerate}><Square data-icon="inline-start" />取消生成</Button>
                 : <Button onClick={() => void startGenerate()} disabled={!canGenerate}><Sparkles data-icon="inline-start" />生成语音</Button>}
             </div>
             {!isKokoro && ttsConfigs.length === 0 && (
               <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置 TTS 模型</p>
+            )}
+            {translateEnabled && translateConfigs.length === 0 && (
+              <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置翻译模型</p>
+            )}
+            {translateErr && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">{translateErr}</p>
             )}
 
             {generating && (
@@ -377,9 +473,11 @@ function TTS() {
                     ? `下载 Kokoro 模型 ${Math.round(kokoroLoad.percent ?? 0)}%${kokoroLoad.file ? ` · ${kokoroLoad.file}` : ''}`
                     : kokoroLoad?.phase === 'initializing'
                       ? '正在加载 Kokoro 模型…'
-                      : progress.total > 0
-                        ? `合成第 ${progress.done}/${progress.total} 句…`
-                        : engine === 'kokoro' ? '正在本地合成语音…' : '正在调用云端语音合成…'}
+                      : translateProgress
+                        ? `正在翻译第 ${translateProgress.done}/${translateProgress.total} 句…`
+                        : progress.total > 0
+                          ? `合成第 ${progress.done}/${progress.total} 句…`
+                          : engine === 'kokoro' ? '正在本地合成语音…' : '正在调用云端语音合成…'}
                 </div>
                 <Progress
                   value={kokoroLoading && kokoroLoad?.phase === 'downloading'
@@ -417,6 +515,16 @@ function TTS() {
                   <Badge variant="secondary">{gen.sentenceCount} 句 · SRT 字幕已生成</Badge>
                   {speaking && <Badge variant="outline">播放中</Badge>}
                 </div>
+                {previewSentences.length > 0 && (
+                  <div className="mt-3 max-h-40 space-y-2 overflow-y-auto rounded-lg bg-background p-3 text-sm">
+                    {previewSentences.map((s) => (
+                      <div key={s.index}>
+                        <p>{s.textEn}</p>
+                        {s.textZh && <p className="text-muted-foreground">{s.textZh}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="mt-5 flex flex-wrap gap-3">
                   <Button variant="outline" onClick={saveToDevice}><Download data-icon="inline-start" />保存到设备</Button>
                   <Button onClick={() => void importAsMaterial()}>导入为学习材料</Button>

@@ -3,7 +3,10 @@ import { Brain, Cpu, ExternalLink, FileAudio } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { toApiError } from '@/services'
+import { ApiError, toApiError } from '@/services'
+import { splitWords } from '@/core/subtitle'
+import { detectDirection, translateTexts, mergeBilingualSrt, buildBilingualPreview } from '@/lib/translate'
+import type { SubtitleSentence } from '@/types/subtitle'
 import type { AsrTranscribeSegment } from '@/types/api'
 
 /* ── SRT 工具 ── */
@@ -116,7 +119,7 @@ export function useTranscribe() {
   const [srt, setSrt] = useState('')
   const [editing, setEditing] = useState(false)
   const [error, setError] = useState('')
-  const [showLlmSettings, setShowLlmSettings] = useState(false)
+  const [showModelConfig, setShowModelConfig] = useState(false)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -124,30 +127,107 @@ export function useTranscribe() {
   const [asrConfigs, setAsrConfigs] = useState<Array<{ id: string; name: string; asrModel: string }>>([])
   const [selectedAsrConfigId, setSelectedAsrConfigId] = useState<string>('')
 
-  useEffect(() => {
-    fetch('/api/settings/llm-configs')
-      .then(res => res.json())
-      .then(data => {
-        const configs = (data.configs || []).filter((c: { asrModel?: string }) => c.asrModel)
-        setAsrConfigs(configs)
-        if (configs.length > 0) {
-          const defaultCfg = configs.find((c: { id: string }) => c.id === data.defaultId) || configs[0]
-          setSelectedAsrConfigId(defaultCfg.id)
+  // 翻译开关与翻译模型配置（默认关闭，ai-transcribe-dialog 不渲染开关即永远单语）
+  const [translateEnabled, setTranslateEnabled] = useState(false)
+  const [translateConfigs, setTranslateConfigs] = useState<Array<{ id: string; name: string; translateModel: string }>>([])
+  const [selectedTranslateConfigId, setSelectedTranslateConfigId] = useState<string>('')
+  const [translateWarning, setTranslateWarning] = useState('')
+  // 用 ref 保证转写回调闭包读取到最新的开关/配置值
+  const translateEnabledRef = useRef(false)
+  const translateConfigIdRef = useRef('')
+
+  const loadAsrConfigs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/settings/llm-configs')
+      const data = await res.json()
+      const configs = (data.configs || []).filter((c: { asrModel?: string }) => c.asrModel)
+      setAsrConfigs(configs)
+      if (configs.length > 0) {
+        const defaultCfg = configs.find((c: { id: string }) => c.id === data.defaultId) || configs[0]
+        setSelectedAsrConfigId(defaultCfg.id)
+      }
+      const tConfigs = (data.configs || []).filter((c: { translateModel?: string }) => c.translateModel)
+      setTranslateConfigs(tConfigs)
+      if (tConfigs.length > 0) {
+        const defaultTCfg = tConfigs.find((c: { id: string }) => c.id === data.defaultId) || tConfigs[0]
+        setSelectedTranslateConfigId(defaultTCfg.id)
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => { void loadAsrConfigs() }, [loadAsrConfigs])
+
+  // 用 useEffect 派生同步 ref：任何 state 变化（含配置加载时的默认值赋值）都自动同步，
+  // 避免手工包装 setter 遗漏导致转写回调闭包读取过期值（如 translateConfigIdRef 恒为 ''）
+  useEffect(() => { translateEnabledRef.current = translateEnabled }, [translateEnabled])
+  useEffect(() => { translateConfigIdRef.current = selectedTranslateConfigId }, [selectedTranslateConfigId])
+
+  /**
+   * 在单语转写产物之上尝试翻译，生成双语 SRT 与双语预览。
+   * 翻译失败（非取消）时降级：保留单语产物并设置警告，不抛出。
+   */
+  const applyTranslation = useCallback(async (
+    segments: AsrTranscribeSegment[],
+    srtText: string,
+    monoResult: string,
+    signal?: AbortSignal,
+  ): Promise<{ srt: string; result: string }> => {
+    if (!translateEnabledRef.current || segments.length === 0) {
+      return { srt: srtText, result: monoResult }
+    }
+    if (!translateConfigIdRef.current) {
+      // 翻译开关开启但未配置翻译模型：不静默跳过，提示后降级保留单语产物（覆盖 model 与 local 两条路径）
+      setTranslateWarning('未配置翻译模型，本次未翻译')
+      return { srt: srtText, result: monoResult }
+    }
+
+    try {
+      const texts = segments.map(s => s.text)
+      const direction = detectDirection(texts)
+      const translations = await translateTexts(texts, translateConfigIdRef.current || undefined, direction, signal)
+
+      // 双语 SRT：复用既有单语 SRT + mergeBilingualSrt（英上中下）
+      const bilingualSrt = mergeBilingualSrt(srtText, translations, direction)
+
+      // 双语预览：英文行 + 中文行构造轻量句子列表，时间轴取自 segments
+      const sentences: SubtitleSentence[] = segments.map((seg, i) => {
+        const textEn = direction === 'en2zh' ? seg.text : translations[i]
+        const textZh = direction === 'en2zh' ? translations[i] : seg.text
+        return {
+          index: i,
+          startMs: seg.startMs,
+          endMs: seg.endMs,
+          textEn,
+          textZh,
+          words: splitWords(textEn),
         }
       })
-      .catch(() => {})
+
+      return { srt: bilingualSrt, result: buildBilingualPreview(sentences) }
+    } catch (err) {
+      // 取消路径统一抛 ApiError('ABORTED')，由外层 catch 静默返回（含 translateTexts 的“翻译已取消”）
+      if (signal?.aborted) throw new ApiError('ABORTED', '操作已取消', err)
+      if (err instanceof Error && err.name === 'AbortError') throw err
+      const apiErr = toApiError(err)
+      if (apiErr.code === 'ABORTED') throw err
+      // 降级：保留单语产物，仅提示警告，转写本身仍视为成功
+      setTranslateWarning('翻译失败，已保留单语字幕：' + apiErr.message)
+      return { srt: srtText, result: monoResult }
+    }
   }, [])
 
   const executeTranscribe = useCallback(async (file: File, signal?: AbortSignal) => {
     setStatus('running')
     setError('')
+    setTranslateWarning('')
     setEditing(false)
 
     try {
       const res = await callLlmTranscribe(file, signal, selectedAsrConfigId || undefined)
       const srtText = segmentsToSrt(res.segments)
-      setResult(res.text)
-      setSrt(srtText)
+      const { srt: finalSrt, result: finalResult } = await applyTranslation(res.segments, srtText, res.text, signal)
+      setResult(finalResult)
+      setSrt(finalSrt)
       setStatus('done')
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return
@@ -156,7 +236,7 @@ export function useTranscribe() {
       setError(apiErr.message)
       setStatus('error')
     }
-  }, [])
+  }, [selectedAsrConfigId, applyTranslation])
 
   const start = useCallback(async (file: File | null) => {
     if (!file) return
@@ -170,7 +250,7 @@ export function useTranscribe() {
     if (method === 'model') {
       if (asrConfigs.length === 0) {
         setPendingFile(file)
-        setShowLlmSettings(true)
+        setShowModelConfig(true)
         return
       }
 
@@ -181,6 +261,7 @@ export function useTranscribe() {
     // For 'local' method, call faster-whisper via API proxy
     setStatus('running')
     setError('')
+    setTranslateWarning('')
     setEditing(false)
 
     try {
@@ -196,8 +277,9 @@ export function useTranscribe() {
 
       const res = await callLocalTranscribe(file, ctrl.signal)
       const srtText = segmentsToSrt(res.segments)
-      setResult(res.text)
-      setSrt(srtText)
+      const { srt: finalSrt, result: finalResult } = await applyTranslation(res.segments, srtText, res.text, ctrl.signal)
+      setResult(finalResult)
+      setSrt(finalSrt)
       setStatus('done')
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return
@@ -206,10 +288,10 @@ export function useTranscribe() {
       setError(apiErr.message)
       setStatus('error')
     }
-  }, [method, executeTranscribe, asrConfigs])
+  }, [method, executeTranscribe, asrConfigs, applyTranslation])
 
-  const handleLlmSettingsSaved = useCallback(() => {
-    setShowLlmSettings(false)
+  const handleModelConfigSaved = useCallback(() => {
+    setShowModelConfig(false)
     // Retry transcription with the pending file
     if (pendingFile) {
       const file = pendingFile
@@ -224,6 +306,7 @@ export function useTranscribe() {
     setResult('')
     setSrt('')
     setError('')
+    setTranslateWarning('')
     setPendingFile(null)
   }, [])
 
@@ -234,6 +317,7 @@ export function useTranscribe() {
     setSrt('')
     setError('')
     setEditing(false)
+    setTranslateWarning('')
     setPendingFile(null)
   }, [])
 
@@ -255,12 +339,19 @@ export function useTranscribe() {
     cancel,
     reset,
     handleSrtChange,
-    showLlmSettings,
-    setShowLlmSettings,
-    handleLlmSettingsSaved,
+    showModelConfig,
+    setShowModelConfig,
+    handleModelConfigSaved,
+    refreshConfigs: loadAsrConfigs,
     asrConfigs,
     selectedAsrConfigId,
     setSelectedAsrConfigId,
+    translateEnabled,
+    setTranslateEnabled,
+    translateConfigs,
+    selectedTranslateConfigId,
+    setSelectedTranslateConfigId,
+    translateWarning,
   }
 }
 
