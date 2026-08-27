@@ -161,3 +161,21 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* 「添加模型」跳转定位设置页输入框的高亮闪烁（0.5s，见 settings.tsx findTtsModelInput） */
+.ping-highlight-flash {
+  animation: ping-highlight-flash 0.5s ease-in-out;
+}
+
+@keyframes ping-highlight-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    background-color: transparent;
+  }
+  30%,
+  60% {
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 55%, transparent);
+    background-color: color-mix(in oklab, var(--primary) 12%, transparent);
+  }
+}

@@ -1,18 +1,18 @@
 /**
- * P11 文字转语音 —— 真源：docs/原型设计.md §4.12 / docs/系统架构设计.md §3.3 契约⑥⑦
+ * P11 文字转语音 —— 云端 Qwen-Audio-TTS / 本地 Kokoro-82M
  *
- * 文本输入（上限 5000，实时字数统计，超限红字禁用生成）+ Kokoro 声音选择
- * （af_heart / af_bella / am_michael，标注"模拟声音"）+ 语速 0.5-2.0 循环按钮。
- * [生成] 走 MockTtsService（契约⑥）：分句进度（第 n/N 句）→ 占位 WAV + SRT（契约⑦）；
- * 试听优先 speechSynthesis 朗读（effect/回调内访问，SSR 安全），不可用时播放
- * 占位 WAV 并标注"模拟合成"；[保存到设备] a[download] 下载 WAV；
- * [导入为学习材料] writeTtsExport（lib/tts-export）后 <Navigate replace> 至
- * /import?source=tts&taskId=，导入页自动填充生效。
+ * 模型选择：
+ *  - 已配置 ttsModel：云端模型（/api/tts）+ kokoro 本地离线；
+ *  - 未配置：仅 kokoro 本地离线 + 「添加模型」（跳转设置页并高亮 TTS 模型输入框）。
+ * 文本输入（上限 5000，实时字数统计）+ 音色选择 + 语速 0.5-2.0；
+ * [生成] 云端走 /api/tts，本地走 platform/kokoro-tts（浏览器内 ONNX 推理）；
+ * 输出统一为 WAV + SRT；试听播放、[保存到设备] 下载 WAV、
+ * [导入为学习材料] writeTtsExport 后跳转导入页。
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { Navigate } from 'react-router-dom'
-import { ChevronDown, Download, Loader2, Play, Sparkles, Square } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Navigate, useNavigate } from 'react-router-dom'
+import { Download, Loader2, Play, Sparkles, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -20,19 +20,31 @@ import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { formatDuration } from '@/components/shared/player-parts'
-import { getMockServices, toApiError } from '@/services'
 import { TTS_MAX_TEXT_LENGTH } from '@/services/mock/tts'
 import { writeTtsExport } from '@/lib/tts-export'
+import { generateKokoroTts, KOKORO_VOICES, type KokoroLoadEvent } from '@/platform/kokoro-tts'
 
-/** Kokoro 内置声音（原型取三档；真实音色见架构 §3.4，此处为模拟声音） */
-const VOICES = [
-  { id: 'af_heart', label: 'Heart · 美式女声' },
-  { id: 'af_bella', label: 'Bella · 美式女声' },
-  { id: 'am_michael', label: 'Michael · 美式男声' },
+/**
+ * 云端 Qwen-Audio-TTS 音色（仅列出 qwen-audio-3.0-tts-plus 支持的双语音色）。
+ * 纯英文音色（loongmary / loongeva_v3.6 / loongjohn）仅在 flash 模型可用；
+ * 若切换 ttsModel 为 flash，可在此添加对应条目。
+ */
+const CLOUD_VOICES = [
+  { id: 'longanlingxin', label: 'Lingxin · Female (双语)' },
+  { id: 'longanlufeng', label: 'Lufeng · Male (双语)' },
 ] as const
 
-/** 语速档位（契约⑥ 0.5 ~ 2.0） */
+/** 本地 Kokoro 音色（美式英文） */
+const KOKORO_VOICE_LIST = KOKORO_VOICES.map((v) => ({ id: v.id, label: v.label }))
+
+/** 语速档位（0.5 ~ 2.0） */
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const
+
+/** 合成引擎：云端模型 / 本地 kokoro */
+type TtsEngine = 'cloud' | 'kokoro'
+
+/** 「添加模型」下拉项的哨兵值（非真实引擎） */
+const ADD_MODEL_VALUE = '__add_model__'
 
 type GenPhase = 'idle' | 'generating' | 'ready' | 'error'
 
@@ -45,7 +57,6 @@ interface GenResult {
   srt: string
 }
 
-/** 文件名时间戳：20260825-1530 */
 function dateStamp(): string {
   const d = new Date()
   const p = (n: number) => String(n).padStart(2, '0')
@@ -53,34 +64,78 @@ function dateStamp(): string {
 }
 
 function TTS() {
+  const navigate = useNavigate()
   const [text, setText] = useState('You should answer the questions as you listen. Repeat each sentence as clearly as you can.')
+  const [engine, setEngine] = useState<TtsEngine>('cloud')
   const [voiceIdx, setVoiceIdx] = useState(0)
   const [speedIdx, setSpeedIdx] = useState(2)
+  const [ttsModelName, setTtsModelName] = useState('')
+  const [configured, setConfigured] = useState(false)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
+  const [kokoroLoad, setKokoroLoad] = useState<KokoroLoadEvent | null>(null)
   const [phase, setPhase] = useState<GenPhase>('idle')
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [err, setErr] = useState('')
   const [gen, setGen] = useState<GenResult | null>(null)
   const [speaking, setSpeaking] = useState(false)
-  const [previewMode, setPreviewMode] = useState<'speech' | 'wav'>('speech')
   const [savedName, setSavedName] = useState('')
   const [goImport, setGoImport] = useState<string | null>(null)
+  const [currentTime, setCurrentTime] = useState(0)
 
   const abortRef = useRef<AbortController | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
-  const voice = VOICES[voiceIdx] ?? VOICES[0]!
+  // 音色列表随引擎切换
+  const voices = engine === 'kokoro' ? KOKORO_VOICE_LIST : CLOUD_VOICES
+  const voice = voices[voiceIdx] ?? voices[0]!
   const speed = SPEEDS[speedIdx] ?? 1
   const overLimit = text.length > TTS_MAX_TEXT_LENGTH
   const hasNonEnglish = /[^\u0000-\u007F]/.test(text)
 
-  /** 停止试听（speechSynthesis 与占位 WAV 两路） */
+  // 模型下拉选项：已配置 → 云端模型 + kokoro；未配置 → kokoro + 添加模型
+  const modelOptions = useMemo(() => {
+    if (configured && ttsModelName) {
+      return [
+        { value: 'cloud', label: `${ttsModelName} · 云端` },
+        { value: 'kokoro', label: 'kokoro · 本地离线' },
+      ]
+    }
+    return [
+      { value: 'kokoro', label: 'kokoro · 本地离线' },
+      { value: ADD_MODEL_VALUE, label: '＋ 添加模型' },
+    ]
+  }, [configured, ttsModelName])
+
+  useEffect(() => {
+    fetch('/api/settings/llm')
+      .then(res => res.json())
+      .then(data => {
+        const isConfigured = !!data.configured
+        setConfigured(isConfigured)
+        if (data.ttsModel) setTtsModelName(data.ttsModel)
+        // 仅当配置了 ttsModel 时才默认云端，否则选中本地 kokoro
+        setEngine(isConfigured && data.ttsModel ? 'cloud' : 'kokoro')
+      })
+      .catch(() => setEngine('kokoro'))
+      .finally(() => setSettingsLoaded(true))
+  }, [])
+
+  const handleEngineChange = (value: string) => {
+    if (value === ADD_MODEL_VALUE) {
+      // 跳转设置页，定位并高亮「模型配置 → TTS 模型」输入框
+      navigate('/settings?tab=model&highlight=tts-model')
+      return
+    }
+    const next = value as TtsEngine
+    setEngine(next)
+    setVoiceIdx(0) // 切换引擎后音色列表变化，重置到第一项
+  }
+
   const stopPreview = () => {
-    try { if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel() } catch { /* ignore */ }
     audioRef.current?.pause()
     setSpeaking(false)
   }
 
-  // 卸载清理：中止生成请求、停止试听、释放 ObjectURL（SSR 安全：仅 effect 内）
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
@@ -92,37 +147,78 @@ function TTS() {
     return () => { if (gen?.url) URL.revokeObjectURL(gen.url) }
   }, [gen])
 
-  /** 生成（契约⑥）：分句进度回调 → 占位 WAV + SRT（契约⑦领取） */
+  const generateCloud = async (abort: AbortController, estimatedSentences: number): Promise<GenResult> => {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: voice.id, speed }),
+      signal: abort.signal,
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || `生成失败 (${res.status})`)
+    if (abort.signal.aborted) throw new DOMException('已取消', 'AbortError')
+
+    setProgress({ done: estimatedSentences, total: estimatedSentences })
+
+    const binaryStr = atob(data.audioBase64)
+    const bytes = new Uint8Array(binaryStr.length)
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+    const audioBlob = new Blob([bytes], { type: 'audio/wav' })
+
+    return {
+      taskId: data.taskId,
+      audio: audioBlob,
+      url: URL.createObjectURL(audioBlob),
+      durationMs: data.durationMs,
+      sentenceCount: data.sentenceCount,
+      srt: data.srt,
+    }
+  }
+
+  const generateLocal = async (abort: AbortController): Promise<GenResult> => {
+    const result = await generateKokoroTts({
+      text,
+      voice: voice.id,
+      speed,
+      signal: abort.signal,
+      onSentenceProgress: (done, total) => setProgress({ done, total }),
+      onLoad: (e) => setKokoroLoad(e),
+    })
+    if (abort.signal.aborted) throw new DOMException('已取消', 'AbortError')
+    return {
+      taskId: result.taskId,
+      audio: result.blob,
+      url: URL.createObjectURL(result.blob),
+      durationMs: result.durationMs,
+      sentenceCount: result.timings.length,
+      srt: result.srt,
+    }
+  }
+
   const startGenerate = async () => {
     stopPreview()
     setPhase('generating')
     setProgress({ done: 0, total: 0 })
     setErr('')
     setSavedName('')
+    setKokoroLoad(null)
     const abort = new AbortController()
     abortRef.current = abort
     try {
-      const { tts } = getMockServices({ tts: { onProgress: (done, total) => setProgress({ done, total }) } })
-      const res = await tts.generate(
-        { text, voice: voice.id, speed, format: 'wav', withSubtitle: true },
-        abort.signal,
-      )
-      const sub = await tts.getSubtitle(res.meta.taskId, abort.signal)
+      const estimatedSentences = text.split(/[.!?;:\n]+/).filter(s => s.trim()).length || 1
+      setProgress({ done: 0, total: estimatedSentences })
+
+      const result = engine === 'kokoro'
+        ? await generateLocal(abort)
+        : await generateCloud(abort, estimatedSentences)
       if (abort.signal.aborted) return
-      setGen({
-        taskId: res.meta.taskId,
-        audio: res.audio,
-        url: URL.createObjectURL(res.audio),
-        durationMs: res.meta.durationMs,
-        sentenceCount: res.meta.sentenceCount,
-        srt: sub.srt,
-      })
+
+      setGen(result)
       setPhase('ready')
     } catch (e) {
       if (abort.signal.aborted) return
-      const apiErr = toApiError(e)
-      if (apiErr.code === 'ABORTED') return
-      setErr(apiErr.message || '生成失败，请重试')
+      if (e instanceof DOMException && e.name === 'AbortError') return
+      setErr(e instanceof Error ? e.message : '生成失败，请重试')
       setPhase('error')
     }
   }
@@ -132,28 +228,20 @@ function TTS() {
     setPhase('idle')
   }
 
-  /** 试听：优先 speechSynthesis 朗读文本；不可用时播放占位 WAV（标注"模拟合成"） */
   const preview = () => {
     if (speaking) { stopPreview(); return }
-    if (!gen) return
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const u = new SpeechSynthesisUtterance(text)
-      u.lang = 'en-US'
-      u.rate = speed
-      u.onend = () => setSpeaking(false)
-      u.onerror = () => setSpeaking(false)
-      window.speechSynthesis.cancel()
-      window.speechSynthesis.speak(u)
-      setPreviewMode('speech')
-      setSpeaking(true)
-    } else if (audioRef.current) {
-      audioRef.current.currentTime = 0
-      audioRef.current.play().then(() => setSpeaking(true)).catch(() => { /* 播放被拒：保持静默 */ })
-      setPreviewMode('wav')
+    if (!gen || !audioRef.current) return
+    audioRef.current.currentTime = 0
+    setCurrentTime(0)
+    audioRef.current.play().then(() => setSpeaking(true)).catch(() => {})
+  }
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current) {
+      setCurrentTime(audioRef.current.currentTime * 1000) // ms
     }
   }
 
-  /** 保存到设备：a[download] 下载 WAV */
   const saveToDevice = () => {
     if (!gen) return
     const fileName = `ping-tts-${voice.id}-${dateStamp()}.wav`
@@ -166,7 +254,6 @@ function TTS() {
     setSavedName(fileName)
   }
 
-  /** 导入为学习材料：writeTtsExport（IDB 音频 + sessionStorage 索引）→ 声明式跳转 */
   const importAsMaterial = async () => {
     if (!gen) return
     await writeTtsExport(gen.taskId, gen.audio, {
@@ -182,14 +269,21 @@ function TTS() {
   if (goImport) return <Navigate to={goImport} replace />
 
   const generating = phase === 'generating'
+  // 生成按钮：云端需已配置；本地 kokoro 随时可用
+  const canGenerate = !overLimit && !!text.trim() && (engine === 'kokoro' || configured)
+
+  // kokoro 下载/加载中的进度文案
+  const kokoroLoading = engine === 'kokoro' && generating && kokoroLoad !== null && progress.done === 0
 
   return (
     <Shell back>
       <div className="mx-auto max-w-3xl px-4 py-10">
-        <PageIntro title="文字转语音" eyebrow="KOKORO VOICE">
+        <PageIntro title="文字转语音" eyebrow="QWEN-AUDIO-TTS / KOKORO">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary">英文学习工具</Badge>
-            <Badge variant="outline">模拟声音</Badge>
+            {engine === 'kokoro'
+              ? <Badge variant="outline">kokoro-82m · 本地</Badge>
+              : ttsModelName && <Badge variant="outline">{ttsModelName}</Badge>}
           </div>
         </PageIntro>
         <Card>
@@ -210,29 +304,77 @@ function TTS() {
             </div>
 
             <div className="flex flex-wrap gap-3">
-              <Button variant="outline" disabled={generating} onClick={() => setVoiceIdx((voiceIdx + 1) % VOICES.length)} aria-label="切换声音">
-                声音：{voice.label} <ChevronDown />
-              </Button>
-              <Button variant="outline" disabled={generating} onClick={() => setSpeedIdx((speedIdx + 1) % SPEEDS.length)} aria-label="切换语速">
-                语速：{speed}x <ChevronDown />
-              </Button>
+              <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <span className="text-muted-foreground">模型：</span>
+                <select
+                  value={engine}
+                  onChange={(e) => handleEngineChange(e.target.value)}
+                  disabled={generating || !settingsLoaded}
+                  aria-label="选择语音模型"
+                  className="bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {settingsLoaded && modelOptions.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <span className="text-muted-foreground">音色：</span>
+                <select
+                  value={voiceIdx}
+                  onChange={(e) => setVoiceIdx(Number(e.target.value))}
+                  disabled={generating}
+                  aria-label="选择音色"
+                  className="bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {voices.map((v, i) => (
+                    <option key={v.id} value={i}>{v.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <span className="text-muted-foreground">语速：</span>
+                <select
+                  value={speedIdx}
+                  onChange={(e) => setSpeedIdx(Number(e.target.value))}
+                  disabled={generating}
+                  aria-label="选择语速"
+                  className="bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {SPEEDS.map((s, i) => (
+                    <option key={s} value={i}>{s}x</option>
+                  ))}
+                </select>
+              </label>
               {generating
                 ? <Button variant="secondary" onClick={cancelGenerate}><Square data-icon="inline-start" />取消生成</Button>
-                : <Button onClick={() => void startGenerate()} disabled={overLimit || !text.trim()}><Sparkles data-icon="inline-start" />生成语音</Button>}
+                : <Button onClick={() => void startGenerate()} disabled={!canGenerate}><Sparkles data-icon="inline-start" />生成语音</Button>}
             </div>
+            {!configured && engine === 'cloud' && (
+              <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置 API Key 和 TTS 模型</p>
+            )}
 
-            {/* 生成中：分句进度（第 n/N 句） */}
             {generating && (
               <div className="rounded-xl bg-muted p-5">
                 <div className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
-                  {progress.total > 0 ? `合成第 ${progress.done}/${progress.total} 句…` : '排队中，正在加载声音模型…'}
+                  {kokoroLoad?.phase === 'downloading'
+                    ? `下载 Kokoro 模型 ${Math.round(kokoroLoad.percent ?? 0)}%${kokoroLoad.file ? ` · ${kokoroLoad.file}` : ''}`
+                    : kokoroLoad?.phase === 'initializing'
+                      ? '正在加载 Kokoro 模型…'
+                      : progress.total > 0
+                        ? `合成第 ${progress.done}/${progress.total} 句…`
+                        : engine === 'kokoro' ? '正在本地合成语音…' : '正在调用云端语音合成…'}
                 </div>
-                <Progress value={progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 5} />
+                <Progress
+                  value={kokoroLoading && kokoroLoad?.phase === 'downloading'
+                    ? Math.round(kokoroLoad.percent ?? 0)
+                    : progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 5}
+                />
+                {engine === 'kokoro' && <p className="mt-2 text-xs text-muted-foreground">本地合成，无需联网（首次使用需下载约 80MB 模型）</p>}
               </div>
             )}
 
-            {/* 失败态：文本保留，可重试 */}
             {phase === 'error' && (
               <div className="flex items-center justify-between gap-3 rounded-xl bg-destructive/10 p-4 text-sm text-destructive">
                 <span>{err}</span>
@@ -240,7 +382,6 @@ function TTS() {
               </div>
             )}
 
-            {/* 生成完成：试听 + 保存 + 导入 */}
             {phase === 'ready' && gen && (
               <div className="rounded-xl bg-muted p-5">
                 <div className="flex items-center gap-3">
@@ -248,26 +389,29 @@ function TTS() {
                     {speaking ? <Square /> : <Play />}
                   </Button>
                   <div className="h-2 flex-1 rounded-full bg-background">
-                    <div className="h-full rounded-full bg-primary transition-all" style={{ width: speaking ? '100%' : '0%' }} />
+                    <div
+                      className="h-full rounded-full bg-primary transition-all"
+                      style={{ width: `${gen.durationMs > 0 ? (currentTime / gen.durationMs) * 100 : 0}%` }}
+                    />
                   </div>
-                  <span className="text-sm text-muted-foreground tabular-nums">{formatDuration(gen.durationMs)}</span>
+                  <span className="text-sm text-muted-foreground tabular-nums">
+                    {formatDuration(currentTime)} / {formatDuration(gen.durationMs)}
+                  </span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="secondary">{gen.sentenceCount} 句 · SRT 字幕已生成</Badge>
-                  {speaking && previewMode === 'speech' && <Badge variant="outline">浏览器语音朗读试听</Badge>}
-                  {previewMode === 'wav' && <Badge variant="outline">模拟合成 · 占位音</Badge>}
-                  {!speaking && <span>试听优先使用浏览器语音朗读，音频文件为模拟合成占位音</span>}
+                  {speaking && <Badge variant="outline">播放中</Badge>}
                 </div>
                 <div className="mt-5 flex flex-wrap gap-3">
                   <Button variant="outline" onClick={saveToDevice}><Download data-icon="inline-start" />保存到设备</Button>
                   <Button onClick={() => void importAsMaterial()}>导入为学习材料</Button>
                 </div>
-                {savedName && <p className="mt-3 text-xs text-muted-foreground">已保存至浏览器下载目录：{savedName}（字幕随导入自动带入）</p>}
+                {savedName && <p className="mt-3 text-xs text-muted-foreground">已保存至浏览器下载目录：{savedName}</p>}
                 <p className="mt-3 text-xs text-muted-foreground">导入后可直接逐句精听与训练，字幕已按句自动对齐。</p>
               </div>
             )}
 
-            {gen && <audio ref={audioRef} src={gen.url} preload="metadata" onEnded={() => setSpeaking(false)} className="hidden" />}
+            {gen && <audio ref={audioRef} src={gen.url} preload="metadata" onTimeUpdate={handleTimeUpdate} onEnded={() => { setSpeaking(false); setCurrentTime(0) }} className="hidden" />}
           </CardContent>
         </Card>
       </div>

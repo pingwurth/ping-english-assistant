@@ -88,3 +88,7 @@
 
 20. 
 @client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1] 字幕区域新增一个图标：生词标记，点击后弹窗显示全文（仅英文）
+
+
+21.
+@client/components/pages/player.tsx 为什么字幕删除和纠错图标要点击字幕后才会显示？

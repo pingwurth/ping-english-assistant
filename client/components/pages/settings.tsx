@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ChevronDown, Database, Gauge, Headphones, Mic, RefreshCw, Repeat, Settings2, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -181,6 +182,22 @@ function TrainingSettingsSection() {
 
 /* ── 模型配置 ─────────────────────────────────────────── */
 
+/**
+ * 「文字转语音」页点击「添加模型」跳转过来时的定位目标：
+ * 模型配置 → TTS 语音合成 → TTS 模型 输入框。
+ * XPath 为页面当前渲染结构下的精确路径；DOM 变化导致失效时回退到 id 锚点。
+ */
+const TTS_MODEL_INPUT_XPATH = '/html/body/div[2]/main/div/div[2]/div[2]/div/div[3]/div/div[2]/div/div/div/input'
+const TTS_MODEL_INPUT_ID = 'tts-model-input'
+
+function findTtsModelInput(): HTMLInputElement | null {
+  try {
+    const result = document.evaluate(TTS_MODEL_INPUT_XPATH, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null)
+    if (result.singleNodeValue instanceof HTMLInputElement) return result.singleNodeValue
+  } catch { /* XPath 求值异常时走 id 回退 */ }
+  return document.getElementById(TTS_MODEL_INPUT_ID) as HTMLInputElement | null
+}
+
 const PROVIDERS = [
   { value: 'qwen', label: 'QwenAI (通义千问)' },
   { value: 'whisper', label: 'WhisperAI' },
@@ -189,7 +206,7 @@ const PROVIDERS = [
 /** 通用模型列表下拉组件 */
 function ModelSelect({
   label, value, models, showDropdown, onValueChange, onDropdownToggle,
-  fetching, onFetch, disabled,
+  fetching, onFetch, disabled, inputId,
 }: {
   label: string
   value: string
@@ -200,6 +217,7 @@ function ModelSelect({
   fetching: boolean
   onFetch: () => void
   disabled: boolean
+  inputId?: string
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -208,6 +226,7 @@ function ModelSelect({
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Input
+              id={inputId}
               placeholder="点击右侧按钮获取模型列表"
               value={value}
               onChange={e => onValueChange(e.target.value)}
@@ -253,7 +272,12 @@ function ModelSelect({
   )
 }
 
-function ModelConfigSection() {
+function ModelConfigSection({ highlightTtsModel, onHighlightDone }: {
+  /** 为真时（文字转语音页「添加模型」跳转）定位并高亮 TTS 模型输入框 */
+  highlightTtsModel?: boolean
+  /** 高亮触发后回调，用于清除 URL 中的 highlight 参数 */
+  onHighlightDone?: () => void
+}) {
   const [provider, setProvider] = useState('qwen')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -291,6 +315,21 @@ function ModelConfigSection() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  // 「添加模型」跳转：定位 TTS 模型输入框并高亮 0.5 秒
+  useEffect(() => {
+    if (!highlightTtsModel || loading) return
+    const timer = window.setTimeout(() => {
+      const el = findTtsModelInput()
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        el.classList.add('ping-highlight-flash')
+        window.setTimeout(() => el.classList.remove('ping-highlight-flash'), 600)
+      }
+      onHighlightDone?.()
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [highlightTtsModel, loading, onHighlightDone])
 
   const fetchModels = useCallback(async () => {
     if (!baseUrl.trim() || !apiKey.trim()) {
@@ -455,6 +494,7 @@ function ModelConfigSection() {
             fetching={fetchingModels}
             onFetch={fetchModels}
             disabled={!baseUrl.trim() || !apiKey.trim()}
+            inputId={TTS_MODEL_INPUT_ID}
           />
 
           <div className="flex flex-col gap-2">
@@ -600,13 +640,31 @@ function StorageSection() {
 
 /* ── 页面主组件 ───────────────────────────────────────── */
 
+const SETTINGS_TABS = ['stats', 'training', 'model', 'storage'] as const
+
 function SettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const highlightTtsModel = searchParams.get('highlight') === 'tts-model'
+  const tabParam = searchParams.get('tab')
+  // highlight 请求强制定位到「模型配置」页
+  const [activeTab, setActiveTab] = useState<string>(() =>
+    highlightTtsModel ? 'model'
+      : (SETTINGS_TABS as readonly string[]).includes(tabParam ?? '') ? tabParam! : 'stats')
+
+  const clearHighlight = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('highlight')
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
+
   return (
     <Shell back>
       <div className="mx-auto max-w-2xl px-4 py-10">
         <PageIntro title="我的 / 设置" eyebrow="PREFERENCES" />
 
-        <Tabs defaultValue="stats">
+        <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="stats">学习统计</TabsTrigger>
             <TabsTrigger value="training">播放/训练设置</TabsTrigger>
@@ -621,7 +679,7 @@ function SettingsPage() {
             <TrainingSettingsSection />
           </TabsContent>
           <TabsContent value="model">
-            <ModelConfigSection />
+            <ModelConfigSection highlightTtsModel={highlightTtsModel} onHighlightDone={clearHighlight} />
           </TabsContent>
           <TabsContent value="storage">
             <StorageSection />
