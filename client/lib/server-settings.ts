@@ -17,6 +17,11 @@ export interface LlmSettings {
   /** TTS endpoint path */
   ttsEndpoint?: string
 
+  /** Translate (翻译) model name */
+  translateModel?: string
+  /** Translate endpoint path (default: /chat/completions) */
+  translateEndpoint?: string
+
   /** WhisperX alignment service URL (default: http://127.0.0.1:8765) */
   whisperAlignUrl?: string
   /** faster-whisper transcription service URL (default: http://127.0.0.1:8766) */
@@ -111,6 +116,8 @@ export async function readLlmConfigs(): Promise<LlmConfigsResult> {
         asrEndpoint: legacy.asrEndpoint as string | undefined,
         ttsModel: legacy.ttsModel as string | undefined,
         ttsEndpoint: legacy.ttsEndpoint as string | undefined,
+        translateModel: legacy.translateModel as string | undefined,
+        translateEndpoint: legacy.translateEndpoint as string | undefined,
       }
       configs = [migrated]
       raw.llmConfigs = configs

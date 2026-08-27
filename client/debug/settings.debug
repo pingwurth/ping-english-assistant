@@ -16,3 +16,7 @@
 
 5.
 @client/components/pages/settings.tsx API Key 输入框提示“留空则不修改”，保存的时候却提示必需填，逻辑冲突了
+
+
+6.
+@client/components/pages/settings.tsx 修改模型配置的时候，应该回填完整的 API Key，不然无法获取模型

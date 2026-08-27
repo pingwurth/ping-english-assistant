@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronDown, Database, Eye, EyeOff, Gauge, Headphones, Mic, Pencil, Plus, RefreshCw, Repeat, Settings2, Star, Trash2 } from 'lucide-react'
+import { ChevronDown, Database, Eye, EyeOff, Gauge, Headphones, Languages, Mic, Pencil, Plus, RefreshCw, Repeat, Settings2, Star, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
@@ -259,6 +259,11 @@ function ModelSelect({
   )
 }
 
+/** 支持翻译功能的提供商 */
+const TRANSLATE_PROVIDERS = new Set(['qwen', 'mimo'])
+
+const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label || v
+
 interface LlmConfigItem {
   id: string
   name: string
@@ -269,6 +274,8 @@ interface LlmConfigItem {
   asrEndpoint?: string
   ttsModel?: string
   ttsEndpoint?: string
+  translateModel?: string
+  translateEndpoint?: string
 }
 
 /** 模型配置弹窗 — 新增/编辑共用 */
@@ -289,26 +296,45 @@ function ModelConfigDialog({
   const [asrEndpoint, setAsrEndpoint] = useState('')
   const [ttsModel, setTtsModel] = useState('')
   const [ttsEndpoint, setTtsEndpoint] = useState('')
+  const [translateModel, setTranslateModel] = useState('')
+  const [translateEndpoint, setTranslateEndpoint] = useState('')
   const [models, setModels] = useState<string[]>([])
   const [fetchingModels, setFetchingModels] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [loadingConfig, setLoadingConfig] = useState(false)
   const [error, setError] = useState('')
   const [showAsrDropdown, setShowAsrDropdown] = useState(false)
   const [showTtsDropdown, setShowTtsDropdown] = useState(false)
+  const [showTranslateDropdown, setShowTranslateDropdown] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
 
-  // Reset form when dialog opens
+  // Reset form when dialog opens; fetch full config (with raw API Key) in edit mode
   useEffect(() => {
     if (!open) return
     if (editingConfig) {
+      // 先用列表中的掩码数据填充，再异步获取完整配置
       setProvider(editingConfig.provider || 'qwen')
       setName(editingConfig.name || '')
       setBaseUrl(editingConfig.baseUrl || '')
-      setApiKey(editingConfig.apiKey || '')
+      setApiKey('') // 等待完整配置返回后回填
       setAsrModel(editingConfig.asrModel || '')
       setAsrEndpoint(editingConfig.asrEndpoint || '')
       setTtsModel(editingConfig.ttsModel || '')
       setTtsEndpoint(editingConfig.ttsEndpoint || '')
+      setTranslateModel(editingConfig.translateModel || '')
+      setTranslateEndpoint(editingConfig.translateEndpoint || '')
+
+      // 异步获取完整配置（含明文 API Key）
+      setLoadingConfig(true)
+      fetch(`/api/settings/llm-configs?id=${encodeURIComponent(editingConfig.id)}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data) {
+            setApiKey(data.apiKey || '')
+          }
+        })
+        .catch(() => { /* 获取失败不影响其他字段编辑 */ })
+        .finally(() => setLoadingConfig(false))
     } else {
       setProvider('qwen')
       setName('')
@@ -318,11 +344,14 @@ function ModelConfigDialog({
       setAsrEndpoint('')
       setTtsModel('')
       setTtsEndpoint('')
+      setTranslateModel('')
+      setTranslateEndpoint('')
     }
     setModels([])
     setError('')
     setShowAsrDropdown(false)
     setShowTtsDropdown(false)
+    setShowTranslateDropdown(false)
     setShowApiKey(false)
   }, [open, editingConfig])
 
@@ -353,6 +382,8 @@ function ModelConfigDialog({
     }
   }, [provider, baseUrl, apiKey])
 
+  const supportsTranslate = TRANSLATE_PROVIDERS.has(provider)
+
   const handleSave = useCallback(async () => {
     if (!name.trim()) { setError('请填写配置名称'); return }
     if (!baseUrl.trim()) { setError('Base URL 是必填的'); return }
@@ -364,13 +395,14 @@ function ModelConfigDialog({
         name: name.trim(),
         provider,
         baseUrl: baseUrl.trim(),
-        // 编辑模式：masked key 或空值不传，后端保留原值
-        ...((!isEdit || (apiKey.trim() && !apiKey.includes('***')))
-          ? { apiKey: apiKey.trim() } : {}),
+        // 编辑模式：空值不传，后端保留原值
+        ...((!isEdit || apiKey.trim()) ? { apiKey: apiKey.trim() } : {}),
         asrModel: asrModel || undefined,
         asrEndpoint: asrEndpoint.trim() || undefined,
         ttsModel: ttsModel || undefined,
         ttsEndpoint: ttsEndpoint.trim() || undefined,
+        translateModel: translateModel || undefined,
+        translateEndpoint: translateEndpoint.trim() || undefined,
       }
       const url = '/api/settings/llm-configs'
       const res = isEdit
@@ -387,7 +419,7 @@ function ModelConfigDialog({
     } finally {
       setSaving(false)
     }
-  }, [name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, isEdit, editingConfig, onOpenChange, onSave])
+  }, [name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, isEdit, editingConfig, onOpenChange, onSave])
 
   const handleProviderChange = (newProvider: string) => {
     setProvider(newProvider)
@@ -398,7 +430,12 @@ function ModelConfigDialog({
     setAsrEndpoint('')
     setTtsModel('')
     setTtsEndpoint('')
-    if (newProvider === 'mimo') setTtsEndpoint('/chat/completions')
+    setTranslateModel('')
+    setTranslateEndpoint('')
+    if (newProvider === 'mimo') {
+      setTtsEndpoint('/chat/completions')
+      setTranslateEndpoint('/chat/completions')
+    }
     // Auto-suggest name
     if (!name || PROVIDERS.some(p => p.label === name)) {
       setName(PROVIDERS.find(p => p.value === newProvider)?.label || newProvider)
@@ -409,7 +446,7 @@ function ModelConfigDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogHeader>
         <DialogTitle>{isEdit ? '编辑模型配置' : '新增模型配置'}</DialogTitle>
-        <DialogDescription>配置 API 地址和密钥，分别设置 ASR 和 TTS 模型</DialogDescription>
+        <DialogDescription>配置 API 地址和密钥，分别设置 ASR、TTS 和翻译模型</DialogDescription>
       </DialogHeader>
       <DialogContent>
         <div className="flex flex-col gap-4">
@@ -447,9 +484,10 @@ function ModelConfigDialog({
             <div className="relative">
               <Input
                 type={showApiKey ? 'text' : 'password'}
-                placeholder={isEdit ? '留空则不修改' : 'sk-...'}
+                placeholder={isEdit ? (loadingConfig ? '加载中…' : '留空则不修改') : 'sk-...'}
                 value={apiKey}
                 onChange={e => { setApiKey(e.target.value); setModels([]) }}
+                disabled={loadingConfig}
                 className="pr-10"
               />
               <button
@@ -460,7 +498,7 @@ function ModelConfigDialog({
                 {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
             </div>
-            {isEdit && <p className="text-xs text-muted-foreground">留空则保留原有 API Key</p>}
+            {isEdit && <p className="text-xs text-muted-foreground">已回填原有 API Key，清空则不修改</p>}
           </div>
 
           <ModelSelect
@@ -500,6 +538,42 @@ function ModelConfigDialog({
               {provider === 'mimo' ? 'MiMo 使用 /chat/completions 处理语音合成' : '默认: /audio/speech'}
             </p>
           </div>
+
+          {/* 翻译模型配置 — 仅支持的提供商可见 */}
+          {supportsTranslate ? (
+            <>
+              <ModelSelect
+                label="翻译模型 (Translation)"
+                value={translateModel}
+                models={models}
+                showDropdown={showTranslateDropdown}
+                onValueChange={setTranslateModel}
+                onDropdownToggle={v => { setShowTranslateDropdown(v); setShowAsrDropdown(false); setShowTtsDropdown(false) }}
+                fetching={fetchingModels}
+                onFetch={fetchModels}
+                disabled={!baseUrl.trim() || !apiKey.trim()}
+              />
+
+              <div className="flex flex-col gap-2">
+                <label className="text-sm font-medium">翻译端点路径</label>
+                <Input
+                  placeholder={provider === 'mimo' ? '/chat/completions' : '/translations'}
+                  value={translateEndpoint}
+                  onChange={e => setTranslateEndpoint(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {provider === 'mimo' ? 'MiMo 使用 /chat/completions 处理翻译' : '默认: /translations'}
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-lg border border-dashed p-3">
+              <p className="text-xs text-muted-foreground">
+                <Languages className="mr-1 inline size-3" />
+                当前提供商 ({providerLabel(provider)}) 不支持翻译功能，仅 Qwen / MiMo 可用
+              </p>
+            </div>
+          )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -572,8 +646,6 @@ function ModelConfigListSection({ highlightTtsModel, onHighlightDone }: {
     void loadConfigs()
   }
 
-  const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label || v
-
   if (loading) {
     return (
       <Card>
@@ -619,7 +691,8 @@ function ModelConfigListSection({ highlightTtsModel, onHighlightDone }: {
                         <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
                           {c.asrModel && <span><Mic className="mr-1 inline size-3" />ASR: {c.asrModel}</span>}
                           {c.ttsModel && <span><Headphones className="mr-1 inline size-3" />TTS: {c.ttsModel}</span>}
-                          {!c.asrModel && !c.ttsModel && <span>未配置具体模型</span>}
+                          {c.translateModel && <span><Languages className="mr-1 inline size-3" />翻译: {c.translateModel}</span>}
+                          {!c.asrModel && !c.ttsModel && !c.translateModel && <span>未配置具体模型</span>}
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">

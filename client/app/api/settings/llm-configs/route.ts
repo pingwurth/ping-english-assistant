@@ -34,9 +34,21 @@ function getTtsVoices(config: LlmConfig) {
   ]
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
     const { configs, defaultId } = await readLlmConfigs()
+
+    // 按 id 查询单条配置 — 返回完整信息（含明文 API Key，仅限本地请求）
+    if (id) {
+      const config = configs.find(c => c.id === id)
+      if (!config) {
+        return NextResponse.json({ error: 'Config not found' }, { status: 404 })
+      }
+      return NextResponse.json(config)
+    }
+
     return NextResponse.json({
       configs: configs.map(c => ({
         ...maskApiKey(c),
@@ -52,7 +64,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint } = body
+    const { name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint } = body
 
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: 'Missing required fields: baseUrl, apiKey' }, { status: 400 })
@@ -67,6 +79,8 @@ export async function POST(request: Request) {
       asrEndpoint: asrEndpoint || undefined,
       ttsModel: ttsModel || undefined,
       ttsEndpoint: ttsEndpoint || undefined,
+      translateModel: translateModel || undefined,
+      translateEndpoint: translateEndpoint || undefined,
     })
 
     return NextResponse.json({ id })
