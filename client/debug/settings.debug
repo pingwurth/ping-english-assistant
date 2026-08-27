@@ -8,3 +8,11 @@
 
 3.
 @client/components/pages/settings.tsx /html/body/div[2]/main/div/div[2]/div[2]/div/div[2]/div/div[2]/div/div/div/input 我希望这里既支持下拉选择又支持手动输入
+
+
+4.
+@client/components/pages/settings.tsx 模型配置页应该支持新增配置多个模型，将当前配置页改为已配置的模型列表，原页面功能改为点击新增时弹窗展示
+
+
+5.
+@client/components/pages/settings.tsx API Key 输入框提示“留空则不修改”，保存的时候却提示必需填，逻辑冲突了

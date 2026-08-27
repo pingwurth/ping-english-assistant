@@ -1,20 +1,22 @@
 /**
  * P10 我的 / 设置 —— 真源：docs/原型设计.md §4.11
  *
- * 标签页布局：学习统计 | 播放/训练设置 | 模型配置 | 存储管理
+ * 标签页布局：学习统计 | 播放/训练设置 | 模型配置 | 本地服务 | 存储管理
  * - 学习统计：records store 聚合（训练次数 / 平均成绩 / 收藏数）
  * - 播放/训练设置：读写 platform/storage/prefs.ts
- * - 模型配置：LLM provider / API key / model（原 llm-settings-dialog 内联）
+ * - 模型配置：多模型列表管理（新增/编辑/删除/设为默认）
+ * - 本地服务：WhisperX 对齐、faster-whisper 转写服务地址配置
  * - 存储管理：estimateUsage()、材料列表删除、清空全部数据
  * 所有浏览器 API 仅在 effect/回调内访问，SSR 安全。
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronDown, Database, Gauge, Headphones, Mic, RefreshCw, Repeat, Settings2, Trash2 } from 'lucide-react'
+import { ChevronDown, Database, Eye, EyeOff, Gauge, Headphones, Mic, Pencil, Plus, RefreshCw, Repeat, Settings2, Star, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -182,25 +184,10 @@ function TrainingSettingsSection() {
 
 /* ── 模型配置 ─────────────────────────────────────────── */
 
-/**
- * 「文字转语音」页点击「添加模型」跳转过来时的定位目标：
- * 模型配置 → TTS 语音合成 → TTS 模型 输入框。
- * XPath 为页面当前渲染结构下的精确路径；DOM 变化导致失效时回退到 id 锚点。
- */
-const TTS_MODEL_INPUT_XPATH = '/html/body/div[2]/main/div/div[2]/div[2]/div/div[3]/div/div[2]/div/div/div/input'
-const TTS_MODEL_INPUT_ID = 'tts-model-input'
-
-function findTtsModelInput(): HTMLInputElement | null {
-  try {
-    const result = document.evaluate(TTS_MODEL_INPUT_XPATH, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null)
-    if (result.singleNodeValue instanceof HTMLInputElement) return result.singleNodeValue
-  } catch { /* XPath 求值异常时走 id 回退 */ }
-  return document.getElementById(TTS_MODEL_INPUT_ID) as HTMLInputElement | null
-}
-
 const PROVIDERS = [
   { value: 'qwen', label: 'QwenAI (通义千问)' },
   { value: 'whisper', label: 'WhisperAI' },
+  { value: 'mimo', label: 'MiMo' },
 ]
 
 /** 通用模型列表下拉组件 */
@@ -272,64 +259,72 @@ function ModelSelect({
   )
 }
 
-function ModelConfigSection({ highlightTtsModel, onHighlightDone }: {
-  /** 为真时（文字转语音页「添加模型」跳转）定位并高亮 TTS 模型输入框 */
-  highlightTtsModel?: boolean
-  /** 高亮触发后回调，用于清除 URL 中的 highlight 参数 */
-  onHighlightDone?: () => void
+interface LlmConfigItem {
+  id: string
+  name: string
+  provider: string
+  baseUrl: string
+  apiKey: string
+  asrModel?: string
+  asrEndpoint?: string
+  ttsModel?: string
+  ttsEndpoint?: string
+}
+
+/** 模型配置弹窗 — 新增/编辑共用 */
+function ModelConfigDialog({
+  open, onOpenChange, editingConfig, onSave,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  editingConfig?: LlmConfigItem | null
+  onSave: () => void
 }) {
+  const isEdit = !!editingConfig
   const [provider, setProvider] = useState('qwen')
+  const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [asrModel, setAsrModel] = useState('')
   const [asrEndpoint, setAsrEndpoint] = useState('')
   const [ttsModel, setTtsModel] = useState('')
   const [ttsEndpoint, setTtsEndpoint] = useState('')
-  const [whisperAlignUrl, setWhisperAlignUrl] = useState('')
-  const [whisperTranscribeUrl, setWhisperTranscribeUrl] = useState('')
   const [models, setModels] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
   const [fetchingModels, setFetchingModels] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
   const [showAsrDropdown, setShowAsrDropdown] = useState(false)
   const [showTtsDropdown, setShowTtsDropdown] = useState(false)
+  const [showApiKey, setShowApiKey] = useState(false)
 
+  // Reset form when dialog opens
   useEffect(() => {
-    setLoading(true)
-    fetch('/api/settings/llm')
-      .then(res => res.json())
-      .then(data => {
-        if (data.configured) {
-          setProvider(data.provider || 'qwen')
-          setBaseUrl(data.baseUrl || '')
-          setAsrModel(data.asrModel || '')
-          setAsrEndpoint(data.asrEndpoint || '')
-          setTtsModel(data.ttsModel || '')
-          setTtsEndpoint(data.ttsEndpoint || '')
-          setWhisperAlignUrl(data.whisperAlignUrl || '')
-          setWhisperTranscribeUrl(data.whisperTranscribeUrl || '')
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
-
-  // 「添加模型」跳转：定位 TTS 模型输入框并高亮 0.5 秒
-  useEffect(() => {
-    if (!highlightTtsModel || loading) return
-    const timer = window.setTimeout(() => {
-      const el = findTtsModelInput()
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        el.classList.add('ping-highlight-flash')
-        window.setTimeout(() => el.classList.remove('ping-highlight-flash'), 600)
-      }
-      onHighlightDone?.()
-    }, 200)
-    return () => window.clearTimeout(timer)
-  }, [highlightTtsModel, loading, onHighlightDone])
+    if (!open) return
+    if (editingConfig) {
+      setProvider(editingConfig.provider || 'qwen')
+      setName(editingConfig.name || '')
+      setBaseUrl(editingConfig.baseUrl || '')
+      setApiKey(editingConfig.apiKey || '')
+      setAsrModel(editingConfig.asrModel || '')
+      setAsrEndpoint(editingConfig.asrEndpoint || '')
+      setTtsModel(editingConfig.ttsModel || '')
+      setTtsEndpoint(editingConfig.ttsEndpoint || '')
+    } else {
+      setProvider('qwen')
+      setName('')
+      setBaseUrl('')
+      setApiKey('')
+      setAsrModel('')
+      setAsrEndpoint('')
+      setTtsModel('')
+      setTtsEndpoint('')
+    }
+    setModels([])
+    setError('')
+    setShowAsrDropdown(false)
+    setShowTtsDropdown(false)
+    setShowApiKey(false)
+  }, [open, editingConfig])
 
   const fetchModels = useCallback(async () => {
     if (!baseUrl.trim() || !apiKey.trim()) {
@@ -340,6 +335,7 @@ function ModelConfigSection({ highlightTtsModel, onHighlightDone }: {
     setError('')
     setModels([])
     try {
+      // Temporarily save credentials to server so /api/models can use them
       await fetch('/api/settings/llm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -358,41 +354,225 @@ function ModelConfigSection({ highlightTtsModel, onHighlightDone }: {
   }, [provider, baseUrl, apiKey])
 
   const handleSave = useCallback(async () => {
-    if (!baseUrl.trim() || !apiKey.trim()) {
-      setError('Base URL 和 API Key 是必填的')
-      return
-    }
+    if (!name.trim()) { setError('请填写配置名称'); return }
+    if (!baseUrl.trim()) { setError('Base URL 是必填的'); return }
+    if (!isEdit && !apiKey.trim()) { setError('API Key 是必填的'); return }
     setSaving(true)
     setError('')
-    setSuccess('')
     try {
-      const res = await fetch('/api/settings/llm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider,
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
-          asrModel: asrModel || undefined,
-          asrEndpoint: asrEndpoint.trim() || undefined,
-          ttsModel: ttsModel || undefined,
-          ttsEndpoint: ttsEndpoint.trim() || undefined,
-          whisperAlignUrl: whisperAlignUrl.trim() || undefined,
-          whisperTranscribeUrl: whisperTranscribeUrl.trim() || undefined,
-        }),
-      })
+      const body = {
+        name: name.trim(),
+        provider,
+        baseUrl: baseUrl.trim(),
+        // 编辑模式：masked key 或空值不传，后端保留原值
+        ...((!isEdit || (apiKey.trim() && !apiKey.includes('***')))
+          ? { apiKey: apiKey.trim() } : {}),
+        asrModel: asrModel || undefined,
+        asrEndpoint: asrEndpoint.trim() || undefined,
+        ttsModel: ttsModel || undefined,
+        ttsEndpoint: ttsEndpoint.trim() || undefined,
+      }
+      const url = '/api/settings/llm-configs'
+      const res = isEdit
+        ? await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: editingConfig!.id, ...body }) })
+        : await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || '保存失败')
       }
-      setSuccess('配置已保存')
-      setTimeout(() => setSuccess(''), 3000)
+      onOpenChange(false)
+      onSave()
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败')
     } finally {
       setSaving(false)
     }
-  }, [provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, whisperAlignUrl, whisperTranscribeUrl])
+  }, [name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, isEdit, editingConfig, onOpenChange, onSave])
+
+  const handleProviderChange = (newProvider: string) => {
+    setProvider(newProvider)
+    setModels([])
+    setBaseUrl('')
+    setApiKey('')
+    setAsrModel('')
+    setAsrEndpoint('')
+    setTtsModel('')
+    setTtsEndpoint('')
+    if (newProvider === 'mimo') setTtsEndpoint('/chat/completions')
+    // Auto-suggest name
+    if (!name || PROVIDERS.some(p => p.label === name)) {
+      setName(PROVIDERS.find(p => p.value === newProvider)?.label || newProvider)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogHeader>
+        <DialogTitle>{isEdit ? '编辑模型配置' : '新增模型配置'}</DialogTitle>
+        <DialogDescription>配置 API 地址和密钥，分别设置 ASR 和 TTS 模型</DialogDescription>
+      </DialogHeader>
+      <DialogContent>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">配置名称 <span className="text-destructive">*</span></label>
+            <Input
+              placeholder="例如: Qwen ASR+TTS"
+              value={name}
+              onChange={e => setName(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">模型提供商 <span className="text-destructive">*</span></label>
+            <select
+              value={provider}
+              onChange={e => handleProviderChange(e.target.value)}
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">Base URL <span className="text-destructive">*</span></label>
+            <Input
+              placeholder="例如: https://dashscope.aliyuncs.com/compatible-mode/v1"
+              value={baseUrl}
+              onChange={e => { setBaseUrl(e.target.value); setModels([]) }}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">API Key{!isEdit && <span className="text-destructive"> *</span>}</label>
+            <div className="relative">
+              <Input
+                type={showApiKey ? 'text' : 'password'}
+                placeholder={isEdit ? '留空则不修改' : 'sk-...'}
+                value={apiKey}
+                onChange={e => { setApiKey(e.target.value); setModels([]) }}
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </div>
+            {isEdit && <p className="text-xs text-muted-foreground">留空则保留原有 API Key</p>}
+          </div>
+
+          <ModelSelect
+            label="ASR 模型 (语音识别)"
+            value={asrModel}
+            models={models}
+            showDropdown={showAsrDropdown}
+            onValueChange={setAsrModel}
+            onDropdownToggle={v => { setShowAsrDropdown(v); setShowTtsDropdown(false) }}
+            fetching={fetchingModels}
+            onFetch={fetchModels}
+            disabled={!baseUrl.trim() || !apiKey.trim()}
+          />
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">ASR 端点路径</label>
+            <Input placeholder="/audio/transcriptions" value={asrEndpoint} onChange={e => setAsrEndpoint(e.target.value)} />
+            <p className="text-xs text-muted-foreground">默认: /audio/transcriptions</p>
+          </div>
+
+          <ModelSelect
+            label="TTS 模型 (语音合成)"
+            value={ttsModel}
+            models={models}
+            showDropdown={showTtsDropdown}
+            onValueChange={setTtsModel}
+            onDropdownToggle={v => { setShowTtsDropdown(v); setShowAsrDropdown(false) }}
+            fetching={fetchingModels}
+            onFetch={fetchModels}
+            disabled={!baseUrl.trim() || !apiKey.trim()}
+          />
+
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">TTS 端点路径</label>
+            <Input placeholder="/audio/speech" value={ttsEndpoint} onChange={e => setTtsEndpoint(e.target.value)} />
+            <p className="text-xs text-muted-foreground">
+              {provider === 'mimo' ? 'MiMo 使用 /chat/completions 处理语音合成' : '默认: /audio/speech'}
+            </p>
+          </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+            <Button onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存'}</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ModelConfigListSection({ highlightTtsModel, onHighlightDone }: {
+  highlightTtsModel?: boolean
+  onHighlightDone?: () => void
+}) {
+  const [configs, setConfigs] = useState<LlmConfigItem[]>([])
+  const [defaultId, setDefaultId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingConfig, setEditingConfig] = useState<LlmConfigItem | null>(null)
+
+  const loadConfigs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/settings/llm-configs')
+      const data = await res.json()
+      setConfigs(data.configs || [])
+      setDefaultId(data.defaultId || null)
+    } catch { /* ignore */ }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { void loadConfigs() }, [loadConfigs])
+
+  // highlight=tts-model → auto-open add dialog
+  useEffect(() => {
+    if (!highlightTtsModel || loading) return
+    setEditingConfig(null)
+    setDialogOpen(true)
+    onHighlightDone?.()
+  }, [highlightTtsModel, loading, onHighlightDone])
+
+  const handleAdd = () => {
+    setEditingConfig(null)
+    setDialogOpen(true)
+  }
+
+  const handleEdit = (config: LlmConfigItem) => {
+    setEditingConfig(config)
+    setDialogOpen(true)
+  }
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!window.confirm(`确定删除配置「${name}」？`)) return
+    await fetch('/api/settings/llm-configs', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+    void loadConfigs()
+  }
+
+  const handleSetDefault = async (id: string) => {
+    await fetch('/api/settings/llm-configs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action: 'setDefault' }),
+    })
+    void loadConfigs()
+  }
+
+  const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label || v
 
   if (loading) {
     return (
@@ -406,149 +586,157 @@ function ModelConfigSection({ highlightTtsModel, onHighlightDone }: {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* 提供商与凭据 */}
       <Card>
         <CardContent className="flex flex-col gap-4 p-5">
-          <CardTitle className="text-base"><Settings2 data-icon="inline-start" />模型提供商</CardTitle>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">模型提供商 <span className="text-destructive">*</span></label>
-            <select
-              value={provider}
-              onChange={e => {
-                setProvider(e.target.value)
-                setModels([])
-              }}
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-            >
-              {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base"><Settings2 data-icon="inline-start" />模型配置</CardTitle>
+            <Button size="sm" onClick={handleAdd}><Plus data-icon="inline-start" />新增模型</Button>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">Base URL <span className="text-destructive">*</span></label>
-            <Input
-              placeholder="例如: https://dashscope.aliyuncs.com/compatible-mode/v1 或 https://api.openai.com/v1"
-              value={baseUrl}
-              onChange={e => { setBaseUrl(e.target.value); setModels([]) }}
-            />
-            <p className="text-xs text-muted-foreground">API 接口地址，支持 OpenAI 兼容的服务</p>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">API Key <span className="text-destructive">*</span></label>
-            <Input
-              type="password"
-              placeholder="sk-..."
-              value={apiKey}
-              onChange={e => { setApiKey(e.target.value); setModels([]) }}
-            />
-            <p className="text-xs text-muted-foreground">你的 API 密钥，保存后不会再次显示</p>
-          </div>
+          {configs.length === 0 ? (
+            <div className="rounded-xl border border-dashed p-8 text-center">
+              <p className="text-sm text-muted-foreground">暂无模型配置</p>
+              <p className="mt-1 text-xs text-muted-foreground">点击「新增模型」添加你的第一个 AI 模型配置</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {configs.map(c => {
+                const isDefault = c.id === defaultId
+                return (
+                  <div key={c.id} className="rounded-xl border px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-medium">{c.name}</p>
+                          {isDefault && (
+                            <Badge variant="default" className="shrink-0 gap-1">
+                              <Star className="size-3" />默认
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">{providerLabel(c.provider)}</p>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">Base: {c.baseUrl}</p>
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                          {c.asrModel && <span><Mic className="mr-1 inline size-3" />ASR: {c.asrModel}</span>}
+                          {c.ttsModel && <span><Headphones className="mr-1 inline size-3" />TTS: {c.ttsModel}</span>}
+                          {!c.asrModel && !c.ttsModel && <span>未配置具体模型</span>}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {!isDefault && (
+                          <Button variant="ghost" size="sm" onClick={() => void handleSetDefault(c.id)} title="设为默认">
+                            <Star className="size-4" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" onClick={() => handleEdit(c)} title="编辑">
+                          <Pencil className="size-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => void handleDelete(c.id, c.name)} title="删除">
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* ASR 模型配置 */}
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-5">
-          <CardTitle className="text-base"><Mic data-icon="inline-start" />ASR 语音识别</CardTitle>
-
-          <ModelSelect
-            label="ASR 模型"
-            value={asrModel}
-            models={models}
-            showDropdown={showAsrDropdown}
-            onValueChange={setAsrModel}
-            onDropdownToggle={v => { setShowAsrDropdown(v); setShowTtsDropdown(false) }}
-            fetching={fetchingModels}
-            onFetch={fetchModels}
-            disabled={!baseUrl.trim() || !apiKey.trim()}
-          />
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">ASR 端点路径</label>
-            <Input
-              placeholder="/audio/transcriptions"
-              value={asrEndpoint}
-              onChange={e => setAsrEndpoint(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              默认: /audio/transcriptions。如果 provider 使用不同路径，请修改
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* TTS 模型配置 */}
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-5">
-          <CardTitle className="text-base"><Headphones data-icon="inline-start" />TTS 语音合成</CardTitle>
-
-          <ModelSelect
-            label="TTS 模型"
-            value={ttsModel}
-            models={models}
-            showDropdown={showTtsDropdown}
-            onValueChange={setTtsModel}
-            onDropdownToggle={v => { setShowTtsDropdown(v); setShowAsrDropdown(false) }}
-            fetching={fetchingModels}
-            onFetch={fetchModels}
-            disabled={!baseUrl.trim() || !apiKey.trim()}
-            inputId={TTS_MODEL_INPUT_ID}
-          />
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">TTS 端点路径</label>
-            <Input
-              placeholder="/audio/speech"
-              value={ttsEndpoint}
-              onChange={e => setTtsEndpoint(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              TTS 接口路径，不同 provider 可能不同
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 本地服务配置 */}
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-5">
-          <CardTitle className="text-base"><Database data-icon="inline-start" />本地服务</CardTitle>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">WhisperX 对齐服务</label>
-            <Input
-              placeholder="http://127.0.0.1:8765"
-              value={whisperAlignUrl}
-              onChange={e => setWhisperAlignUrl(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              WhisperX 词级时间戳对齐服务地址。留空则使用默认地址 (http://127.0.0.1:8765)。
-              <code className="ml-1 text-xs">./start.sh --server align</code>
-            </p>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">faster-whisper 转写服务</label>
-            <Input
-              placeholder="http://127.0.0.1:8766"
-              value={whisperTranscribeUrl}
-              onChange={e => setWhisperTranscribeUrl(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              本地 faster-whisper 转写服务地址。留空则使用默认地址 (http://127.0.0.1:8766)。
-              <code className="ml-1 text-xs">./start.sh --server transcribe</code>
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {success && <p className="text-sm text-emerald-600">{success}</p>}
-
-      <Button onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存配置'}</Button>
+      <ModelConfigDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editingConfig={editingConfig}
+        onSave={loadConfigs}
+      />
     </div>
+  )
+}
+
+/* ── 本地服务配置 ─────────────────────────────────────── */
+
+function LocalServicesSection() {
+  const [whisperAlignUrl, setWhisperAlignUrl] = useState('')
+  const [whisperTranscribeUrl, setWhisperTranscribeUrl] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [success, setSuccess] = useState('')
+
+  useEffect(() => {
+    fetch('/api/settings/local-services')
+      .then(res => res.json())
+      .then(data => {
+        setWhisperAlignUrl(data.whisperAlignUrl || '')
+        setWhisperTranscribeUrl(data.whisperTranscribeUrl || '')
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = useCallback(async () => {
+    setSaving(true)
+    setSuccess('')
+    try {
+      await fetch('/api/settings/local-services', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          whisperAlignUrl: whisperAlignUrl.trim() || undefined,
+          whisperTranscribeUrl: whisperTranscribeUrl.trim() || undefined,
+        }),
+      })
+      setSuccess('已保存')
+      setTimeout(() => setSuccess(''), 3000)
+    } catch { /* ignore */ }
+    finally { setSaving(false) }
+  }, [whisperAlignUrl, whisperTranscribeUrl])
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center py-10">
+          <div className="size-8 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-5">
+        <CardTitle className="text-base"><Database data-icon="inline-start" />本地服务配置</CardTitle>
+
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium">WhisperX 对齐服务</label>
+          <Input
+            placeholder="http://127.0.0.1:8765"
+            value={whisperAlignUrl}
+            onChange={e => setWhisperAlignUrl(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            WhisperX 词级时间戳对齐服务地址。留空则使用默认地址 (http://127.0.0.1:8765)。
+            <code className="ml-1 text-xs">./start.sh --server align</code>
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium">faster-whisper 转写服务</label>
+          <Input
+            placeholder="http://127.0.0.1:8766"
+            value={whisperTranscribeUrl}
+            onChange={e => setWhisperTranscribeUrl(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            本地 faster-whisper 转写服务地址。留空则使用默认地址 (http://127.0.0.1:8766)。
+            <code className="ml-1 text-xs">./start.sh --server transcribe</code>
+          </p>
+        </div>
+
+        {success && <p className="text-sm text-emerald-600">{success}</p>}
+        <Button onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存'}</Button>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -640,7 +828,7 @@ function StorageSection() {
 
 /* ── 页面主组件 ───────────────────────────────────────── */
 
-const SETTINGS_TABS = ['stats', 'training', 'model', 'storage'] as const
+const SETTINGS_TABS = ['stats', 'training', 'model', 'services', 'storage'] as const
 
 function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -669,6 +857,7 @@ function SettingsPage() {
             <TabsTrigger value="stats">学习统计</TabsTrigger>
             <TabsTrigger value="training">播放/训练设置</TabsTrigger>
             <TabsTrigger value="model">模型配置</TabsTrigger>
+            <TabsTrigger value="services">本地服务</TabsTrigger>
             <TabsTrigger value="storage">存储管理</TabsTrigger>
           </TabsList>
 
@@ -679,7 +868,10 @@ function SettingsPage() {
             <TrainingSettingsSection />
           </TabsContent>
           <TabsContent value="model">
-            <ModelConfigSection highlightTtsModel={highlightTtsModel} onHighlightDone={clearHighlight} />
+            <ModelConfigListSection highlightTtsModel={highlightTtsModel} onHighlightDone={clearHighlight} />
+          </TabsContent>
+          <TabsContent value="services">
+            <LocalServicesSection />
           </TabsContent>
           <TabsContent value="storage">
             <StorageSection />

@@ -13,6 +13,7 @@ interface LlmSettingsDialogProps {
 const PROVIDERS = [
   { value: 'qwen', label: 'QwenAI (通义千问)' },
   { value: 'whisper', label: 'WhisperAI' },
+  { value: 'mimo', label: 'MiMo' },
 ]
 
 export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDialogProps) {
@@ -235,8 +236,22 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
               <select
                 value={provider}
                 onChange={e => {
-                  setProvider(e.target.value)
+                  const newProvider = e.target.value
+                  setProvider(newProvider)
                   setModels([])
+                  // 切换提供商时清空所有输入框
+                  setBaseUrl('')
+                  setApiKey('')
+                  setAsrModel('')
+                  setAsrEndpoint('')
+                  setTtsModel('')
+                  setTtsEndpoint('')
+                  setWhisperAlignUrl('')
+                  setWhisperTranscribeUrl('')
+                  // MiMo 使用 /chat/completions 作为 TTS 端点
+                  if (newProvider === 'mimo') {
+                    setTtsEndpoint('/chat/completions')
+                  }
                 }}
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm"
               >
@@ -298,6 +313,11 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
                 value={ttsEndpoint}
                 onChange={e => setTtsEndpoint(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground">
+                {provider === 'mimo'
+                  ? 'MiMo 使用 /chat/completions 处理语音合成'
+                  : '默认: /audio/speech'}
+              </p>
             </div>
 
             {/* 本地服务 */}

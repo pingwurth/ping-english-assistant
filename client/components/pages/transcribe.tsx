@@ -28,6 +28,9 @@ export function TranscribePage() {
     showLlmSettings,
     setShowLlmSettings,
     handleLlmSettingsSaved,
+    asrConfigs,
+    selectedAsrConfigId,
+    setSelectedAsrConfigId,
   } = useTranscribe()
 
   const handleDownloadSrt = useCallback(() => {
@@ -85,6 +88,9 @@ export function TranscribePage() {
               <MethodHint
                 method={method}
                 onConfigureLlm={() => setShowLlmSettings(true)}
+                asrConfigs={asrConfigs}
+                selectedAsrConfigId={selectedAsrConfigId}
+                onAsrConfigChange={setSelectedAsrConfigId}
               />
 
               {status === 'running' ? (

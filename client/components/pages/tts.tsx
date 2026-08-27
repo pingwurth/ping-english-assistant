@@ -65,9 +65,9 @@ function TTS() {
   const [engine, setEngine] = useState<TtsEngine>('cloud')
   const [voiceIdx, setVoiceIdx] = useState(0)
   const [speedIdx, setSpeedIdx] = useState(2)
-  const [ttsModelName, setTtsModelName] = useState('')
+  const [ttsConfigs, setTtsConfigs] = useState<Array<{ id: string; name: string; ttsModel: string; ttsVoices: ReadonlyArray<{ id: string; label: string }> }>>([])
+  const [selectedConfigId, setSelectedConfigId] = useState<string>('')
   const [cloudVoices, setCloudVoices] = useState<ReadonlyArray<{ id: string; label: string }>>(DEFAULT_CLOUD_VOICES)
-  const [configured, setConfigured] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [kokoroLoad, setKokoroLoad] = useState<KokoroLoadEvent | null>(null)
   const [phase, setPhase] = useState<GenPhase>('idle')
@@ -83,36 +83,44 @@ function TTS() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   // 音色列表随引擎切换
-  const voices = engine === 'kokoro' ? KOKORO_VOICE_LIST : cloudVoices
+  const isKokoro = engine === 'kokoro'
+  const voices = isKokoro ? KOKORO_VOICE_LIST : cloudVoices
   const voice = voices[voiceIdx] ?? voices[0]!
   const speed = SPEEDS[speedIdx] ?? 1
   const overLimit = text.length > TTS_MAX_TEXT_LENGTH
   const hasNonEnglish = /[^\u0000-\u007F]/.test(text)
 
-  // 模型下拉选项：已配置 → 云端模型 + kokoro；未配置 → kokoro + 添加模型
+  // 当前选中的 TTS 配置
+  const selectedConfig = ttsConfigs.find(c => c.id === selectedConfigId)
+  const ttsModelName = selectedConfig?.ttsModel ?? ''
+
+  // 模型下拉选项：所有已配置的 TTS 模型 + kokoro + 添加模型
   const modelOptions = useMemo(() => {
-    if (configured && ttsModelName) {
-      return [
-        { value: 'cloud', label: `${ttsModelName} · 云端` },
-        { value: 'kokoro', label: 'kokoro · 本地离线' },
-      ]
+    const opts: { value: string; label: string }[] = ttsConfigs.map(c => ({
+      value: c.id,
+      label: `${c.ttsModel} · ${c.name}`,
+    }))
+    opts.push({ value: 'kokoro', label: 'kokoro · 本地离线' })
+    if (ttsConfigs.length === 0) {
+      opts.push({ value: ADD_MODEL_VALUE, label: '＋ 添加模型' })
     }
-    return [
-      { value: 'kokoro', label: 'kokoro · 本地离线' },
-      { value: ADD_MODEL_VALUE, label: '＋ 添加模型' },
-    ]
-  }, [configured, ttsModelName])
+    return opts
+  }, [ttsConfigs])
 
   useEffect(() => {
-    fetch('/api/settings/llm')
+    fetch('/api/settings/llm-configs')
       .then(res => res.json())
       .then(data => {
-        const isConfigured = !!data.configured
-        setConfigured(isConfigured)
-        if (data.ttsModel) setTtsModelName(data.ttsModel)
-        if (data.ttsVoices?.length) setCloudVoices(data.ttsVoices)
-        // 仅当配置了 ttsModel 时才默认云端，否则选中本地 kokoro
-        setEngine(isConfigured && data.ttsModel ? 'cloud' : 'kokoro')
+        const configs = (data.configs || []).filter((c: { ttsModel?: string }) => c.ttsModel)
+        setTtsConfigs(configs)
+        if (configs.length > 0) {
+          const defaultConfig = configs.find((c: { id: string }) => c.id === data.defaultId) || configs[0]
+          setSelectedConfigId(defaultConfig.id)
+          if (defaultConfig.ttsVoices?.length) setCloudVoices(defaultConfig.ttsVoices)
+          setEngine('cloud')
+        } else {
+          setEngine('kokoro')
+        }
       })
       .catch(() => setEngine('kokoro'))
       .finally(() => setSettingsLoaded(true))
@@ -120,13 +128,22 @@ function TTS() {
 
   const handleEngineChange = (value: string) => {
     if (value === ADD_MODEL_VALUE) {
-      // 跳转设置页，定位并高亮「模型配置 → TTS 模型」输入框
       navigate('/settings?tab=model&highlight=tts-model')
       return
     }
-    const next = value as TtsEngine
-    setEngine(next)
-    setVoiceIdx(0) // 切换引擎后音色列表变化，重置到第一项
+    if (value === 'kokoro') {
+      setEngine('kokoro')
+      setVoiceIdx(0)
+    } else {
+      // value is a config id
+      const cfg = ttsConfigs.find(c => c.id === value)
+      if (cfg) {
+        setSelectedConfigId(cfg.id)
+        if (cfg.ttsVoices?.length) setCloudVoices(cfg.ttsVoices)
+        setEngine('cloud')
+        setVoiceIdx(0)
+      }
+    }
   }
 
   const stopPreview = () => {
@@ -149,7 +166,7 @@ function TTS() {
     const res = await fetch('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice: voice.id, speed }),
+      body: JSON.stringify({ text, voice: voice.id, speed, configId: selectedConfigId || undefined }),
       signal: abort.signal,
     })
     const data = await res.json()
@@ -267,8 +284,8 @@ function TTS() {
   if (goImport) return <Navigate to={goImport} replace />
 
   const generating = phase === 'generating'
-  // 生成按钮：云端需已配置；本地 kokoro 随时可用
-  const canGenerate = !overLimit && !!text.trim() && (engine === 'kokoro' || configured)
+  // 生成按钮：云端需有选中配置；本地 kokoro 随时可用
+  const canGenerate = !overLimit && !!text.trim() && (engine === 'kokoro' || ttsConfigs.length > 0)
 
   // kokoro 下载/加载中的进度文案
   const kokoroLoading = engine === 'kokoro' && generating && kokoroLoad !== null && progress.done === 0
@@ -281,7 +298,7 @@ function TTS() {
             <Badge variant="secondary">英文学习工具</Badge>
             {engine === 'kokoro'
               ? <Badge variant="outline">kokoro-82m · 本地</Badge>
-              : ttsModelName && <Badge variant="outline">{ttsModelName}</Badge>}
+              : selectedConfig && <Badge variant="outline">{ttsModelName}</Badge>}
           </div>
         </PageIntro>
         <Card>
@@ -305,7 +322,7 @@ function TTS() {
               <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
                 <span className="text-muted-foreground">模型：</span>
                 <select
-                  value={engine}
+                  value={isKokoro ? 'kokoro' : selectedConfigId}
                   onChange={(e) => handleEngineChange(e.target.value)}
                   disabled={generating || !settingsLoaded}
                   aria-label="选择语音模型"
@@ -348,8 +365,8 @@ function TTS() {
                 ? <Button variant="secondary" onClick={cancelGenerate}><Square data-icon="inline-start" />取消生成</Button>
                 : <Button onClick={() => void startGenerate()} disabled={!canGenerate}><Sparkles data-icon="inline-start" />生成语音</Button>}
             </div>
-            {!configured && engine === 'cloud' && (
-              <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置 API Key 和 TTS 模型</p>
+            {!isKokoro && ttsConfigs.length === 0 && (
+              <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置 TTS 模型</p>
             )}
 
             {generating && (

@@ -28,6 +28,9 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
     showLlmSettings,
     setShowLlmSettings,
     handleLlmSettingsSaved,
+    asrConfigs,
+    selectedAsrConfigId,
+    setSelectedAsrConfigId,
   } = useTranscribe()
 
   const handleImport = useCallback(() => {
@@ -64,6 +67,9 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
               <MethodHint
                 method={method}
                 onConfigureLlm={() => setShowLlmSettings(true)}
+                asrConfigs={asrConfigs}
+                selectedAsrConfigId={selectedAsrConfigId}
+                onAsrConfigChange={setSelectedAsrConfigId}
               />
 
               {status === 'running' ? (

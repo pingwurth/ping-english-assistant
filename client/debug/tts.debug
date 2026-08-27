@@ -24,3 +24,7 @@
     "url": "https://token-plan-cn.xiaomimimo.com/api/v1/services/audio/tts/SpeechSynthesizer"
 }
 排查原因
+
+
+6.
+@client/components/pages/tts.tsx 和 @client/components/shared/transcribe-shared.tsx 要能选到所有已配置的模型，请进行适配改造

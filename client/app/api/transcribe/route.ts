@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { readLlmSettings, type LlmSettings } from '@/lib/server-settings'
+import { readLlmSettings, readLlmConfigById, type LlmSettings } from '@/lib/server-settings'
 
 interface WordTimestamp {
   word: string
@@ -610,7 +610,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing audio file' }, { status: 400 })
     }
 
-    const settings = await readLlmSettings()
+    const configId = formData.get('configId') as string | null
+    const settings = configId
+      ? await readLlmConfigById(configId)
+      : await readLlmSettings()
     if (!settings) {
       return NextResponse.json({ error: 'LLM settings not configured' }, { status: 400 })
     }

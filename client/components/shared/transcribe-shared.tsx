@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Brain, Cpu, ExternalLink, FileAudio } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -46,10 +46,11 @@ export const methodData: { id: Method; icon: typeof Cpu; title: string; desc: st
 
 /* ── LLM API 调用 ── */
 
-async function callLlmTranscribe(file: File, signal?: AbortSignal): Promise<{ text: string; segments: AsrTranscribeSegment[] }> {
+async function callLlmTranscribe(file: File, signal?: AbortSignal, configId?: string): Promise<{ text: string; segments: AsrTranscribeSegment[] }> {
   const formData = new FormData()
   formData.append('audio', file)
   formData.append('lang', 'en')
+  if (configId) formData.append('configId', configId)
 
   const res = await fetch('/api/transcribe', {
     method: 'POST',
@@ -119,13 +120,31 @@ export function useTranscribe() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
+  // ASR configs for multi-model selection
+  const [asrConfigs, setAsrConfigs] = useState<Array<{ id: string; name: string; asrModel: string }>>([])
+  const [selectedAsrConfigId, setSelectedAsrConfigId] = useState<string>('')
+
+  useEffect(() => {
+    fetch('/api/settings/llm-configs')
+      .then(res => res.json())
+      .then(data => {
+        const configs = (data.configs || []).filter((c: { asrModel?: string }) => c.asrModel)
+        setAsrConfigs(configs)
+        if (configs.length > 0) {
+          const defaultCfg = configs.find((c: { id: string }) => c.id === data.defaultId) || configs[0]
+          setSelectedAsrConfigId(defaultCfg.id)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
   const executeTranscribe = useCallback(async (file: File, signal?: AbortSignal) => {
     setStatus('running')
     setError('')
     setEditing(false)
 
     try {
-      const res = await callLlmTranscribe(file, signal)
+      const res = await callLlmTranscribe(file, signal, selectedAsrConfigId || undefined)
       const srtText = segmentsToSrt(res.segments)
       setResult(res.text)
       setSrt(srtText)
@@ -147,10 +166,9 @@ export function useTranscribe() {
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
-    // For 'model' method, check if LLM is configured
+    // For 'model' method, check if ASR config exists
     if (method === 'model') {
-      const configured = await checkLlmConfigured()
-      if (!configured) {
+      if (asrConfigs.length === 0) {
         setPendingFile(file)
         setShowLlmSettings(true)
         return
@@ -188,7 +206,7 @@ export function useTranscribe() {
       setError(apiErr.message)
       setStatus('error')
     }
-  }, [method, executeTranscribe])
+  }, [method, executeTranscribe, asrConfigs])
 
   const handleLlmSettingsSaved = useCallback(() => {
     setShowLlmSettings(false)
@@ -240,6 +258,9 @@ export function useTranscribe() {
     showLlmSettings,
     setShowLlmSettings,
     handleLlmSettingsSaved,
+    asrConfigs,
+    selectedAsrConfigId,
+    setSelectedAsrConfigId,
   }
 }
 
@@ -276,7 +297,13 @@ export function MethodSelector({ method, setMethod }: { method: Method; setMetho
   )
 }
 
-export function MethodHint({ method, onConfigureLlm }: { method: Method; onConfigureLlm?: () => void }) {
+export function MethodHint({ method, onConfigureLlm, asrConfigs, selectedAsrConfigId, onAsrConfigChange }: {
+  method: Method
+  onConfigureLlm?: () => void
+  asrConfigs?: Array<{ id: string; name: string; asrModel: string }>
+  selectedAsrConfigId?: string
+  onAsrConfigChange?: (id: string) => void
+}) {
   if (method === 'local') {
     return (
       <div className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">
@@ -292,6 +319,20 @@ export function MethodHint({ method, onConfigureLlm }: { method: Method; onConfi
       <div className="rounded-xl bg-primary/10 p-4 text-sm text-primary">
         <p className="font-medium">大模型转写设置</p>
         <p className="mt-1">自动识别语言、断句并生成时间轴字幕。音频会发送到云端模型处理。</p>
+        {asrConfigs && asrConfigs.length > 0 && (
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-xs text-primary/70">ASR 模型：</span>
+            <select
+              value={selectedAsrConfigId || ''}
+              onChange={e => onAsrConfigChange?.(e.target.value)}
+              className="rounded-md border border-primary/20 bg-background px-2 py-1 text-xs"
+            >
+              {asrConfigs.map(c => (
+                <option key={c.id} value={c.id}>{c.asrModel} · {c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {onConfigureLlm && (
           <Button
             variant="outline"

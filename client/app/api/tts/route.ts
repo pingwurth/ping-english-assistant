@@ -12,7 +12,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { readLlmSettings, type LlmSettings } from '@/lib/server-settings'
+import { readLlmSettings, readLlmConfigById, type LlmSettings } from '@/lib/server-settings'
 import {
   splitTtsSentences,
   buildTtsTimeline,
@@ -191,10 +191,11 @@ function parseWavDuration(buf: ArrayBuffer): number {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { text, voice, speed } = body as {
+    const { text, voice, speed, configId } = body as {
       text: string
       voice?: string
       speed?: number
+      configId?: string
     }
 
     if (!text || typeof text !== 'string' || !text.trim()) {
@@ -213,7 +214,9 @@ export async function POST(request: Request) {
     }
 
     // ── 读取配置 ────────────────────────────────────────────
-    const settings = await readLlmSettings()
+    const settings = configId
+      ? await readLlmConfigById(configId)
+      : await readLlmSettings()
     if (!settings?.baseUrl || !settings?.apiKey) {
       return NextResponse.json(
         { error: '请先在设置页配置 TTS 模型（Base URL 和 API Key）', code: 'SETTINGS_NOT_CONFIGURED' },
