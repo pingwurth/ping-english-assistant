@@ -15,3 +15,12 @@
 
 4.
 @client/components/pages/tts.tsx 参考 https://github.com/hexgrad/kokoro 实现 TTS
+
+
+5.
+@client/components/pages/tts.tsx 云端模型文字转语音失败了
+{
+    "error": "TTS 调用失败 (404)：",
+    "url": "https://token-plan-cn.xiaomimimo.com/api/v1/services/audio/tts/SpeechSynthesizer"
+}
+排查原因

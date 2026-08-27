@@ -24,12 +24,8 @@ import { TTS_MAX_TEXT_LENGTH } from '@/services/mock/tts'
 import { writeTtsExport } from '@/lib/tts-export'
 import { generateKokoroTts, KOKORO_VOICES, type KokoroLoadEvent } from '@/platform/kokoro-tts'
 
-/**
- * 云端 Qwen-Audio-TTS 音色（仅列出 qwen-audio-3.0-tts-plus 支持的双语音色）。
- * 纯英文音色（loongmary / loongeva_v3.6 / loongjohn）仅在 flash 模型可用；
- * 若切换 ttsModel 为 flash，可在此添加对应条目。
- */
-const CLOUD_VOICES = [
+/** 云端 TTS 默认音色（settings 加载前的 fallback） */
+const DEFAULT_CLOUD_VOICES = [
   { id: 'longanlingxin', label: 'Lingxin · Female (双语)' },
   { id: 'longanlufeng', label: 'Lufeng · Male (双语)' },
 ] as const
@@ -70,6 +66,7 @@ function TTS() {
   const [voiceIdx, setVoiceIdx] = useState(0)
   const [speedIdx, setSpeedIdx] = useState(2)
   const [ttsModelName, setTtsModelName] = useState('')
+  const [cloudVoices, setCloudVoices] = useState<ReadonlyArray<{ id: string; label: string }>>(DEFAULT_CLOUD_VOICES)
   const [configured, setConfigured] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [kokoroLoad, setKokoroLoad] = useState<KokoroLoadEvent | null>(null)
@@ -86,7 +83,7 @@ function TTS() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
   // 音色列表随引擎切换
-  const voices = engine === 'kokoro' ? KOKORO_VOICE_LIST : CLOUD_VOICES
+  const voices = engine === 'kokoro' ? KOKORO_VOICE_LIST : cloudVoices
   const voice = voices[voiceIdx] ?? voices[0]!
   const speed = SPEEDS[speedIdx] ?? 1
   const overLimit = text.length > TTS_MAX_TEXT_LENGTH
@@ -113,6 +110,7 @@ function TTS() {
         const isConfigured = !!data.configured
         setConfigured(isConfigured)
         if (data.ttsModel) setTtsModelName(data.ttsModel)
+        if (data.ttsVoices?.length) setCloudVoices(data.ttsVoices)
         // 仅当配置了 ttsModel 时才默认云端，否则选中本地 kokoro
         setEngine(isConfigured && data.ttsModel ? 'cloud' : 'kokoro')
       })

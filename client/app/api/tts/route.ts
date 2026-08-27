@@ -1,9 +1,9 @@
 /**
- * TTS API 路由 — 云端语音合成
+ * TTS API 路由 — 云端语音合成（MiMo / DashScope 双模式）
  *
- * apiKey / baseUrl / ttsModel 均从 ~/.ping-eng/settings.json 读取；
- * TTS 端点由 baseUrl 推导（去掉 /compatible-mode/v1 等后缀，拼接原生
- * /api/v1/services/audio/tts/SpeechSynthesizer 路径）。
+ * 根据 settings.ttsEndpoint 自动选择调用方式：
+ *  - ttsEndpoint 包含 chat/completions → MiMo（OpenAI-compatible 格式）
+ *  - 否则 → DashScope 原生 /api/v1/services/audio/tts/SpeechSynthesizer
  *
  * 请求：{ text, voice?, speed? }
  * 响应：{ audioBase64, taskId, durationMs, sentenceCount, srt }
@@ -12,7 +12,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { readLlmSettings } from '@/lib/server-settings'
+import { readLlmSettings, type LlmSettings } from '@/lib/server-settings'
 import {
   splitTtsSentences,
   buildTtsTimeline,
@@ -23,24 +23,147 @@ import {
 /** DashScope TTS 路径（接在 host 后面） */
 const DASHSCOPE_TTS_PATH = '/api/v1/services/audio/tts/SpeechSynthesizer'
 
-/** 默认音色（qwen-audio-3.0-tts-plus 双语音色，兼容英文） */
-const DEFAULT_VOICE = 'longanlingxin'
+/** 默认音色 */
+const DEFAULT_VOICE_DASHSCOPE = 'longanlingxin'
+const DEFAULT_VOICE_MIMO = 'Mia'
 
 /** 默认模型（settings 未配置时的回退值） */
 const DEFAULT_MODEL = 'qwen-audio-3.0-tts-flash'
 
-/**
- * 从 settings.baseUrl 构造 TTS 端点 URL。
- * baseUrl 可能是：
- *   - https://dashscope.aliyuncs.com/compatible-mode/v1
- *   - https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
- *   - https://dashscope.aliyuncs.com/api/v1
- * 统一去掉 /compatible-mode/v1 或 /api/v1 等后缀，拼接原生 TTS 路径。
- */
-function buildTtsUrl(baseUrl: string): string {
+// ---------------------------------------------------------------------------
+// Provider 检测
+// ---------------------------------------------------------------------------
+
+type TtsProvider = 'mimo' | 'dashscope'
+
+function detectTtsProvider(settings: LlmSettings): TtsProvider {
+  if (settings.ttsEndpoint?.includes('chat/completions')) return 'mimo'
+  if (settings.provider === 'mimo') return 'mimo'
+  return 'dashscope'
+}
+
+// ---------------------------------------------------------------------------
+// URL 构造
+// ---------------------------------------------------------------------------
+
+/** DashScope 原生 TTS 端点 */
+function buildDashScopeTtsUrl(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, '')
   const host = trimmed.replace(/\/(compatible-mode\/v1|v1|api\/v1)$/, '')
   return `${host}${DASHSCOPE_TTS_PATH}`
+}
+
+/** MiMo / OpenAI-compatible TTS 端点 */
+function buildMimoTtsUrl(baseUrl: string, ttsEndpoint: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '')
+  return `${trimmed}${ttsEndpoint.startsWith('/') ? '' : '/'}${ttsEndpoint}`
+}
+
+// ---------------------------------------------------------------------------
+// MiMo TTS（OpenAI-compatible /chat/completions）
+// ---------------------------------------------------------------------------
+
+async function generateTtsMimo(
+  text: string,
+  model: string,
+  voice: string,
+  apiKey: string,
+  url: string,
+): Promise<ArrayBuffer> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'assistant', content: text }],
+      modalities: ['text', 'audio'],
+      audio: { voice, format: 'wav' },
+    }),
+  })
+
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const errBody = await res.json()
+      detail = errBody.error?.message || errBody.message || JSON.stringify(errBody)
+    } catch {
+      detail = (await res.text().catch(() => '')).slice(0, 500)
+    }
+    throw new Error(`TTS 调用失败 (${res.status})：${detail}`)
+  }
+
+  const result = await res.json()
+  const base64: string | undefined = result?.choices?.[0]?.message?.audio?.data
+  if (!base64) {
+    throw new Error('TTS 响应中未返回音频数据')
+  }
+
+  return Buffer.from(base64, 'base64').buffer
+}
+
+// ---------------------------------------------------------------------------
+// DashScope TTS（原生 /api/v1/services/audio/tts/SpeechSynthesizer）
+// ---------------------------------------------------------------------------
+
+async function generateTtsDashScope(
+  text: string,
+  model: string,
+  voice: string,
+  speed: number,
+  apiKey: string,
+  url: string,
+): Promise<ArrayBuffer> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      input: {
+        text,
+        voice,
+        format: 'wav',
+        sample_rate: 24000,
+        rate: speed,
+        language_hints: ['en'],
+      },
+    }),
+  })
+
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const errBody = await res.json()
+      detail =
+        errBody.message ||
+        errBody.error?.message ||
+        errBody.code ||
+        JSON.stringify(errBody)
+    } catch {
+      detail = (await res.text().catch(() => '')).slice(0, 500)
+    }
+    throw new Error(`TTS 调用失败 (${res.status})：${detail}`)
+  }
+
+  // DashScope 原生模式：响应是 JSON，音频在 output.audio.url
+  const result = await res.json()
+  const audioUrl: string | undefined = result?.output?.audio?.url
+  if (!audioUrl) {
+    throw new Error('TTS 响应中未返回音频 URL')
+  }
+
+  // 下载音频二进制
+  const audioRes = await fetch(audioUrl)
+  if (!audioRes.ok) {
+    throw new Error(`音频下载失败 (${audioRes.status})`)
+  }
+
+  return audioRes.arrayBuffer()
 }
 
 /** 从 WAV ArrayBuffer 解析采样率 / 数据大小，计算时长 */
@@ -98,69 +221,23 @@ export async function POST(request: Request) {
       )
     }
 
+    const provider = detectTtsProvider(settings)
     const ttsModel = settings.ttsModel || DEFAULT_MODEL
     const spd = Math.max(0.5, Math.min(2.0, speed || 1.0))
-    const ttsVoice = voice || DEFAULT_VOICE
-    const apiUrl = buildTtsUrl(settings.baseUrl)
 
-    // ── 调用 DashScope Qwen-Audio-TTS（原生端点）────────────
-    const apiRes = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${settings.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: ttsModel,
-        input: {
-          text,
-          voice: ttsVoice,
-          format: 'wav',
-          sample_rate: 24000,
-          rate: spd,
-          language_hints: ['en'],
-        },
-      }),
-    })
+    // ── 按 provider 调用对应 TTS ─────────────────────────────
+    let audioBuf: ArrayBuffer
+    let apiUrl: string
 
-    if (!apiRes.ok) {
-      let detail = ''
-      try {
-        const errBody = await apiRes.json()
-        detail =
-          errBody.message ||
-          errBody.error?.message ||
-          errBody.code ||
-          JSON.stringify(errBody)
-      } catch {
-        detail = (await apiRes.text().catch(() => '')).slice(0, 500)
-      }
-      return NextResponse.json(
-        { error: `TTS 调用失败 (${apiRes.status})：${detail}`, url: apiUrl },
-        { status: 502 },
-      )
+    if (provider === 'mimo') {
+      apiUrl = buildMimoTtsUrl(settings.baseUrl, settings.ttsEndpoint!)
+      const ttsVoice = voice || DEFAULT_VOICE_MIMO
+      audioBuf = await generateTtsMimo(text, ttsModel, ttsVoice, settings.apiKey, apiUrl)
+    } else {
+      apiUrl = buildDashScopeTtsUrl(settings.baseUrl)
+      const ttsVoice = voice || DEFAULT_VOICE_DASHSCOPE
+      audioBuf = await generateTtsDashScope(text, ttsModel, ttsVoice, spd, settings.apiKey, apiUrl)
     }
-
-    // DashScope 原生模式：响应是 JSON，音频在 output.audio.url
-    const result = await apiRes.json()
-    const audioUrl: string | undefined = result?.output?.audio?.url
-    if (!audioUrl) {
-      return NextResponse.json(
-        { error: 'TTS 响应中未返回音频 URL', raw: result },
-        { status: 502 },
-      )
-    }
-
-    // 下载音频二进制
-    const audioRes = await fetch(audioUrl)
-    if (!audioRes.ok) {
-      return NextResponse.json(
-        { error: `音频下载失败 (${audioRes.status})` },
-        { status: 502 },
-      )
-    }
-
-    const audioBuf = await audioRes.arrayBuffer()
     const audioBase64 = Buffer.from(audioBuf).toString('base64')
     const durationMs = parseWavDuration(audioBuf) || 1000
 
