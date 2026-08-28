@@ -20,3 +20,7 @@
 
 6.
 @client/components/pages/settings.tsx 修改模型配置的时候，应该回填完整的 API Key，不然无法获取模型
+
+
+7.
+@client/components/pages/settings.tsx 新增标签页“翻译API”，支持添加多个云厂商卡片，预设腾讯云和阿里云，腾讯云的密钥在这里 @/home/ping/Downloads/SecretKey.csv
