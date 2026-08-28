@@ -36,3 +36,7 @@
 
 10.
 @client/components/pages/settings.tsx 模型配置中 "当前提供商 (tokenhub) 不支持翻译功能，仅 Qwen / MiMo 可用" 是什么逻辑？删掉这个逻辑，翻译是最基础的，所有提供商都支持
+
+
+11.
+@client/components/pages/settings.tsx 模型端点置空保存无效是为什么？

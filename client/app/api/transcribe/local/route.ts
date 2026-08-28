@@ -1,23 +1,23 @@
 import { NextResponse } from 'next/server'
 import { readLlmSettings } from '@/lib/server-settings'
+import { DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
 
 /**
  * POST /api/transcribe/local
  *
  * Proxy route: forwards multipart audio to the local faster-whisper
- * transcription server (transcribe_server.py, default port 8766).
+ * transcription server (transcribe_server.py).
  */
 
-const DEFAULT_TRANSCRIBE_URL = 'http://127.0.0.1:8766'
 const TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes for long audio
 
 /** Read the transcription server URL from settings */
 async function getTranscribeUrl(): Promise<string> {
   try {
     const settings = await readLlmSettings()
-    return settings?.whisperTranscribeUrl || DEFAULT_TRANSCRIBE_URL
+    return settings?.whisperTranscribeUrl || DEFAULT_WHISPER_TRANSCRIBE_URL
   } catch {
-    return DEFAULT_TRANSCRIBE_URL
+    return DEFAULT_WHISPER_TRANSCRIBE_URL
   }
 }
 

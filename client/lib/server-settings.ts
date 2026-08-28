@@ -8,23 +8,23 @@ export interface LlmSettings {
   apiKey: string
 
   /** ASR (语音识别) model name */
-  asrModel?: string
-  /** ASR endpoint path (default: /audio/transcriptions) */
-  asrEndpoint?: string
+  asrModel?: string | null
+  /** ASR endpoint path */
+  asrEndpoint?: string | null
 
   /** TTS (语音合成) model name */
-  ttsModel?: string
+  ttsModel?: string | null
   /** TTS endpoint path */
-  ttsEndpoint?: string
+  ttsEndpoint?: string | null
 
   /** Translate (翻译) model name */
-  translateModel?: string
-  /** Translate endpoint path (default: /chat/completions) */
-  translateEndpoint?: string
+  translateModel?: string | null
+  /** Translate endpoint path */
+  translateEndpoint?: string | null
 
-  /** WhisperX alignment service URL (default: http://127.0.0.1:8765) */
+  /** WhisperX alignment service URL */
   whisperAlignUrl?: string
-  /** faster-whisper transcription service URL (default: http://127.0.0.1:8766) */
+  /** faster-whisper transcription service URL */
   whisperTranscribeUrl?: string
 }
 

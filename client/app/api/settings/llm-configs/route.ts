@@ -75,12 +75,12 @@ export async function POST(request: Request) {
       provider: provider || '',
       baseUrl,
       apiKey,
-      asrModel: asrModel || undefined,
-      asrEndpoint: asrEndpoint || undefined,
-      ttsModel: ttsModel || undefined,
-      ttsEndpoint: ttsEndpoint || undefined,
-      translateModel: translateModel || undefined,
-      translateEndpoint: translateEndpoint || undefined,
+      asrModel,
+      asrEndpoint,
+      ttsModel,
+      ttsEndpoint,
+      translateModel,
+      translateEndpoint,
     })
 
     return NextResponse.json({ id })

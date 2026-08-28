@@ -3,6 +3,11 @@ import { ChevronDown, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
+import {
+  getDefaultEndpoint,
+  DEFAULT_WHISPER_ALIGN_URL,
+  DEFAULT_WHISPER_TRANSCRIBE_URL,
+} from '@/lib/service-endpoints'
 
 interface LlmSettingsDialogProps {
   open: boolean
@@ -12,6 +17,7 @@ interface LlmSettingsDialogProps {
 
 const PROVIDERS = [
   { value: 'qwen', label: 'QwenAI (通义千问)' },
+  { value: 'dashscope', label: 'DashScope (阿里云百炼)' },
   { value: 'whisper', label: 'WhisperAI' },
   { value: 'mimo', label: 'MiMo' },
 ]
@@ -248,9 +254,13 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
                   setTtsEndpoint('')
                   setWhisperAlignUrl('')
                   setWhisperTranscribeUrl('')
-                  // MiMo 使用 /chat/completions 作为 TTS 端点
                   if (newProvider === 'mimo') {
-                    setTtsEndpoint('/chat/completions')
+                    setTtsEndpoint(getDefaultEndpoint('mimo', 'tts'))
+                    setAsrEndpoint(getDefaultEndpoint('mimo', 'asr'))
+                  }
+                  if (newProvider === 'dashscope') {
+                    setTtsEndpoint(getDefaultEndpoint('dashscope', 'tts'))
+                    setAsrEndpoint(getDefaultEndpoint('dashscope', 'asr'))
                   }
                 }}
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm"
@@ -268,7 +278,7 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
                 <span className="ml-1 text-destructive">*</span>
               </label>
               <Input
-                placeholder="例如: https://dashscope.aliyuncs.com/compatible-mode/v1 或 https://api.openai.com/v1"
+                placeholder="Base URL（不含具体 API 路径）"
                 value={baseUrl}
                 onChange={e => { setBaseUrl(e.target.value); setModels([]) }}
               />
@@ -294,12 +304,12 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">ASR 端点路径</label>
               <Input
-                placeholder="/audio/transcriptions"
+                placeholder={getDefaultEndpoint(provider || 'whisper', 'asr')}
                 value={asrEndpoint}
                 onChange={e => setAsrEndpoint(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                默认: /audio/transcriptions
+                默认: {getDefaultEndpoint(provider || 'whisper', 'asr')}
               </p>
             </div>
 
@@ -309,14 +319,12 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">TTS 端点路径</label>
               <Input
-                placeholder="/audio/speech"
+                placeholder={getDefaultEndpoint(provider || 'whisper', 'tts')}
                 value={ttsEndpoint}
                 onChange={e => setTtsEndpoint(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                {provider === 'mimo'
-                  ? 'MiMo 使用 /chat/completions 处理语音合成'
-                  : '默认: /audio/speech'}
+                默认: {getDefaultEndpoint(provider || 'whisper', 'tts')}
               </p>
             </div>
 
@@ -324,24 +332,24 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">WhisperX 对齐服务</label>
               <Input
-                placeholder="http://127.0.0.1:8765"
+                placeholder={DEFAULT_WHISPER_ALIGN_URL}
                 value={whisperAlignUrl}
                 onChange={e => setWhisperAlignUrl(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                词级时间戳对齐服务地址，默认 http://127.0.0.1:8765
+                词级时间戳对齐服务地址，默认 {DEFAULT_WHISPER_ALIGN_URL}
               </p>
             </div>
 
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">faster-whisper 转写服务</label>
               <Input
-                placeholder="http://127.0.0.1:8766"
+                placeholder={DEFAULT_WHISPER_TRANSCRIBE_URL}
                 value={whisperTranscribeUrl}
                 onChange={e => setWhisperTranscribeUrl(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                本地转写服务地址，默认 http://127.0.0.1:8766
+                本地转写服务地址，默认 {DEFAULT_WHISPER_TRANSCRIBE_URL}
               </p>
             </div>
 

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { getDefaultEndpoint } from '@/lib/service-endpoints'
 
 /* ── 类型 & 常量 ── */
 
@@ -28,11 +29,26 @@ export interface LlmConfigItem {
 
 const PROVIDERS = [
   { value: 'qwen', label: 'QwenAI (通义千问)' },
+  { value: 'dashscope', label: 'DashScope (阿里云百炼)' },
   { value: 'whisper', label: 'WhisperAI' },
   { value: 'mimo', label: 'MiMo' },
 ]
 
 const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label || v
+
+type ServiceKind = 'asr' | 'tts' | 'translate'
+
+const SERVICE_STYLES: Record<ServiceKind, { accent: string; softBg: string; mutedBg: string; borderColor: string }> = {
+  asr:       { accent: '#2563eb', softBg: '#eff4ff', mutedBg: '#dbeafe', borderColor: '#bfdbfe' },
+  tts:       { accent: '#7c3aed', softBg: '#f5f0ff', mutedBg: '#ede4ff', borderColor: '#d8b4fe' },
+  translate: { accent: '#0d9488', softBg: '#edfcfa', mutedBg: '#ccfbf1', borderColor: '#99f6e4' },
+}
+
+const SERVICE_TYPES: { kind: ServiceKind; icon: typeof Mic; title: string; subtitle: string }[] = [
+  { kind: 'asr', icon: Mic, title: 'ASR 模型', subtitle: '语音识别' },
+  { kind: 'tts', icon: Headphones, title: 'TTS 模型', subtitle: '语音合成' },
+  { kind: 'translate', icon: Languages, title: '翻译模型', subtitle: 'Translation' },
+]
 
 /* ── ModelSelect 子组件 ── */
 
@@ -104,7 +120,7 @@ function ModelSelect({
   )
 }
 
-/* ── ModelConfigDialog — 新增/编辑共用弹窗 ── */
+/* ── ModelConfigDialog — 新增/编辑共用弹窗（卡片分组布局）── */
 
 function ModelConfigDialog({
   open, onOpenChange, editingConfig, onSave, onSaved,
@@ -131,10 +147,9 @@ function ModelConfigDialog({
   const [saving, setSaving] = useState(false)
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [error, setError] = useState('')
-  const [showAsrDropdown, setShowAsrDropdown] = useState(false)
-  const [showTtsDropdown, setShowTtsDropdown] = useState(false)
-  const [showTranslateDropdown, setShowTranslateDropdown] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
+  const [enabledServices, setEnabledServices] = useState<Set<ServiceKind>>(new Set())
+  const [activeDropdown, setActiveDropdown] = useState<ServiceKind | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -150,13 +165,17 @@ function ModelConfigDialog({
       setTranslateModel(editingConfig.translateModel || '')
       setTranslateEndpoint(editingConfig.translateEndpoint || '')
 
+      const enabled = new Set<ServiceKind>()
+      if (editingConfig.asrModel) enabled.add('asr')
+      if (editingConfig.ttsModel) enabled.add('tts')
+      if (editingConfig.translateModel) enabled.add('translate')
+      setEnabledServices(enabled)
+
       setLoadingConfig(true)
       fetch(`/api/settings/llm-configs?id=${encodeURIComponent(editingConfig.id)}`)
         .then(res => res.ok ? res.json() : null)
         .then(data => {
-          if (data) {
-            setApiKey(data.apiKey || '')
-          }
+          if (data) setApiKey(data.apiKey || '')
         })
         .catch(() => {})
         .finally(() => setLoadingConfig(false))
@@ -171,12 +190,11 @@ function ModelConfigDialog({
       setTtsEndpoint('')
       setTranslateModel('')
       setTranslateEndpoint('')
+      setEnabledServices(new Set())
     }
     setModels([])
     setError('')
-    setShowAsrDropdown(false)
-    setShowTtsDropdown(false)
-    setShowTranslateDropdown(false)
+    setActiveDropdown(null)
     setShowApiKey(false)
   }, [open, editingConfig])
 
@@ -198,7 +216,6 @@ function ModelConfigDialog({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '获取模型列表失败')
       setModels(data.models || [])
-      setShowAsrDropdown(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : '获取模型列表失败')
     } finally {
@@ -218,12 +235,12 @@ function ModelConfigDialog({
         provider,
         baseUrl: baseUrl.trim(),
         ...((!isEdit || apiKey.trim()) ? { apiKey: apiKey.trim() } : {}),
-        asrModel: asrModel || undefined,
-        asrEndpoint: asrEndpoint.trim() || undefined,
-        ttsModel: ttsModel || undefined,
-        ttsEndpoint: ttsEndpoint.trim() || undefined,
-        translateModel: translateModel || undefined,
-        translateEndpoint: translateEndpoint.trim() || undefined,
+        asrModel: enabledServices.has('asr') ? (asrModel || null) : null,
+        asrEndpoint: enabledServices.has('asr') ? (asrEndpoint.trim() || null) : null,
+        ttsModel: enabledServices.has('tts') ? (ttsModel || null) : null,
+        ttsEndpoint: enabledServices.has('tts') ? (ttsEndpoint.trim() || null) : null,
+        translateModel: enabledServices.has('translate') ? (translateModel || null) : null,
+        translateEndpoint: enabledServices.has('translate') ? (translateEndpoint.trim() || null) : null,
       }
       const url = '/api/settings/llm-configs'
       const res = isEdit
@@ -241,7 +258,7 @@ function ModelConfigDialog({
     } finally {
       setSaving(false)
     }
-  }, [name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, isEdit, editingConfig, onOpenChange, onSave, onSaved])
+  }, [name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, enabledServices, isEdit, editingConfig, onOpenChange, onSave, onSaved])
 
   const handleProviderChange = (newProvider: string) => {
     setProvider(newProvider)
@@ -255,22 +272,70 @@ function ModelConfigDialog({
     setTranslateModel('')
     setTranslateEndpoint('')
     if (newProvider === 'mimo') {
-      setTtsEndpoint('/chat/completions')
-      setTranslateEndpoint('/chat/completions')
+      setTtsEndpoint(getDefaultEndpoint('mimo', 'tts'))
+      setAsrEndpoint(getDefaultEndpoint('mimo', 'asr'))
+      setTranslateEndpoint(getDefaultEndpoint('mimo', 'translate'))
+    }
+    if (newProvider === 'dashscope') {
+      setTtsEndpoint(getDefaultEndpoint('dashscope', 'tts'))
+      setAsrEndpoint(getDefaultEndpoint('dashscope', 'asr'))
+      setTranslateEndpoint(getDefaultEndpoint('dashscope', 'translate'))
     }
     if (!name || PROVIDERS.some(p => p.label === name)) {
       setName(PROVIDERS.find(p => p.value === newProvider)?.label || newProvider)
     }
   }
 
+  const addService = (kind: ServiceKind) => {
+    setEnabledServices(prev => new Set(prev).add(kind))
+  }
+
+  const removeService = (kind: ServiceKind) => {
+    setEnabledServices(prev => {
+      const next = new Set(prev)
+      next.delete(kind)
+      return next
+    })
+    if (kind === 'asr') { setAsrModel(''); setAsrEndpoint('') }
+    if (kind === 'tts') { setTtsModel(''); setTtsEndpoint('') }
+    if (kind === 'translate') { setTranslateModel(''); setTranslateEndpoint('') }
+  }
+
+  const getModelValue = (kind: ServiceKind) => {
+    if (kind === 'asr') return asrModel
+    if (kind === 'tts') return ttsModel
+    return translateModel
+  }
+
+  const setModelValue = (kind: ServiceKind, value: string) => {
+    if (kind === 'asr') setAsrModel(value)
+    if (kind === 'tts') setTtsModel(value)
+    if (kind === 'translate') setTranslateModel(value)
+  }
+
+  const getEndpointValue = (kind: ServiceKind) => {
+    if (kind === 'asr') return asrEndpoint
+    if (kind === 'tts') return ttsEndpoint
+    return translateEndpoint
+  }
+
+  const setEndpointValue = (kind: ServiceKind, value: string) => {
+    if (kind === 'asr') setAsrEndpoint(value)
+    if (kind === 'tts') setTtsEndpoint(value)
+    if (kind === 'translate') setTranslateEndpoint(value)
+  }
+
+  const pendingServices = SERVICE_TYPES.filter(s => !enabledServices.has(s.kind))
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogHeader>
         <DialogTitle>{isEdit ? '编辑模型配置' : '新增模型配置'}</DialogTitle>
-        <DialogDescription>配置 API 地址和密钥，分别设置 ASR、TTS 和翻译模型</DialogDescription>
+        <DialogDescription>配置 API 地址和密钥，按需添加 ASR、TTS 和翻译模型</DialogDescription>
       </DialogHeader>
       <DialogContent>
         <div className="flex flex-col gap-4">
+          {/* 基础信息 */}
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium">配置名称 <span className="text-destructive">*</span></label>
             <Input
@@ -294,7 +359,7 @@ function ModelConfigDialog({
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium">Base URL <span className="text-destructive">*</span></label>
             <Input
-              placeholder="例如: https://dashscope.aliyuncs.com/compatible-mode/v1"
+              placeholder="Base URL（不含具体 API 路径）"
               value={baseUrl}
               onChange={e => { setBaseUrl(e.target.value); setModels([]) }}
             />
@@ -322,58 +387,94 @@ function ModelConfigDialog({
             {isEdit && <p className="text-xs text-muted-foreground">已回填原有 API Key，清空则不修改</p>}
           </div>
 
-          <ModelSelect
-            label="ASR 模型 (语音识别)"
-            value={asrModel}
-            models={models}
-            showDropdown={showAsrDropdown}
-            onValueChange={setAsrModel}
-            onDropdownToggle={v => { setShowAsrDropdown(v); setShowTtsDropdown(false) }}
-            fetching={fetchingModels}
-            onFetch={fetchModels}
-            disabled={!baseUrl.trim() || !apiKey.trim()}
-          />
+          {/* 服务模型区域 */}
+          <div className="flex flex-col gap-3 pt-1">
+            <label className="text-sm font-medium">服务模型</label>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">ASR 端点路径</label>
-            <Input value={asrEndpoint} onChange={e => setAsrEndpoint(e.target.value)} />
-          </div>
+            {/* 已启用的服务配置卡片 */}
+            {SERVICE_TYPES.filter(s => enabledServices.has(s.kind)).map(s => {
+              const Icon = s.icon
+              const style = SERVICE_STYLES[s.kind]
+              return (
+                <div
+                  key={s.kind}
+                  className="rounded-xl border"
+                  style={{ borderLeftWidth: 3, borderLeftColor: style.accent, background: style.softBg, borderColor: style.borderColor }}
+                >
+                  <div className="flex items-center justify-between px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <Icon className="size-4" style={{ color: style.accent }} />
+                      <span className="text-sm font-medium">{s.title}</span>
+                      <span className="text-xs text-muted-foreground">（{s.subtitle}）</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                      onClick={() => removeService(s.kind)}
+                    >
+                      <Trash2 className="mr-1 size-3" />移除
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-3 px-4 py-3" style={{ borderTop: `1px solid ${style.borderColor}` }}>
+                    <ModelSelect
+                      label="模型"
+                      value={getModelValue(s.kind)}
+                      models={models}
+                      showDropdown={activeDropdown === s.kind}
+                      onValueChange={v => setModelValue(s.kind, v)}
+                      onDropdownToggle={show => setActiveDropdown(show ? s.kind : null)}
+                      fetching={fetchingModels}
+                      onFetch={fetchModels}
+                      disabled={!baseUrl.trim() || !apiKey.trim()}
+                    />
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">端点路径</label>
+                      <Input
+                        placeholder={getDefaultEndpoint(provider || 'whisper', s.kind)}
+                        value={getEndpointValue(s.kind)}
+                        onChange={e => setEndpointValue(s.kind, e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
 
-          <ModelSelect
-            label="TTS 模型 (语音合成)"
-            value={ttsModel}
-            models={models}
-            showDropdown={showTtsDropdown}
-            onValueChange={setTtsModel}
-            onDropdownToggle={v => { setShowTtsDropdown(v); setShowAsrDropdown(false) }}
-            fetching={fetchingModels}
-            onFetch={fetchModels}
-            disabled={!baseUrl.trim() || !apiKey.trim()}
-          />
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">TTS 端点路径</label>
-            <Input value={ttsEndpoint} onChange={e => setTtsEndpoint(e.target.value)} />
-          </div>
-
-          <ModelSelect
-            label="翻译模型 (Translation)"
-            value={translateModel}
-            models={models}
-            showDropdown={showTranslateDropdown}
-            onValueChange={setTranslateModel}
-            onDropdownToggle={v => { setShowTranslateDropdown(v); setShowAsrDropdown(false); setShowTtsDropdown(false) }}
-            fetching={fetchingModels}
-            onFetch={fetchModels}
-            disabled={!baseUrl.trim() || !apiKey.trim()}
-          />
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">翻译端点路径</label>
-            <Input
-              value={translateEndpoint}
-              onChange={e => setTranslateEndpoint(e.target.value)}
-            />
+            {/* 未启用的服务类型选择卡片 */}
+            {pendingServices.length > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                {pendingServices.map(s => {
+                  const Icon = s.icon
+                  const style = SERVICE_STYLES[s.kind]
+                  return (
+                    <button
+                      key={s.kind}
+                      type="button"
+                      onClick={() => addService(s.kind)}
+                      className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed px-3 py-4 text-muted-foreground transition-colors"
+                      onMouseEnter={e => {
+                        e.currentTarget.style.borderColor = style.accent
+                        e.currentTarget.style.background = style.softBg
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.borderColor = ''
+                        e.currentTarget.style.background = ''
+                      }}
+                    >
+                      <span
+                        className="flex size-8 items-center justify-center rounded-full"
+                        style={{ background: style.mutedBg, color: style.accent }}
+                      >
+                        <Icon className="size-4" />
+                      </span>
+                      <span className="text-xs font-medium">{s.title}</span>
+                      <span className="text-[10px]">+ 添加</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}

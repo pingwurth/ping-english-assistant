@@ -24,6 +24,7 @@ import { ModelConfigListSection } from '@/components/shared/model-config-list-di
 import { blobsStore, estimateUsage, materialsStore, recordsStore } from '@/platform/storage/idb'
 import { initMaterials, materialStore, removeMaterial } from '@/stores/material-store'
 import { useStore } from '@/stores/store'
+import { DEFAULT_WHISPER_ALIGN_URL, DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
 import {
   getDefaultLoop, getDefaultRate, getHeadphoneHint, getRecordMode,
   PREF_LOOPS, PREF_RATES, setDefaultLoop, setDefaultRate, setHeadphoneHint, setRecordMode,
@@ -240,12 +241,12 @@ function LocalServicesSection() {
         <div className="flex flex-col gap-2">
           <label className="text-sm font-medium">WhisperX 对齐服务</label>
           <Input
-            placeholder="http://127.0.0.1:8765"
+            placeholder={DEFAULT_WHISPER_ALIGN_URL}
             value={whisperAlignUrl}
             onChange={e => setWhisperAlignUrl(e.target.value)}
           />
           <p className="text-xs text-muted-foreground">
-            WhisperX 词级时间戳对齐服务地址。留空则使用默认地址 (http://127.0.0.1:8765)。
+            WhisperX 词级时间戳对齐服务地址。留空则使用默认地址 ({DEFAULT_WHISPER_ALIGN_URL})。
             <code className="ml-1 text-xs">./start.sh --server align</code>
           </p>
         </div>
@@ -253,12 +254,12 @@ function LocalServicesSection() {
         <div className="flex flex-col gap-2">
           <label className="text-sm font-medium">faster-whisper 转写服务</label>
           <Input
-            placeholder="http://127.0.0.1:8766"
+            placeholder={DEFAULT_WHISPER_TRANSCRIBE_URL}
             value={whisperTranscribeUrl}
             onChange={e => setWhisperTranscribeUrl(e.target.value)}
           />
           <p className="text-xs text-muted-foreground">
-            本地 faster-whisper 转写服务地址。留空则使用默认地址 (http://127.0.0.1:8766)。
+            本地 faster-whisper 转写服务地址。留空则使用默认地址 ({DEFAULT_WHISPER_TRANSCRIBE_URL})。
             <code className="ml-1 text-xs">./start.sh --server transcribe</code>
           </p>
         </div>

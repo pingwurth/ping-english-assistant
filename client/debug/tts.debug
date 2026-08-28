@@ -32,3 +32,6 @@
 
 7.
 @client/components/pages/tts.tsx 和 @client/components/shared/transcribe-shared.tsx 提供“是否翻译”开关，仅支持中英互译，开关开启时要对原文本进行翻译，保存 srt 或导入学习材料时展示双语：英文在上，中文在下
+
+8.
+@client/components/pages/tts.tsx 为什么每次生成语音都要重新下载 Kokoro 模型？

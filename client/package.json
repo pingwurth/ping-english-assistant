@@ -11,6 +11,8 @@
   "dependencies": {
     "@ai-sdk/openai": "^4.0.47",
     "@base-ui/react": "^1.5.0",
+    "@langchain/core": "^1.2.9",
+    "@langchain/openai": "^1.5.10",
     "@vercel/analytics": "1.6.1",
     "ai": "^7.0.79",
     "class-variance-authority": "^0.7.1",
