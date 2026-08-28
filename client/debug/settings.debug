@@ -24,3 +24,15 @@
 
 7.
 @client/components/pages/settings.tsx 新增标签页“翻译API”，支持添加多个云厂商卡片，预设腾讯云和阿里云，腾讯云的密钥在这里 @/home/ping/Downloads/SecretKey.csv
+
+
+8.
+@client/components/pages/settings.tsx 为什么模型配置标签页是空的？
+
+
+9.
+@client/components/pages/settings.tsx 模型配置的端点路径取消默认值说明，输入框也不要提示内容
+
+
+10.
+@client/components/pages/settings.tsx 模型配置中 "当前提供商 (tokenhub) 不支持翻译功能，仅 Qwen / MiMo 可用" 是什么逻辑？删掉这个逻辑，翻译是最基础的，所有提供商都支持

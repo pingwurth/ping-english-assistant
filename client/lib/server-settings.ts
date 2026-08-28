@@ -53,7 +53,8 @@ async function readRaw(): Promise<Record<string, unknown>> {
   try {
     const data = await readFile(SETTINGS_FILE, 'utf-8')
     return JSON.parse(data)
-  } catch {
+  } catch (err) {
+    console.error('[server-settings] Failed to read/parse settings file:', err)
     return {}
   }
 }

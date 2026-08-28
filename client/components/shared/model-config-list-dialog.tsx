@@ -32,8 +32,6 @@ const PROVIDERS = [
   { value: 'mimo', label: 'MiMo' },
 ]
 
-const TRANSLATE_PROVIDERS = new Set(['qwen', 'mimo'])
-
 const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label || v
 
 /* ── ModelSelect 子组件 ── */
@@ -208,8 +206,6 @@ function ModelConfigDialog({
     }
   }, [provider, baseUrl, apiKey])
 
-  const supportsTranslate = TRANSLATE_PROVIDERS.has(provider)
-
   const handleSave = useCallback(async () => {
     if (!name.trim()) { setError('请填写配置名称'); return }
     if (!baseUrl.trim()) { setError('Base URL 是必填的'); return }
@@ -340,8 +336,7 @@ function ModelConfigDialog({
 
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium">ASR 端点路径</label>
-            <Input placeholder="/audio/transcriptions" value={asrEndpoint} onChange={e => setAsrEndpoint(e.target.value)} />
-            <p className="text-xs text-muted-foreground">默认: /audio/transcriptions</p>
+            <Input value={asrEndpoint} onChange={e => setAsrEndpoint(e.target.value)} />
           </div>
 
           <ModelSelect
@@ -358,46 +353,28 @@ function ModelConfigDialog({
 
           <div className="flex flex-col gap-2">
             <label className="text-sm font-medium">TTS 端点路径</label>
-            <Input placeholder="/audio/speech" value={ttsEndpoint} onChange={e => setTtsEndpoint(e.target.value)} />
-            <p className="text-xs text-muted-foreground">
-              {provider === 'mimo' ? 'MiMo 使用 /chat/completions 处理语音合成' : '默认: /audio/speech'}
-            </p>
+            <Input value={ttsEndpoint} onChange={e => setTtsEndpoint(e.target.value)} />
           </div>
 
-          {supportsTranslate ? (
-            <>
-              <ModelSelect
-                label="翻译模型 (Translation)"
-                value={translateModel}
-                models={models}
-                showDropdown={showTranslateDropdown}
-                onValueChange={setTranslateModel}
-                onDropdownToggle={v => { setShowTranslateDropdown(v); setShowAsrDropdown(false); setShowTtsDropdown(false) }}
-                fetching={fetchingModels}
-                onFetch={fetchModels}
-                disabled={!baseUrl.trim() || !apiKey.trim()}
-              />
+          <ModelSelect
+            label="翻译模型 (Translation)"
+            value={translateModel}
+            models={models}
+            showDropdown={showTranslateDropdown}
+            onValueChange={setTranslateModel}
+            onDropdownToggle={v => { setShowTranslateDropdown(v); setShowAsrDropdown(false); setShowTtsDropdown(false) }}
+            fetching={fetchingModels}
+            onFetch={fetchModels}
+            disabled={!baseUrl.trim() || !apiKey.trim()}
+          />
 
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium">翻译端点路径</label>
-                <Input
-                  placeholder={provider === 'mimo' ? '/chat/completions' : '/translations'}
-                  value={translateEndpoint}
-                  onChange={e => setTranslateEndpoint(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {provider === 'mimo' ? 'MiMo 使用 /chat/completions 处理翻译' : '默认: /translations'}
-                </p>
-              </div>
-            </>
-          ) : (
-            <div className="rounded-lg border border-dashed p-3">
-              <p className="text-xs text-muted-foreground">
-                <Languages className="mr-1 inline size-3" />
-                当前提供商 ({providerLabel(provider)}) 不支持翻译功能，仅 Qwen / MiMo 可用
-              </p>
-            </div>
-          )}
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">翻译端点路径</label>
+            <Input
+              value={translateEndpoint}
+              onChange={e => setTranslateEndpoint(e.target.value)}
+            />
+          </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
