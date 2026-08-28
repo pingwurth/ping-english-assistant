@@ -40,3 +40,15 @@
 
 11.
 @client/components/pages/settings.tsx 模型端点置空保存无效是为什么？
+
+
+12.
+@client/components/pages/settings.tsx 模型提供商删除 WhisperAI 及 Whisper 模型调用专用适配代码
+
+
+13.
+@client/components/pages/settings.tsx “本地服务”标签页怎么消失了？
+
+
+14.
+client/components/shared/model-config-list-dialog.tsx 模型配置标签页新增一个独立的卡片分组： Kokoro 配置，

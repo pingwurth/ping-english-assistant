@@ -18,7 +18,6 @@ interface LlmSettingsDialogProps {
 const PROVIDERS = [
   { value: 'qwen', label: 'QwenAI (通义千问)' },
   { value: 'dashscope', label: 'DashScope (阿里云百炼)' },
-  { value: 'whisper', label: 'WhisperAI' },
   { value: 'mimo', label: 'MiMo' },
 ]
 
@@ -304,12 +303,12 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">ASR 端点路径</label>
               <Input
-                placeholder={getDefaultEndpoint(provider || 'whisper', 'asr')}
+                placeholder={getDefaultEndpoint(provider || 'mimo', 'asr')}
                 value={asrEndpoint}
                 onChange={e => setAsrEndpoint(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                默认: {getDefaultEndpoint(provider || 'whisper', 'asr')}
+                默认: {getDefaultEndpoint(provider || 'mimo', 'asr')}
               </p>
             </div>
 
@@ -319,12 +318,12 @@ export function LlmSettingsDialog({ open, onOpenChange, onSaved }: LlmSettingsDi
             <div className="flex flex-col gap-2">
               <label className="text-sm font-medium">TTS 端点路径</label>
               <Input
-                placeholder={getDefaultEndpoint(provider || 'whisper', 'tts')}
+                placeholder={getDefaultEndpoint(provider || 'mimo', 'tts')}
                 value={ttsEndpoint}
                 onChange={e => setTtsEndpoint(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                默认: {getDefaultEndpoint(provider || 'whisper', 'tts')}
+                默认: {getDefaultEndpoint(provider || 'mimo', 'tts')}
               </p>
             </div>
 

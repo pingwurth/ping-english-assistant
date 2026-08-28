@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 export type ServiceKind = 'tts' | 'asr' | 'translate'
-export type ProviderKey = 'dashscope' | 'mimo' | 'whisper' | string
+export type ProviderKey = 'dashscope' | 'mimo' | string
 
 // ---------------------------------------------------------------------------
 // 默认 endpoint 映射（唯一允许维护路径常量的地方）
@@ -37,9 +37,9 @@ const MIMO_ENDPOINTS: Record<ServiceKind, string> = {
   translate: '/chat/completions',
 }
 
-const WHISPER_ENDPOINTS: Record<ServiceKind, string> = {
-  tts: '/v1/audio/speech',
-  asr: '/v1/audio/transcriptions',
+const LOCAL_ENDPOINTS: Record<ServiceKind, string> = {
+  tts: '/v1/chat/completions',
+  asr: '/v1/chat/completions',
   translate: '/v1/chat/completions',
 }
 
@@ -47,7 +47,7 @@ const PROVIDER_ENDPOINTS: Record<string, Record<ServiceKind, string>> = {
   dashscope: DASHSCOPE_ENDPOINTS,
   qwen: QWEN_ENDPOINTS,
   mimo: MIMO_ENDPOINTS,
-  whisper: WHISPER_ENDPOINTS,
+  local: LOCAL_ENDPOINTS,
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +58,8 @@ const PROVIDER_ENDPOINTS: Record<string, Record<ServiceKind, string>> = {
 export const DEFAULT_WHISPER_ALIGN_URL = 'http://127.0.0.1:8765'
 /** faster-whisper 转写服务默认地址 */
 export const DEFAULT_WHISPER_TRANSCRIBE_URL = 'http://127.0.0.1:8766'
+/** 本地模型（Ollama / vLLM 等）默认地址 */
+export const DEFAULT_LOCAL_MODEL_URL = 'http://127.0.0.1:11434'
 
 // ---------------------------------------------------------------------------
 // 默认模型
@@ -78,6 +80,7 @@ const DEFAULT_MODELS: Record<ServiceKind, Record<string, string>> = {
     dashscope: 'qwen-turbo',
     qwen: 'qwen-turbo',
     mimo: 'mimo-v2.5',
+    local: '',
   },
 }
 
@@ -106,11 +109,11 @@ export function buildServiceUrl(baseUrl: string, endpoint: string): string {
 
 /**
  * 获取指定 provider + service 的默认 endpoint。
- * 未知 provider 回退到 whisper（OpenAI-compatible）默认值。
+ * 未知 provider 回退到 mimo（OpenAI-compatible）默认值。
  * 'qwen' 作为 'dashscope' 的别名处理。
  */
 export function getDefaultEndpoint(provider: ProviderKey, service: ServiceKind): string {
-  return PROVIDER_ENDPOINTS[provider]?.[service] ?? WHISPER_ENDPOINTS[service]
+  return PROVIDER_ENDPOINTS[provider]?.[service] ?? MIMO_ENDPOINTS[service]
 }
 
 /**

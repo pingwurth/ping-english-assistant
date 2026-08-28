@@ -4,8 +4,7 @@
  * 根据 provider 分发到不同的实现：
  *   - dashscope: 原生 multimodal-generation API
  *   - mimo: OpenAI-compatible multimodal
- *   - whisper: OpenAI Whisper multipart form-data
- *   - 其他: 回退到 whisper
+ *   - 其他: 回退到 mimo
  */
 
 import type { AsrModelConfig, AsrResult } from './types'
@@ -13,7 +12,6 @@ import { LlmError } from './errors'
 import { normalizeProvider } from './factory'
 import { transcribeMimo } from './providers/mimo-asr'
 import { transcribeDashScope } from './providers/dashscope-asr'
-import { transcribeWhisper } from './providers/whisper-asr'
 
 /**
  * 统一 ASR 转写入口
@@ -40,13 +38,10 @@ export async function transcribe(
     case 'mimo':
       return transcribeMimo(audioFile, config)
 
-    case 'whisper':
-      return transcribeWhisper(audioFile, config)
-
     default:
-      // 未知 provider 回退到 whisper（OpenAI-compatible）
-      console.log(`[ASR] Unknown provider "${provider}", falling back to Whisper`)
-      return transcribeWhisper(audioFile, config)
+      // 未知 provider 回退到 mimo（OpenAI-compatible）
+      console.log(`[ASR] Unknown provider "${provider}", falling back to MiMo`)
+      return transcribeMimo(audioFile, config)
   }
 }
 
@@ -54,12 +49,14 @@ export async function transcribe(
  * 检测 ASR provider 类型
  *
  * 用于 API 路由中判断是否为 multimodal 模型（决定是否需要 WhisperX 对齐）。
+ * multimodal: 提供商原生音频模型（dashscope/mimo），可能需要 WhisperX 对齐补充时间戳
+ * standard:   OpenAI-compatible 标准 ASR，已自带时间戳
  */
-export function getAsrProviderType(settings: { provider: string; asrModel?: string | null }): 'multimodal' | 'whisper' {
+export function getAsrProviderType(settings: { provider: string; asrModel?: string | null }): 'multimodal' | 'standard' {
   const provider = normalizeProvider(settings.provider)
   const model = (settings.asrModel || '').toLowerCase()
 
   if (provider === 'mimo') return 'multimodal'
   if (provider === 'dashscope' && (model.startsWith('qwen-audio') || !model)) return 'multimodal'
-  return 'whisper'
+  return 'standard'
 }

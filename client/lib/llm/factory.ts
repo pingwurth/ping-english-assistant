@@ -4,7 +4,6 @@
  * 支持的 provider：
  *   - dashscope: 阿里云 DashScope（Qwen 系列）
  *   - mimo: MiMo（OpenAI-compatible）
- *   - whisper: OpenAI 标准接口
  *   - 其他: 回退到 OpenAI-compatible
  */
 
@@ -21,7 +20,7 @@ import { resolveServiceUrl } from '@/lib/service-endpoints'
  * 创建 LangChain ChatOpenAI 实例
  *
  * 所有 provider 统一使用 ChatOpenAI，因为：
- *   - mimo / whisper 本身就是 OpenAI-compatible
+ *   - mimo 本身就是 OpenAI-compatible
  *   - dashscope 的 chat completions 也兼容 OpenAI 格式（/chat/completions）
  *   - 非标准格式（DashScope 原生 ASR/TTS）走各自的 provider 封装
  */
@@ -41,7 +40,7 @@ export function createChatModel(config: ChatModelConfig): ChatOpenAI {
   const fullUrl = resolveServiceUrl(
     config.baseUrl,
     config.endpoint,
-    config.provider || 'whisper',
+    config.provider || 'mimo',
     'translate',
   )
 
@@ -73,7 +72,7 @@ export function createChatModel(config: ChatModelConfig): ChatOpenAI {
 
 /** 将 provider 别名归一化为标准 key */
 export function normalizeProvider(provider: string): string {
-  return provider || 'whisper'
+  return provider || 'mimo'
 }
 
 /**
@@ -91,7 +90,7 @@ export function isDashScopeNative(provider: string): boolean {
  */
 export function isOpenAICompatible(provider: string): boolean {
   const p = normalizeProvider(provider)
-  return p === 'mimo' || p === 'whisper' || p !== 'dashscope'
+  return p !== 'dashscope'
 }
 
 // ---------------------------------------------------------------------------

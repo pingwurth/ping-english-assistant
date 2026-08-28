@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { getDefaultEndpoint } from '@/lib/service-endpoints'
+import { getDefaultEndpoint, DEFAULT_LOCAL_MODEL_URL } from '@/lib/service-endpoints'
 
 /* ── 类型 & 常量 ── */
 
@@ -30,8 +30,8 @@ export interface LlmConfigItem {
 const PROVIDERS = [
   { value: 'qwen', label: 'QwenAI (通义千问)' },
   { value: 'dashscope', label: 'DashScope (阿里云百炼)' },
-  { value: 'whisper', label: 'WhisperAI' },
   { value: 'mimo', label: 'MiMo' },
+  { value: 'local', label: '本地模型' },
 ]
 
 const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label || v
@@ -281,6 +281,9 @@ function ModelConfigDialog({
       setAsrEndpoint(getDefaultEndpoint('dashscope', 'asr'))
       setTranslateEndpoint(getDefaultEndpoint('dashscope', 'translate'))
     }
+    if (newProvider === 'local') {
+      setBaseUrl(DEFAULT_LOCAL_MODEL_URL)
+    }
     if (!name || PROVIDERS.some(p => p.label === name)) {
       setName(PROVIDERS.find(p => p.value === newProvider)?.label || newProvider)
     }
@@ -431,7 +434,7 @@ function ModelConfigDialog({
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-medium text-muted-foreground">端点路径</label>
                       <Input
-                        placeholder={getDefaultEndpoint(provider || 'whisper', s.kind)}
+                        placeholder={getDefaultEndpoint(provider || 'mimo', s.kind)}
                         value={getEndpointValue(s.kind)}
                         onChange={e => setEndpointValue(s.kind, e.target.value)}
                       />
@@ -573,7 +576,7 @@ export function ModelConfigListSection({ highlightTtsModel, onHighlightDone, onC
       <Card>
         <CardContent className="flex flex-col gap-4 p-5">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base"><Settings2 data-icon="inline-start" />模型配置</CardTitle>
+            <CardTitle className="text-base"><Settings2 data-icon="inline-start" />LLM 配置</CardTitle>
             <Button size="sm" onClick={handleAdd}><Plus data-icon="inline-start" />新增模型</Button>
           </div>
 
