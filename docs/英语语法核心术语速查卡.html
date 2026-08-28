@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>英语语法核心专业名词速查卡</title>
+<style>
+  :root {
+    --primary: #1a5276;
+    --accent: #e67e22;
+    --bg: #f8f9fa;
+    --card-bg: #ffffff;
+    --text: #2c3e50;
+    --light-text: #7f8c8d;
+    --border: #e0e0e0;
+    --highlight: #fff3cd;
+    --tag-bg: #e8f4fd;
+    --tag-text: #1a5276;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 20px;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  header {
+    text-align: center;
+    padding: 40px 20px 30px;
+    background: linear-gradient(135deg, var(--primary) 0%, #2980b9 100%);
+    color: white;
+    border-radius: 12px;
+    margin-bottom: 30px;
+  }
+  header h1 { font-size: 28px; margin-bottom: 8px; letter-spacing: 1px; }
+  header p { font-size: 14px; opacity: 0.9; }
+  .toc {
+    background: var(--card-bg);
+    border-radius: 10px;
+    padding: 20px 25px;
+    margin-bottom: 30px;
+    border-left: 4px solid var(--accent);
+  }
+  .toc h3 { font-size: 16px; color: var(--primary); margin-bottom: 12px; }
+  .toc ol { padding-left: 20px; columns: 2; column-gap: 30px; }
+  .toc li { margin-bottom: 6px; font-size: 14px; }
+  .toc a { color: var(--text); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  .section {
+    background: var(--card-bg);
+    border-radius: 10px;
+    padding: 25px 30px;
+    margin-bottom: 25px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .section h2 {
+    font-size: 20px;
+    color: var(--primary);
+    border-bottom: 2px solid var(--border);
+    padding-bottom: 10px;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section h2 .num {
+    background: var(--primary);
+    color: white;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .term-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .term {
+    padding: 12px 16px;
+    background: #fafbfc;
+    border-radius: 8px;
+    border-left: 3px solid var(--primary);
+  }
+  .term .en {
+    font-weight: 700;
+    color: var(--primary);
+    font-size: 15px;
+  }
+  .term .zh {
+    color: var(--accent);
+    font-weight: 600;
+    margin-left: 6px;
+  }
+  .term .desc {
+    display: block;
+    font-size: 13px;
+    color: var(--light-text);
+    margin-top: 4px;
+  }
+  .term .example {
+    display: block;
+    font-size: 13px;
+    color: #555;
+    margin-top: 6px;
+    padding: 6px 10px;
+    background: var(--highlight);
+    border-radius: 4px;
+    font-style: italic;
+  }
+  .term .example::before { content: "📌 "; font-style: normal; }
+  .sub-terms {
+    margin-top: 8px;
+    padding-left: 16px;
+    border-left: 2px dashed var(--border);
+  }
+  .sub-terms .sub {
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .sub-terms .sub .en { font-weight: 600; color: #2980b9; }
+  .sub-terms .sub .zh { color: var(--accent); margin-left: 4px; }
+  .highlight-box {
+    background: linear-gradient(135deg, #fef9e7 0%, #fdf2e9 100%);
+    border: 1px solid #f5cba7;
+    border-radius: 8px;
+    padding: 15px 20px;
+    margin: 15px 0;
+  }
+  .highlight-box .title {
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 14px;
+    margin-bottom: 8px;
+  }
+  .pattern-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+  .pattern-table th {
+    background: var(--primary);
+    color: white;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  .pattern-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .pattern-table tr:nth-child(even) { background: #f8f9fa; }
+  .tag {
+    display: inline-block;
+    background: var(--tag-bg);
+    color: var(--tag-text);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 6px;
+  }
+  .priority-star { color: var(--accent); font-size: 14px; }
+  footer {
+    text-align: center;
+    padding: 20px;
+    color: var(--light-text);
+    font-size: 12px;
+  }
+  @media (max-width: 600px) {
+    .toc ol { columns: 1; }
+    .section { padding: 18px 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>📖 英语语法核心专业名词速查卡</h1>
+  <p>看懂语法书 · 读懂真题解析 · 攻克长难句</p>
+</header>
+
+<div class="toc">
+  <h3>📑 目录导航</h3>
+  <ol>
+    <li><a href="#s1">词类 Parts of Speech</a></li>
+    <li><a href="#s2">句子成分 Sentence Elements</a></li>
+    <li><a href="#s3">句子类型 Sentence Types</a></li>
+    <li><a href="#s4">三大从句 Clauses</a></li>
+    <li><a href="#s5">时态·语态·语气</a></li>
+    <li><a href="#s6">非谓语动词 Non-finite</a></li>
+    <li><a href="#s7">特殊语法现象</a></li>
+    <li><a href="#s8">学习优先级建议</a></li>
+  </ol>
+</div>
+
+<!-- 一、词类 -->
+<div class="section" id="s1">
+  <h2><span class="num">1</span>词类 Parts of Speech</h2>
+  <div class="term-grid">
+
+    <div class="term">
+      <span class="en">Noun</span><span class="zh">名词</span>
+      <span class="desc">表示人、事物、地点或抽象概念</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Countable noun</span><span class="zh">可数名词</span> — book, student</div>
+        <div class="sub"><span class="en">Uncountable noun</span><span class="zh">不可数名词</span> — water, information</div>
+        <div class="sub"><span class="en">Proper noun</span><span class="zh">专有名词</span> — Beijing, Shakespeare</div>
+        <div class="sub"><span class="en">Collective noun</span><span class="zh">集合名词</span> — family, team</div>
+        <div class="sub"><span class="en">Abstract noun</span><span class="zh">抽象名词</span> — love, freedom</div>
+      </div>
+    </div>
+
+    <div class="term">
+      <span class="en">Pronoun</span><span class="zh">代词</span>
+      <span class="desc">代替名词，避免重复</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Personal pronoun</span><span class="zh">人称代词</span> — I, you, he, she, it</div>
+        <div class="sub"><span class="en">Possessive pronoun</span><span class="zh">物主代词</span> — mine, yours, his</div>
+        <div class="sub"><span class="en">Reflexive pronoun</span><span class="zh">反身代词</span> — myself, yourself</div>
+        <div class="sub"><span class="en">Relative pronoun</span><span class="zh">关系代词</span> — who, which, that</div>
+        <div class="sub"><span class="en">Indefinite pronoun</span><span class="zh">不定代词</span> — someone, anything</div>
+      </div>
+    </div>
+
+    <div class="term">
+      <span class="en">Adjective</span><span class="zh">形容词</span>
+      <span class="desc">修饰名词，描述性质或特征</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Positive degree</span><span class="zh">原级</span> — tall</div>
+        <div class="sub"><span class="en">Comparative degree</span><span class="zh">比较级</span> — taller</div>
+        <div class="sub"><span class="en">Superlative degree</span><span class="zh">最高级</span> — tallest</div>
+      </div>
+      <span class="example">She is <b>taller</b> than her sister. (比较级)</span>
+    </div>
+
+    <div class="term">
+      <span class="en">Adverb</span><span class="zh">副词</span>
+      <span class="desc">修饰动词、形容词或其他副词，表方式/程度/时间/地点</span>
+      <span class="example">He runs <b>quickly</b>. (方式副词) / She is <b>very</b> happy. (程度副词)</span>
+    </div>
+
+    <div class="term">
+      <span class="en">Verb</span><span class="zh">动词</span><span class="tag priority-star">⭐ 核心</span>
+      <span class="desc">表示动作或状态，句子的灵魂</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Transitive verb (vt.)</span><span class="zh">及物动词</span> — 后接宾语：I <b>read</b> a book.</div>
+        <div class="sub"><span class="en">Intransitive verb (vi.)</span><span class="zh">不及物动词</span> — 不接宾语：Birds <b>fly</b>.</div>
+        <div class="sub"><span class="en">Linking verb</span><span class="zh">系动词</span> — be, seem, become, look</div>
+        <div class="sub"><span class="en">Auxiliary verb</span><span class="zh">助动词</span> — do, have, will (帮助构成时态/疑问)</div>
+        <div class="sub"><span class="en">Modal verb</span><span class="zh">情态动词</span> — can, may, must, should</div>
+      </div>
+    </div>
+
+    <div class="term">
+      <span class="en">Preposition</span><span class="zh">介词</span>
+      <span class="desc">表示名词与其他词的关系（时间、地点、方向等）</span>
+      <span class="example">in the morning / on the table / at the station</span>
+    </div>
+
+    <div class="term">
+      <span class="en">Conjunction</span><span class="zh">连词</span>
+      <span class="desc">连接词、短语或句子</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Coordinating conjunction</span><span class="zh">并列连词</span> — and, but, or, so</div>
+        <div class="sub"><span class="en">Subordinating conjunction</span><span class="zh">从属连词</span> — because, if, although, when</div>
+      </div>
+    </div>
+
+    <div class="term">
+      <span class="en">Article</span><span class="zh">冠词</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Definite article</span><span class="zh">定冠词</span> — the (特指)</div>
+        <div class="sub"><span class="en">Indefinite article</span><span class="zh">不定冠词</span> — a / an (泛指)</div>
+        <div class="sub"><span class="en">Zero article</span><span class="zh">零冠词</span> — 不用冠词：by bus, in spring</div>
+      </div>
+    </div>
+
+    <div class="term">
+      <span class="en">Determiner</span><span class="zh">限定词</span>
+      <span class="desc">限定名词范围的词（冠词、指示词、物主代词、数量词统称）</span>
+      <span class="example">this book / my car / some water / three apples</span>
+    </div>
+
+  </div>
+</div>
+
+<!-- 二、句子成分 -->
+<div class="section" id="s2">
+  <h2><span class="num">2</span>句子成分 Sentence Elements <span class="tag priority-star">⭐ 最核心</span></h2>
+  <p style="font-size:13px;color:var(--light-text);margin-bottom:15px;">看不懂句子成分，长难句永远糊涂。这是语法学习的第一优先级。</p>
+  <div class="term-grid">
+
+    <div class="term">
+      <span class="en">Subject (S)</span><span class="zh">主语</span>
+      <span class="desc">句子描述的主体，动作的发出者</span>
+      <span class="example"><b>The cat</b> sleeps. (主语：猫)</span>
+    </div>
+
+    <div class="term">
+      <span class="en">Predicate</span><span class="zh">谓语</span>
+      <span class="desc">说明主语的动作或状态，由动词充当</span>
+      <span class="example">The cat <b>sleeps</b>. (谓语：睡觉)</span>
+    </div>
+
+    <div class="term">
+      <span class="en">Object (O)</span><span class="zh">宾语</span>
+      <span class="desc">动作的承受对象，跟在及物动词后</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Direct object</span><span class="zh">直接宾语</span> — 动作直接作用对象</div>
+        <div class="sub"><span class="en">Indirect object</span><span class="zh">间接宾语</span> — 动作的受益者/对象（人）</div>
+      </div>
+      <span class="example">She gave <b>me</b>(间宾) <b>a book</b>(直宾).</span>
+    </div>
+
+    <div class="term">
+      <span class="en">Predicative</span><span class="zh">表语</span>
+      <span class="desc">跟在系动词后，描述主语的性质/状态/身份</span>
+      <span class="example">She is <b>a doctor</b>. / The soup tastes <b>delicious</b>.</span>
+    </div>
+
+    <div class="term">
+      <span class="en">Attribute</span><span class="zh">定语</span>
+      <span class="desc">修饰名词或代词，说明"什么样的"</span>
+      <span class="example">a <b>red</b> apple / the book <b>on the desk</b></span>
+    </div>
+
+    <div class="term">
+      <span class="en">Adverbial</span><span class="zh">状语</span>
+      <span class="desc">修饰动词/形容词/整句，表时间、地点、原因、条件、让步等</span>
+      <span class="example">He works <b>hard</b>. / <b>If it rains</b>, we will stay home.</span>
+    </div>
+
+    <div class="term">
+      <span class="en">Complement</span><span class="zh">补语</span>
+      <span class="desc">补充说明主语或宾语的状态</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Subject complement</span><span class="zh">主语补语</span> — He was elected <b>president</b>.</div>
+        <div class="sub"><span class="en">Object complement</span><span class="zh">宾语补语(宾补)</span> — We made him <b>monitor</b>.</div>
+      </div>
+    </div>
+
+    <div class="term">
+      <span class="en">Appositive</span><span class="zh">同位语</span>
+      <span class="desc">对前面的名词进行解释说明，二者指同一事物</span>
+      <span class="example">My friend <b>Tom</b> is coming. (Tom 就是 friend)</span>
+    </div>
+
+  </div>
+
+  <div class="highlight-box">
+    <div class="title">🔑 五大基本句型（必须背熟）</div>
+    <table class="pattern-table">
+      <tr><th>缩写</th><th>句型</th><th>含义</th><th>例句</th></tr>
+      <tr><td><b>SV</b></td><td>主谓</td><td>主语+不及物动词</td><td>Birds fly.</td></tr>
+      <tr><td><b>SVO</b></td><td>主谓宾</td><td>主语+及物动词+宾语</td><td>I love music.</td></tr>
+      <tr><td><b>SVP</b></td><td>主系表</td><td>主语+系动词+表语</td><td>She is happy.</td></tr>
+      <tr><td><b>SVOO</b></td><td>主谓双宾</td><td>主语+动词+间宾+直宾</td><td>He gave me a pen.</td></tr>
+      <tr><td><b>SVOC</b></td><td>主谓宾补</td><td>主语+动词+宾语+宾补</td><td>We made him leader.</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- 三、句子类型 -->
+<div class="section" id="s3">
+  <h2><span class="num">3</span>句子类型 Sentence Types</h2>
+
+  <h3 style="font-size:16px;color:var(--primary);margin:15px 0 10px;">按结构分类</h3>
+  <div class="term-grid">
+    <div class="term">
+      <span class="en">Simple sentence</span><span class="zh">简单句</span>
+      <span class="desc">只有一套主谓结构</span>
+      <span class="example">The sun rises in the east.</span>
+    </div>
+    <div class="term">
+      <span class="en">Compound sentence</span><span class="zh">并列句</span>
+      <span class="desc">两个或多个简单句用并列连词连接</span>
+      <span class="example">I tried hard, <b>but</b> I failed.</span>
+    </div>
+    <div class="term">
+      <span class="en">Complex sentence</span><span class="zh">复合句</span>
+      <span class="desc">主句 + 一个或多个从句</span>
+      <span class="example"><b>Although he is young</b>, he is very wise.</span>
+    </div>
+    <div class="term">
+      <span class="en">Compound-complex sentence</span><span class="zh">并列复合句</span>
+      <span class="desc">并列句 + 从句的混合结构</span>
+      <span class="example">I wanted to go, <b>but</b> he said <b>that we should stay</b>.</span>
+    </div>
+  </div>
+
+  <h3 style="font-size:16px;color:var(--primary);margin:20px 0 10px;">按用途分类</h3>
+  <div class="term-grid">
+    <div class="term"><span class="en">Declarative sentence</span><span class="zh">陈述句</span> — 陈述事实：He is a teacher.</div>
+    <div class="term">
+      <span class="en">Interrogative sentence</span><span class="zh">疑问句</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">General question</span><span class="zh">一般疑问句</span> — Do you like it?</div>
+        <div class="sub"><span class="en">Special question</span><span class="zh">特殊疑问句</span> — What is your name?</div>
+        <div class="sub"><span class="en">Alternative question</span><span class="zh">选择疑问句</span> — Tea or coffee?</div>
+        <div class="sub"><span class="en">Tag question</span><span class="zh">反义疑问句</span> — You are ready, aren't you?</div>
+      </div>
+    </div>
+    <div class="term"><span class="en">Imperative sentence</span><span class="zh">祈使句</span> — 表示命令/请求：Open the door, please.</div>
+    <div class="term"><span class="en">Exclamatory sentence</span><span class="zh">感叹句</span> — What a beautiful day! / How fast he runs!</div>
+  </div>
+</div>
+
+<!-- 四、三大从句 -->
+<div class="section" id="s4">
+  <h2><span class="num">4</span>三大从句 Clauses <span class="tag priority-star">⭐ 长难句核心</span></h2>
+
+  <div class="highlight-box">
+    <div class="title">📌 基础概念</div>
+    <p style="font-size:13px;"><b>Main clause / Independent clause</b> 主句/独立分句 — 能独立成句<br>
+    <b>Subordinate clause / Dependent clause</b> 从句/从属分句 — 不能独立，需依附主句</p>
+  </div>
+
+  <div class="term-grid">
+    <div class="term">
+      <span class="en">Noun clause</span><span class="zh">名词性从句</span>
+      <span class="desc">整个从句当名词用，可作主/宾/表/同位语</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Subject clause</span><span class="zh">主语从句</span> — <b>That he passed the exam</b> surprised everyone.</div>
+        <div class="sub"><span class="en">Object clause</span><span class="zh">宾语从句</span> — I know <b>that he is honest</b>.</div>
+        <div class="sub"><span class="en">Predicative clause</span><span class="zh">表语从句</span> — The problem is <b>who can do it</b>.</div>
+        <div class="sub"><span class="en">Appositive clause</span><span class="zh">同位语从句</span> — The news <b>that he won</b> is true.</div>
+      </div>
+    </div>
+
+    <div class="term">
+      <span class="en">Attributive clause / Relative clause</span><span class="zh">定语从句</span>
+      <span class="desc">修饰名词或代词，相当于形容词</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Restrictive attributive clause</span><span class="zh">限制性定语从句</span> — 不可省略，否则句意不完整：The book <b>that I bought</b> is good.</div>
+        <div class="sub"><span class="en">Non-restrictive attributive clause</span><span class="zh">非限制性定语从句</span> — 用逗号隔开，补充说明：My brother, <b>who lives in Beijing</b>, is a doctor.</div>
+      </div>
+    </div>
+
+    <div class="term">
+      <span class="en">Adverbial clause</span><span class="zh">状语从句</span>
+      <span class="desc">在句中作状语，修饰主句</span>
+      <div class="sub-terms">
+        <div class="sub">时间状语从句 — <b>When</b> I arrived, he had left.</div>
+        <div class="sub">原因状语从句 — He was late <b>because</b> he missed the bus.</div>
+        <div class="sub">条件状语从句 — <b>If</b> it rains, we will cancel.</div>
+        <div class="sub">让步状语从句 — <b>Although</b> he is poor, he is happy.</div>
+        <div class="sub">目的状语从句 — Speak loudly <b>so that</b> everyone can hear.</div>
+        <div class="sub">结果状语从句 — He was so tired <b>that</b> he fell asleep.</div>
+        <div class="sub">比较状语从句 — She is taller <b>than</b> I am.</div>
+        <div class="sub">方式状语从句 — Do <b>as</b> I say.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 五、时态语态语气 -->
+<div class="section" id="s5">
+  <h2><span class="num">5</span>时态 · 语态 · 语气</h2>
+
+  <h3 style="font-size:16px;color:var(--primary);margin:10px 0 10px;">Tense 时态（16种中最常用8种）</h3>
+  <table class="pattern-table">
+    <tr><th>英文术语</th><th>中文</th><th>结构(以do为例)</th><th>例句</th></tr>
+    <tr><td>Simple present</td><td>一般现在时</td><td>do / does</td><td>She works hard.</td></tr>
+    <tr><td>Simple past</td><td>一般过去时</td><td>did</td><td>She worked hard.</td></tr>
+    <tr><td>Simple future</td><td>一般将来时</td><td>will do</td><td>She will work hard.</td></tr>
+    <tr><td>Present continuous</td><td>现在进行时</td><td>am/is/are doing</td><td>She is working.</td></tr>
+    <tr><td>Past continuous</td><td>过去进行时</td><td>was/were doing</td><td>She was working.</td></tr>
+    <tr><td><b>Present perfect</b></td><td><b>现在完成时</b></td><td>have/has done</td><td>She has finished.</td></tr>
+    <tr><td><b>Past perfect</b></td><td><b>过去完成时</b></td><td>had done</td><td>She had finished.</td></tr>
+    <tr><td>Present perfect continuous</td><td>现在完成进行时</td><td>have/has been doing</td><td>She has been working.</td></tr>
+  </table>
+
+  <h3 style="font-size:16px;color:var(--primary);margin:20px 0 10px;">Voice 语态</h3>
+  <div class="term-grid">
+    <div class="term"><span class="en">Active voice</span><span class="zh">主动语态</span> — 主语是动作发出者：The cat <b>caught</b> the mouse.</div>
+    <div class="term"><span class="en">Passive voice</span><span class="zh">被动语态</span> — 主语是动作承受者：The mouse <b>was caught</b> by the cat.</div>
+  </div>
+
+  <h3 style="font-size:16px;color:var(--primary);margin:20px 0 10px;">Mood 语气</h3>
+  <div class="term-grid">
+    <div class="term"><span class="en">Indicative mood</span><span class="zh">陈述语气</span> — 陈述事实：He is a student.</div>
+    <div class="term"><span class="en">Imperative mood</span><span class="zh">祈使语气</span> — 命令/请求：Sit down, please.</div>
+    <div class="term">
+      <span class="en">Subjunctive mood</span><span class="zh">虚拟语气</span><span class="tag priority-star">⭐ 难点</span>
+      <span class="desc">表达非真实的假设、愿望、建议</span>
+      <span class="example">If I <b>were</b> you, I would go. (与现在事实相反)<br>I wish I <b>had known</b> earlier. (与过去事实相反)</span>
+    </div>
+  </div>
+</div>
+
+<!-- 六、非谓语动词 -->
+<div class="section" id="s6">
+  <h2><span class="num">6</span>非谓语动词 Non-finite Verbs <span class="tag priority-star">⭐ 高频难点</span></h2>
+
+  <div class="highlight-box">
+    <div class="title">🔑 核心概念</div>
+    <p style="font-size:13px;"><b>Finite verb 限定动词</b> = 谓语动词，受人称、时态、数的变化限制<br>
+    <b>Non-finite verb 非限定动词</b> = 非谓语动词，不作谓语，没有人称/数的变化，但有时态和语态变化</p>
+  </div>
+
+  <div class="term-grid">
+    <div class="term">
+      <span class="en">Infinitive</span><span class="zh">不定式</span>
+      <span class="desc">形式：to do（有时省略to）</span>
+      <span class="example">I want <b>to go</b> home. / He made me <b>laugh</b>. (省to)</span>
+    </div>
+    <div class="term">
+      <span class="en">Gerund</span><span class="zh">动名词</span>
+      <span class="desc">形式：doing，具有名词功能，可作主/宾/表/定语</span>
+      <span class="example"><b>Swimming</b> is good for health. / I enjoy <b>reading</b>.</span>
+    </div>
+    <div class="term">
+      <span class="en">Present participle</span><span class="zh">现在分词</span>
+      <span class="desc">形式：doing，具有形容词/副词功能，表主动/进行</span>
+      <span class="example">The <b>running</b> man is my brother. / <b>Hearing</b> the news, she cried.</span>
+    </div>
+    <div class="term">
+      <span class="en">Past participle</span><span class="zh">过去分词</span>
+      <span class="desc">形式：done，具有形容词/副词功能，表被动/完成</span>
+      <span class="example">The <b>broken</b> window needs repair. / <b>Seen</b> from the hill, the city is beautiful.</span>
+    </div>
+  </div>
+
+  <div class="highlight-box">
+    <div class="title">⚠️ 易混淆：动名词 vs 现在分词</div>
+    <p style="font-size:13px;">形式都是 doing，但功能不同：<br>
+    • <b>动名词</b> = 当名词用：a <b>swimming</b> pool (游泳池 = pool for swimming)<br>
+    • <b>现在分词</b> = 当形容词用：a <b>swimming</b> boy (正在游泳的男孩 = boy who is swimming)</p>
+  </div>
+</div>
+
+<!-- 七、特殊语法现象 -->
+<div class="section" id="s7">
+  <h2><span class="num">7</span>特殊语法现象</h2>
+  <div class="term-grid">
+    <div class="term">
+      <span class="en">Agreement / Concord</span><span class="zh">主谓一致</span>
+      <span class="desc">主语和谓语在人称和数上保持一致</span>
+      <span class="example">He <b>is</b> here. / They <b>are</b> here.</span>
+    </div>
+    <div class="term">
+      <span class="en">Inversion</span><span class="zh">倒装</span>
+      <div class="sub-terms">
+        <div class="sub"><span class="en">Full inversion</span><span class="zh">完全倒装</span> — 整个谓语在主语前：<b>Here comes</b> the bus.</div>
+        <div class="sub"><span class="en">Partial inversion</span><span class="zh">部分倒装</span> — 助动词/情态动词在主语前：<b>Never have</b> I seen such a thing.</div>
+      </div>
+    </div>
+    <div class="term"><span class="en">Ellipsis</span><span class="zh">省略</span> — 为避免重复省略某些成分：(It) Sounds good. / He is younger than I (am).</div>
+    <div class="term">
+      <span class="en">Emphasis</span><span class="zh">强调</span>
+      <span class="desc">常用强调句型 It is/was + 被强调部分 + that/who</span>
+      <span class="example"><b>It was</b> John <b>that</b> broke the window. (强调主语John)</span>
+    </div>
+    <div class="term"><span class="en">Word order</span><span class="zh">语序</span> — Normal order 正常语序 / Inverted order 倒装语序</div>
+    <div class="term"><span class="en">Genitive / Possessive case</span><span class="zh">所有格</span> — 's属格：Tom's book / of属格：the door of the room</div>
+  </div>
+</div>
+
+<!-- 八、学习优先级 -->
+<div class="section" id="s8">
+  <h2><span class="num">8</span>学习优先级建议</h2>
+  <div class="highlight-box">
+    <div class="title">🎯 推荐学习顺序（从基础到进阶）</div>
+    <table class="pattern-table">
+      <tr><th>优先级</th><th>内容</th><th>为什么重要</th></tr>
+      <tr><td><b>第1步</b></td><td>句子成分 + 五大句型</td><td>看不懂成分，长难句永远糊涂</td></tr>
+      <tr><td><b>第2步</b></td><td>词类（词性）</td><td>知道每个词在句中扮演什么角色</td></tr>
+      <tr><td><b>第3步</b></td><td>时态 + 语态</td><td>动词变化是英语句子的核心</td></tr>
+      <tr><td><b>第4步</b></td><td>非谓语动词</td><td>阅读和写作中最高频的难点</td></tr>
+      <tr><td><b>第5步</b></td><td>三大从句</td><td>攻克长难句的关键</td></tr>
+      <tr><td><b>第6步</b></td><td>虚拟语气 + 倒装 + 主谓一致</td><td>进阶语法，考试高频考点</td></tr>
+    </table>
+  </div>
+
+  <div class="highlight-box" style="background:linear-gradient(135deg,#e8f8f5 0%,#d1f2eb 100%);border-color:#a3e4d7;">
+    <div class="title" style="color:#1abc9c;">💡 使用建议</div>
+    <p style="font-size:13px;">
+    1. 不用死记硬背，做阅读/真题时遇到术语回来对照即可<br>
+    2. 每个术语配一个例句理解，比单纯记中文翻译有效<br>
+    3. 重点标记 ⭐ 的部分是长难句分析和考试的核心<br>
+    4. 建议打印或收藏，做语法分析时随时查阅
+    </p>
+  </div>
+</div>
+
+<footer>
+  <p>英语语法核心专业名词速查卡 · 共 8 大模块 · 建议配合例句学习</p>
+</footer>
+
+</div>
+</body>
+</html>
