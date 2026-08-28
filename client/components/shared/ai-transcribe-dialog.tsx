@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { useTranscribe, MethodSelector, MethodHint, TranscribeResult } from './transcribe-shared'
 import { ModelConfigListDialog } from './model-config-list-dialog'
@@ -32,6 +33,12 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
     asrConfigs,
     selectedAsrConfigId,
     setSelectedAsrConfigId,
+    translateEnabled,
+    setTranslateEnabled,
+    translateConfigs,
+    selectedTranslateConfigId,
+    setSelectedTranslateConfigId,
+    translateWarning,
   } = useTranscribe()
 
   const handleImport = useCallback(() => {
@@ -73,6 +80,34 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
                 onAsrConfigChange={setSelectedAsrConfigId}
               />
 
+              {(method === 'model' || method === 'local') && (
+                <div className="flex flex-col gap-2 rounded-xl bg-muted p-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">翻译</span>
+                    <Switch
+                      checked={translateEnabled}
+                      onCheckedChange={setTranslateEnabled}
+                      aria-label="翻译开关"
+                    />
+                    {translateEnabled && (
+                      <select
+                        value={selectedTranslateConfigId || ''}
+                        onChange={e => setSelectedTranslateConfigId(e.target.value)}
+                        disabled={translateConfigs.length === 0}
+                        className="rounded-md border border-input bg-background px-2 py-1 text-xs disabled:opacity-50"
+                      >
+                        {translateConfigs.map(c => (
+                          <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  {translateEnabled && translateConfigs.length === 0 && (
+                    <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置翻译模型</p>
+                  )}
+                </div>
+              )}
+
               {status === 'running' ? (
                 <Button className="w-full" variant="destructive" onClick={cancel}>
                   取消转换
@@ -89,6 +124,11 @@ export function AiTranscribeDialog({ open, onOpenChange, mediaFile, onSubtitleGe
             </div>
 
             {/* 右栏：结果 */}
+            {translateWarning && (
+              <div className="rounded-xl border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400">
+                {translateWarning}
+              </div>
+            )}
             <TranscribeResult
               status={status}
               method={method}
