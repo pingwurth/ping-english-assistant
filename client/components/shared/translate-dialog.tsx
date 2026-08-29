@@ -10,7 +10,7 @@ interface TranslateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   sentence: SubtitleSentence | null
-  onApply: (updated: SubtitleSentence) => void
+  onApply: (updated: SubtitleSentence, direction: TranslateDirection) => void
 }
 
 /** 翻译配置项 */
@@ -103,7 +103,7 @@ export function TranslateDialog({ open, onOpenChange, sentence, onApply }: Trans
     const updated: SubtitleSentence = direction === 'en2zh'
       ? { ...sentence, textZh: translation }
       : { ...sentence, textEn: translation }
-    onApply(updated)
+    onApply(updated, direction)
     onOpenChange(false)
   }, [sentence, translation, direction, onApply, onOpenChange])
 

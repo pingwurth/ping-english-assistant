@@ -10,7 +10,7 @@ interface TranslateDrawerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   sentences: SubtitleSentence[]
-  onApplyAll: (updated: SubtitleSentence[]) => void
+  onApplyAll: (updated: SubtitleSentence[], direction: TranslateDirection) => void
 }
 
 /** 翻译配置项 */
@@ -121,7 +121,7 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
         ? { ...s, textZh: translations[i] }
         : { ...s, textEn: translations[i] }
     })
-    onApplyAll(updated)
+    onApplyAll(updated, direction)
     onOpenChange(false)
   }, [sentences, translations, direction, onApplyAll, onOpenChange])
 

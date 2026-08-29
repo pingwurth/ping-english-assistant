@@ -100,3 +100,16 @@
 
 23.
 @client/components/pages/player.tsx 字幕滚动区增加翻译图标，点击后弹窗让用户选择翻译模型，讲当前字幕滚动区的文本（英/中）翻译为（中/英），翻译完成点击“应用”，即刻生效
+
+
+24.
+@client/components/pages/player.tsx 播放控制条的字幕切换按钮 /html/body/div[2]/main/div/div[2]/div/div[1]/div[3]/div/div[2]/button[6] 有时候是`开|关`，有时候是 `仅英文|仅中文|双语`，判断逻辑是什么？
+
+
+25.
+@client/components/shared/translate-drawer.tsx 点击全部应用 /html/body/div[2]/main/div[2]/div/div[3]/div 后应该把 isBilingual 改成 true，并切换为双语
+@client/components/shared/translate-dialog.tsx 点击应用翻译 /html/body/div[2]/main/div[2]/div/div[2]/div/div[4]/button[2] 后应该把 isBilingual 改成 true，并切换为双语
+
+
+26.
+@client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/div/div/button 点击翻译当前句或翻译全部字幕后，弹窗中正在翻译的时候把弹窗关掉再打开翻译进度就没了，又得重新翻译，这怎么解决？
