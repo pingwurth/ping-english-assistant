@@ -14,4 +14,15 @@
 @client/components/shared/transcribe-shared.tsx /html/body/div[2]/main/div[2]/div/div[2]/div/div[1]/div/button 点击这个按钮应该弹窗显示设置里的模型配置列表
 
 
-5. @client/components/shared/transcribe-shared.tsx 选择 faster-whisper (/html/body/div[2]/main/div/div[2]/div[1]/div[2]/div[1]/button[3]) 就不要展示模型选择下拉框了
+5.
+@client/components/shared/transcribe-shared.tsx 选择 faster-whisper (/html/body/div[2]/main/div/div[2]/div[1]/div[2]/div[1]/button[3]) 就不要展示模型选择下拉框了
+
+
+6.
+@client/components/shared/transcribe.tsx 执行翻译操作的时候失败了，报错日志如下：
+[Translate] Provider: local | Model: hy-mt2-7b
+[Translate] BaseURL: http://127.0.0.1:1234/v1 | Endpoint: /chat/completions
+[Translate] 响应格式校验失败 (attempt 1): 期望 8 条，实际 7 条 内容前 500 字符: ["[1] 所以总共是214美元。", "[2] 哦，等一下。", "[3] 你刚才说你女儿多大了？", "[4] 十五岁。", "[5] 那恐怕是267美元了，因为她需要支付成人票价，", "[6] 成人票价为75美元，而非儿童票价的22美元。", "[7] 对此我感到很抱歉。"]
+[Translate] 响应格式校验失败 (attempt 2): 期望 8 条，实际 7 条 内容前 500 字符: ["[1] 所以总共是214美元。", "[2] 哦，等一下。", "[3] 您说您女儿多大了？", "[4] 十五岁。", "[5] 那恐怕是267美元了，因为她需要支付成人票价，", "[6] 成人票价为75美元，而非儿童票价的22美元。", "[7] 对此很抱歉。"]
+[Translate] LlmError: RESPONSE_FORMAT_ERROR 翻译结果与原文条数不一致
+ POST /api/translate 502 in 5.4s (next.js: 1.8ms, application-code: 5.4s)

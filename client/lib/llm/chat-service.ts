@@ -17,8 +17,6 @@ import type { TranslateDirection } from '@/types/api'
 
 /** 单次请求文本条数上限 */
 const MAX_TEXTS = 500
-/** 单次 LLM 调用的文本块大小（本地小模型输出 token 有限，需较小值） */
-const LLM_CHUNK_SIZE = 15
 
 /** CJK 判定正则 */
 const CJK_RE = /[⺀-鿿]/
@@ -32,8 +30,9 @@ export function detectDirection(texts: string[]): TranslateDirection {
 /**
  * 使用 LangChain ChatModel 批量翻译文本
  *
- * 自动分块：将 texts 按 LLM_CHUNK_SIZE 分块串行调用模型，
- * 避免本地小模型因输出 token 不足导致 JSON 截断。
+ * 整段发送：将全部文本一次性提交给模型，模型能看到完整上下文，
+ * 翻译质量优于分块。序号标记 [1] [2] ... 保证句子边界不丢失，
+ * 多层 fallback 解析 + 降级回填兜底极端情况。
  *
  * @param texts    待翻译文本数组
  * @param config   翻译配置（含 provider、model、apiKey、baseUrl、direction）
@@ -60,15 +59,9 @@ export async function translateTexts(
 
   const model = createChatModel(config)
 
-  // 分块串行调用，避免本地小模型输出 token 不足导致 JSON 截断
-  const results: string[] = []
-  for (let start = 0; start < texts.length; start += LLM_CHUNK_SIZE) {
-    signal?.throwIfAborted()
-    const chunk = texts.slice(start, start + LLM_CHUNK_SIZE)
-    const chunkResult = await translateSingleChunk(chunk, targetLang, model, signal)
-    results.push(...chunkResult)
-  }
-  return results
+  // 整段发送，模型能看到完整上下文，翻译质量更好；
+  // 序号标记 + fallback 解析保证句子边界不丢失
+  return translateSingleChunk(texts, targetLang, model, signal)
 }
 
 /**
@@ -80,19 +73,35 @@ async function translateSingleChunk(
   model: ChatOpenAI,
   signal?: AbortSignal,
 ): Promise<string[]> {
+  console.log(`[Translate] 发送翻译请求: ${texts.length} 条文本, 目标语言: ${targetLang}`)
+  console.log(`[Translate] 请求参数:`, JSON.stringify(texts, null, 2))
+
   const basePrompt =
-    `你是专业翻译。用户消息是一个 JSON 字符串数组，包含 ${texts.length} 条文本。` +
-    `请严格保持条目数量不变，将第 i 条翻译后放入结果数组的第 i 位。` +
-    `禁止合并多条为一条，禁止拆分一条为多条，禁止增删条目。` +
-    `只返回与输入等长（${texts.length} 条）的 JSON 字符串数组，禁止 markdown 包裹、禁止任何额外文字。`
+    `你是专业翻译。用户消息是一个 JSON 字符串数组，包含 ${texts.length} 条文本。\n` +
+    `\n` +
+    `【严格规则 —— 必须遵守】\n` +
+    `1. 输出必须是恰好 ${texts.length} 条翻译的 JSON 字符串数组，不多不少。\n` +
+    `2. 第 i 条翻译对应输入的第 i 条原文，禁止合并、拆分、调换顺序。\n` +
+    `3. 即使某条原文很短（如 "嗯"、"好的"），也必须单独翻译为一条。\n` +
+    `4. 每条翻译前加序号标记 [1] [2] ... [${texts.length}]，便于校验。\n` +
+    `\n` +
+    `输出格式示例（${texts.length} 条输入 → ${texts.length} 条输出）：\n` +
+    `["[1] 翻译一", "[2] 翻译二", ...]\n` +
+    `\n` +
+    `禁止 markdown 包裹、禁止任何额外文字、禁止注释。只返回 JSON 数组。`
 
   let lastError: Error | null = null
+  let lastContent = ''
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       // 重试时追加纠错提示，避免模型重复同样的错误
       const systemPrompt = attempt === 0
         ? basePrompt
-        : basePrompt + `\n\n重要提醒：上次你返回了错误的条数。输入共 ${texts.length} 条，你必须返回恰好 ${texts.length} 条翻译结果，不得合并任何条目。`
+        : basePrompt +
+          `\n\n【严重错误提醒】上次你返回了错误的条数！` +
+          `输入共 ${texts.length} 条，但你只返回了 ${countParsedItems(lastContent) || '?'} 条。` +
+          `你必须返回恰好 ${texts.length} 条。` +
+          `请严格按 [1] [2] ... [${texts.length}] 的序号逐条翻译，每条独立，不要合并！`
 
       const result = await model.invoke(
         [
@@ -103,12 +112,17 @@ async function translateSingleChunk(
       )
 
       const content = typeof result.content === 'string' ? result.content : ''
+      lastContent = content
+      console.log(`[Translate] 模型响应 (attempt ${attempt + 1}):`, content.slice(0, 2000))
       if (!content.trim()) {
         throw new LlmError('RESPONSE_EMPTY', '翻译接口未返回内容')
       }
 
       const translations = extractTranslations(content, texts.length)
-      if (translations) return translations
+      if (translations) {
+        console.log(`[Translate] 翻译成功: ${translations.length} 条`)
+        return translations
+      }
 
       // 条数不一致，记录诊断信息后重试
       const actualCount = countParsedItems(content)
@@ -127,6 +141,22 @@ async function translateSingleChunk(
     }
   }
 
+  // 最终降级：若模型返回了带序号的部分结果，按序号对齐并回填缺失位置
+  if (lastContent) {
+    const partial = extractNumberedTranslationsPartial(lastContent, texts.length)
+    if (partial) {
+      const filled = partial.map((t, i) => t ?? texts[i])
+      const missingCount = filled.filter((t, i) => t === texts[i] && partial[i] === null).length
+      if (missingCount > 0) {
+        console.warn(
+          `[Translate] 降级回填：模型返回了 ${texts.length - missingCount}/${texts.length} 条，` +
+          `${missingCount} 条缺失位置使用原文填充`,
+        )
+      }
+      return filled
+    }
+  }
+
   throw lastError || new LlmError('RESPONSE_FORMAT_ERROR', '翻译结果与原文条数不一致')
 }
 
@@ -142,6 +172,7 @@ async function translateSingleChunk(
  * 2. 尝试 JSON.parse（标准 JSON，不触碰 CJK 引号）
  * 3. 若失败，检测是否 CJK 引号做分隔符，用逐字符解析器
  * 4. 兜底：sanitizeJsonString + tryFixMalformedJson
+ * 5. 序号 fallback：从 [N] 前缀的行中提取翻译（针对小模型合并短句的问题）
  *
  * 校验：长度与输入一致且每项为非空字符串；不通过返回 null
  */
@@ -163,7 +194,7 @@ function extractTranslations(content: string, expectedLength: number): string[] 
     const arr = JSON.parse(raw)
     if (Array.isArray(arr) && arr.length === expectedLength
       && arr.every((v) => typeof v === 'string' && v.trim().length > 0)) {
-      return arr.map((v: string) => v.trim())
+      return arr.map((v: string) => stripNumberPrefix(v.trim()))
     }
   } catch {
     // 标准 JSON 解析失败，继续
@@ -172,7 +203,7 @@ function extractTranslations(content: string, expectedLength: number): string[] 
   // 4. CJK 引号做分隔符：模型用「」代替 " 做 JSON 分隔符。
   //    仅当第一个引号是「 时才使用（避免误伤内容中含「」的标准 JSON）。
   const cjkItems = parseCjkArray(raw, expectedLength)
-  if (cjkItems) return cjkItems
+  if (cjkItems) return cjkItems.map((v) => stripNumberPrefix(v))
 
   // 5. 兜底：sanitizeJsonString + tryFixMalformedJson
   const sanitized = sanitizeJsonString(raw)
@@ -183,10 +214,16 @@ function extractTranslations(content: string, expectedLength: number): string[] 
     arr = tryFixMalformedJson(sanitized)
   }
 
-  if (!Array.isArray(arr) || arr.length !== expectedLength) return null
-  if (!arr.every((v) => typeof v === 'string' && v.trim().length > 0)) return null
+  if (Array.isArray(arr) && arr.length === expectedLength
+    && arr.every((v) => typeof v === 'string' && v.trim().length > 0)) {
+    return arr.map((v) => stripNumberPrefix((v as string).trim()))
+  }
 
-  return arr.map((v) => (v as string).trim())
+  // 6. 序号 fallback：从 [N] 或 N. 前缀的行中提取翻译
+  const numbered = extractNumberedTranslations(content, expectedLength)
+  if (numbered) return numbered
+
+  return null
 }
 
 /**
@@ -308,6 +345,74 @@ function tryFixMalformedJson(raw: string): unknown {
   } catch {
     return null
   }
+}
+
+/**
+ * 去掉翻译内容中可能残留的 [N] 序号前缀
+ *
+ * 模型按 prompt 要求输出 [1] 翻译内容 时，需要在最终结果中清理掉序号。
+ */
+function stripNumberPrefix(text: string): string {
+  return text.replace(/^\[\d{1,3}\]\s*/, '')
+}
+
+/**
+ * 从带 [N] 序号标记的文本中提取翻译结果
+ *
+ * 当 JSON 解析全部失败时，尝试匹配 [1] [2] ... [N] 前缀的行。
+ * 这是 prompt 中要求模型输出序号标记的 fallback 解析路径。
+ */
+function extractNumberedTranslations(content: string, expectedLength: number): string[] | null {
+  // 匹配 [N] 前缀（N 为 1~999），后面跟翻译内容
+  const re = /^\s*\[(\d{1,3})\]\s*(.+)$/gm
+  const items: Map<number, string> = new Map()
+  let match: RegExpExecArray | null
+  while ((match = re.exec(content)) !== null) {
+    const idx = parseInt(match[1], 10)
+    const text = match[2].trim()
+    if (idx >= 1 && idx <= expectedLength && text.length > 0) {
+      items.set(idx, text)
+    }
+  }
+
+  // 必须恰好匹配 expectedLength 条，且序号连续从 1 开始
+  if (items.size !== expectedLength) return null
+  const result: string[] = []
+  for (let i = 1; i <= expectedLength; i++) {
+    const val = items.get(i)
+    if (!val) return null
+    // 去掉翻译内容中可能残留的 [N] 前缀（模型有时会在每条前重复加序号）
+    const cleaned = stripNumberPrefix(val)
+    result.push(cleaned)
+  }
+  return result
+}
+
+/**
+ * 从带 [N] 序号标记的文本中提取部分翻译结果（不要求条数完全匹配）
+ *
+ * 返回长度为 expectedLength 的稀疏数组，缺失位置为 null。
+ * 仅当至少提取到一条翻译时返回结果，否则返回 null。
+ */
+function extractNumberedTranslationsPartial(content: string, expectedLength: number): (string | null)[] | null {
+  const re = /^\s*\[(\d{1,3})\]\s*(.+)$/gm
+  const items: Map<number, string> = new Map()
+  let match: RegExpExecArray | null
+  while ((match = re.exec(content)) !== null) {
+    const idx = parseInt(match[1], 10)
+    const text = match[2].trim()
+    if (idx >= 1 && idx <= expectedLength && text.length > 0) {
+      items.set(idx, stripNumberPrefix(text))
+    }
+  }
+
+  if (items.size === 0) return null
+
+  const result: (string | null)[] = []
+  for (let i = 1; i <= expectedLength; i++) {
+    result.push(items.get(i) ?? null)
+  }
+  return result
 }
 
 /**

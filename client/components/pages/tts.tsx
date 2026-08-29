@@ -191,30 +191,45 @@ function TTS() {
   }, [gen?.url])
 
   const generateCloud = async (abort: AbortController, estimatedSentences: number): Promise<GenResult> => {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice: voice.id, speed, configId: selectedConfigId || undefined }),
-      signal: abort.signal,
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || `生成失败 (${res.status})`)
-    if (abort.signal.aborted) throw new DOMException('已取消', 'AbortError')
+    // 模拟进度：每 800ms 递增一句，最多到 total-1（留最后一格给真实完成）
+    let simDone = 0
+    const simTimer = setInterval(() => {
+      if (simDone < estimatedSentences - 1) {
+        simDone++
+        setProgress({ done: simDone, total: estimatedSentences })
+      }
+    }, 800)
 
-    setProgress({ done: estimatedSentences, total: estimatedSentences })
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: voice.id, speed, configId: selectedConfigId || undefined }),
+        signal: abort.signal,
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `生成失败 (${res.status})`)
+      if (abort.signal.aborted) throw new DOMException('已取消', 'AbortError')
 
-    const binaryStr = atob(data.audioBase64)
-    const bytes = new Uint8Array(binaryStr.length)
-    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-    const audioBlob = new Blob([bytes], { type: 'audio/wav' })
+      clearInterval(simTimer)
+      setProgress({ done: estimatedSentences, total: estimatedSentences })
 
-    return {
-      taskId: data.taskId,
-      audio: audioBlob,
-      url: URL.createObjectURL(audioBlob),
-      durationMs: data.durationMs,
-      sentenceCount: data.sentenceCount,
-      srt: data.srt,
+      const binaryStr = atob(data.audioBase64)
+      const bytes = new Uint8Array(binaryStr.length)
+      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+      const audioBlob = new Blob([bytes], { type: 'audio/wav' })
+
+      return {
+        taskId: data.taskId,
+        audio: audioBlob,
+        url: URL.createObjectURL(audioBlob),
+        durationMs: data.durationMs,
+        sentenceCount: data.sentenceCount,
+        srt: data.srt,
+      }
+    } catch (e) {
+      clearInterval(simTimer)
+      throw e
     }
   }
 
