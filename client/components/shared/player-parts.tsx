@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, Download, FileText, Gauge, Pause, Pencil, Play, RotateCcw, SkipBack, SkipForward, Sparkles, Subtitles, Trash2, Upload, Volume2, VolumeX } from 'lucide-react'
+import { Check, Download, FileText, Gauge, Languages, Pause, Pencil, Play, RotateCcw, SkipBack, SkipForward, Sparkles, Subtitles, Trash2, Upload, Volume2, VolumeX } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -41,6 +41,145 @@ function PlayerControlBar({ playing, setPlaying, mode, setMode, loop, setLoop, s
  *  - 用户手动滚动（wheel/touch/键盘）后暂停自动跟随 5s；
  *  - favoriteIndexes 中的句子显示 ★ 收藏标记。
  */
-function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndexes, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items?: SubtitleSentence[]; favoriteIndexes?: Set<number>; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void }) { const containerRef = useRef<HTMLDivElement | null>(null); const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map()); const manualUntilRef = useRef(0); const programmaticRef = useRef(false); const fileInputRef = useRef<HTMLInputElement | null>(null); useEffect(() => { if (active < 0) return; const el = itemRefs.current.get(active); const container = containerRef.current; if (!el || !container) return; if (Date.now() < manualUntilRef.current) return; programmaticRef.current = true; const elRect = el.getBoundingClientRect(); const containerRect = container.getBoundingClientRect(); const elCenterInContainer = elRect.top - containerRect.top + container.scrollTop + elRect.height / 2; const targetScrollTop = elCenterInContainer - containerRect.height / 2; const maxScrollTop = container.scrollHeight - containerRect.height; const clampedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScrollTop)); container.scrollTo({ top: clampedScrollTop, behavior: 'smooth' }); window.setTimeout(() => { programmaticRef.current = false }, 300) }, [active]); const markManual = () => { if (!programmaticRef.current) manualUntilRef.current = Date.now() + 5000 }; return <section className="flex min-h-0 flex-1 flex-col rounded-2xl border bg-card"><div className="flex items-center justify-between border-b p-4"><h2 className="font-serif text-xl">字幕</h2><div className="flex items-center gap-1">{onExportSubtitle && <Button variant="ghost" size="icon" title="导出字幕" onClick={onExportSubtitle}><Download className="size-4" /></Button>}{onImportSubtitle && <><input ref={fileInputRef} type="file" accept=".srt,.lrc" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { onImportSubtitle(f); e.target.value = '' } }} /><Button variant="ghost" size="icon" title="导入字幕文件" onClick={() => fileInputRef.current?.click()}><Upload className="size-4" /></Button></>}{onAiConvert && <Button variant="ghost" size="sm" title="AI音频转字幕" onClick={onAiConvert}>AI</Button>}</div></div><div ref={containerRef} onWheel={markManual} onTouchMove={markManual} className="flex-1 overflow-auto p-2">{items.length ? items.map((s, i) => <div key={s.index} role="button" tabIndex={0} ref={(el) => { if (el) itemRefs.current.set(i, el); else itemRefs.current.delete(i) }} onClick={() => onSelect(i)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(i) } }} className={`group/sentence relative w-full cursor-pointer rounded-xl p-4 text-left transition-colors ${active === i ? 'bg-primary/10 ring-1 ring-primary/30' : 'hover:bg-muted'}`}>{(onDeleteSentence || onEditSentence) && <div className="absolute right-3 top-3 z-10 flex items-center gap-1">{onEditSentence && <Button variant="secondary" size="icon" className="size-7" aria-label={`纠错句子 ${s.index + 1}`} title="纠错" onClick={(e) => { e.stopPropagation(); onEditSentence(i, s) }}><Pencil className="size-3.5" /></Button>}{onDeleteSentence && <Button variant="secondary" size="icon" className="size-7" aria-label={`删除句子 ${s.index + 1}`} title="删除" onClick={(e) => { e.stopPropagation(); onDeleteSentence(i) }}><Trash2 className="size-3.5" /></Button>}</div>}<div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground"><span>{active === i ? '▶' : s.index + 1}</span><span>{formatDuration(s.startMs)}</span>{favoriteIndexes?.has(s.index) && <span aria-label="已收藏" className="text-primary">★</span>}</div>{(mode === 'bilingual' || mode === 'english') && <p className="leading-relaxed">{s.textEn}</p>}{(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 leading-relaxed text-muted-foreground">{s.textZh}</p>}</div>) : <div className="flex min-h-40 flex-col items-center justify-center gap-4 p-6 text-center"><p className="text-sm text-muted-foreground">该材料暂无字幕</p></div>}</div></section> }
+function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndexes, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items?: SubtitleSentence[]; favoriteIndexes?: Set<number>; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: (scope: 'current' | 'all') => void }) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const manualUntilRef = useRef(0)
+  const programmaticRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const translateMenuRef = useRef<HTMLDivElement | null>(null)
+  const [showTranslateMenu, setShowTranslateMenu] = useState(false)
+
+  useEffect(() => {
+    if (active < 0) return
+    const el = itemRefs.current.get(active)
+    const container = containerRef.current
+    if (!el || !container) return
+    if (Date.now() < manualUntilRef.current) return
+    programmaticRef.current = true
+    const elRect = el.getBoundingClientRect()
+    const containerRect = container.getBoundingClientRect()
+    const elCenterInContainer = elRect.top - containerRect.top + container.scrollTop + elRect.height / 2
+    const targetScrollTop = elCenterInContainer - containerRect.height / 2
+    const maxScrollTop = container.scrollHeight - containerRect.height
+    const clampedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScrollTop))
+    container.scrollTo({ top: clampedScrollTop, behavior: 'smooth' })
+    window.setTimeout(() => { programmaticRef.current = false }, 300)
+  }, [active])
+
+  // 点击外部关闭翻译菜单
+  useEffect(() => {
+    if (!showTranslateMenu) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (translateMenuRef.current && !translateMenuRef.current.contains(e.target as Node)) {
+        setShowTranslateMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showTranslateMenu])
+
+  const markManual = () => { if (!programmaticRef.current) manualUntilRef.current = Date.now() + 5000 }
+
+  const handleTranslateSelect = useCallback((scope: 'current' | 'all') => {
+    setShowTranslateMenu(false)
+    onTranslate?.(scope)
+  }, [onTranslate])
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col rounded-2xl border bg-card">
+      <div className="flex items-center justify-between border-b p-4">
+        <h2 className="font-serif text-xl">字幕</h2>
+        <div className="flex items-center gap-1">
+          {onExportSubtitle && (
+            <Button variant="ghost" size="icon" title="导出字幕" onClick={onExportSubtitle}>
+              <Download className="size-4" />
+            </Button>
+          )}
+          {onImportSubtitle && (
+            <>
+              <input ref={fileInputRef} type="file" accept=".srt,.lrc" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { onImportSubtitle(f); e.target.value = '' } }} />
+              <Button variant="ghost" size="icon" title="导入字幕文件" onClick={() => fileInputRef.current?.click()}>
+                <Upload className="size-4" />
+              </Button>
+            </>
+          )}
+          {onAiConvert && (
+            <Button variant="ghost" size="sm" title="AI音频转字幕" onClick={onAiConvert}>
+              AI
+            </Button>
+          )}
+          {onTranslate && (
+            <div className="relative" ref={translateMenuRef}>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="翻译字幕"
+                onClick={() => setShowTranslateMenu(!showTranslateMenu)}
+              >
+                <Languages className="size-4" />
+              </Button>
+              {showTranslateMenu && (
+                <div className="absolute right-0 z-50 mt-1 w-40 rounded-lg border bg-background shadow-lg">
+                  <button
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                    onMouseDown={(e) => { e.preventDefault(); handleTranslateSelect('current') }}
+                  >
+                    翻译当前句
+                  </button>
+                  <button
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                    onMouseDown={(e) => { e.preventDefault(); handleTranslateSelect('all') }}
+                  >
+                    翻译全部字幕
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div ref={containerRef} onWheel={markManual} onTouchMove={markManual} className="flex-1 overflow-auto p-2">
+        {items.length ? items.map((s, i) => (
+          <div
+            key={s.index}
+            role="button"
+            tabIndex={0}
+            ref={(el) => { if (el) itemRefs.current.set(i, el); else itemRefs.current.delete(i) }}
+            onClick={() => onSelect(i)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(i) } }}
+            className={`group/sentence relative w-full cursor-pointer rounded-xl p-4 text-left transition-colors ${active === i ? 'bg-primary/10 ring-1 ring-primary/30' : 'hover:bg-muted'}`}
+          >
+            {(onDeleteSentence || onEditSentence) && (
+              <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
+                {onEditSentence && (
+                  <Button variant="secondary" size="icon" className="size-7" aria-label={`纠错句子 ${s.index + 1}`} title="纠错" onClick={(e) => { e.stopPropagation(); onEditSentence(i, s) }}>
+                    <Pencil className="size-3.5" />
+                  </Button>
+                )}
+                {onDeleteSentence && (
+                  <Button variant="secondary" size="icon" className="size-7" aria-label={`删除句子 ${s.index + 1}`} title="删除" onClick={(e) => { e.stopPropagation(); onDeleteSentence(i) }}>
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                )}
+              </div>
+            )}
+            <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <span>{active === i ? '▶' : s.index + 1}</span>
+              <span>{formatDuration(s.startMs)}</span>
+              {favoriteIndexes?.has(s.index) && <span aria-label="已收藏" className="text-primary">★</span>}
+            </div>
+            {(mode === 'bilingual' || mode === 'english') && <p className="leading-relaxed">{s.textEn}</p>}
+            {(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 leading-relaxed text-muted-foreground">{s.textZh}</p>}
+          </div>
+        )) : (
+          <div className="flex min-h-40 flex-col items-center justify-center gap-4 p-6 text-center">
+            <p className="text-sm text-muted-foreground">该材料暂无字幕</p>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
 
 export { MaterialCard, PlayerControlBar, SubtitleList, formatDuration }
