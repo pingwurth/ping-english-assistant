@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Languages, Loader2 } from 'lucide-react'
+import { Check, Languages, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetHeader, SheetTitle, SheetDescription, SheetContent, SheetFooter } from '@/components/ui/sheet'
 import { translateTexts, detectDirection } from '@/lib/translate'
@@ -29,6 +29,8 @@ function directionLabel(d: TranslateDirection): string {
 }
 
 export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: TranslateDrawerProps) {
+  // ── 所有状态在组件顶层声明，不依赖 open ──
+  // 这样 Sheet 关闭（子树卸载）时状态仍然存活
   const [configs, setConfigs] = useState<TranslateConfig[]>([])
   const [selectedConfigId, setSelectedConfigId] = useState('')
   const [direction, setDirection] = useState<TranslateDirection>('en2zh')
@@ -38,10 +40,22 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
   const [error, setError] = useState('')
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const abortRef = useRef<AbortController | null>(null)
+  /** 上一次句子列表签名，用于判断 sentences 内容是否真正变化 */
+  const prevSentencesSigRef = useRef('')
+  /** configs 是否已加载过（避免重复请求） */
+  const configsLoadedRef = useRef(false)
+  /** 上一次 globalStatus，用于检测 translating → done/error 转变 */
+  const prevGlobalStatusRef = useRef<'idle' | 'translating' | 'done' | 'error'>('idle')
+  /** toast 可见性 */
+  const [toastVisible, setToastVisible] = useState(false)
+  /** toast 正在淡出 */
+  const [toastFading, setToastFading] = useState(false)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
-  // 加载翻译模型配置
+  // ── 翻译模型配置：首次打开时加载一次，之后复用 ──
   useEffect(() => {
-    if (!open) return
+    if (!open || configsLoadedRef.current) return
+    configsLoadedRef.current = true
     let cancelled = false
     ;(async () => {
       try {
@@ -65,19 +79,83 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
     return () => { cancelled = true }
   }, [open])
 
-  // 打开时自动检测语言方向、重置状态
+  // ── 检测语言方向；仅当句子列表内容真正变化时才重置翻译状态 ──
   useEffect(() => {
-    if (!open || sentences.length === 0) return
-    const allTexts = sentences.flatMap(s => [s.textEn, s.textZh].filter(Boolean)) as string[]
-    setDirection(detectDirection(allTexts))
-    setTranslations(Array(sentences.length).fill(''))
-    setSentenceStatuses(Array(sentences.length).fill('pending'))
-    setGlobalStatus('idle')
-    setError('')
-    setProgress({ done: 0, total: 0 })
-    abortRef.current?.abort()
-  }, [open, sentences])
+    if (sentences.length === 0) return
+    const sig = sentences.map(s => `${s.index}:${s.textEn}:${s.textZh ?? ''}`).join('|')
+    if (sig !== prevSentencesSigRef.current) {
+      prevSentencesSigRef.current = sig
+      const allTexts = sentences.flatMap(s => [s.textEn, s.textZh].filter(Boolean)) as string[]
+      setDirection(detectDirection(allTexts))
+      setTranslations(Array(sentences.length).fill(''))
+      setSentenceStatuses(Array(sentences.length).fill('pending'))
+      setGlobalStatus('idle')
+      setError('')
+      setProgress({ done: 0, total: 0 })
+      abortRef.current?.abort()
+    }
+  }, [sentences])
 
+  // ── 组件卸载时清理进行中的请求和定时器 ──
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort()
+      toastTimerRef.current.forEach(clearTimeout)
+    }
+  }, [])
+
+  // ── 上一次 open 状态，用于检测 open false→true→false 的关闭动作 ──
+  const prevOpenRef = useRef(open)
+
+  // ── 检测翻译完成/出错：抽屉关闭时弹出 toast 提示 ──
+  // 触发时机：
+  //   1. 翻译刚好完成（translating→done/error）且抽屉已关闭
+  //   2. 抽屉从打开变为关闭，且翻译已处于完成/出错状态
+  useEffect(() => {
+    const prevStatus = prevGlobalStatusRef.current
+    const prevOpen = prevOpenRef.current
+    prevGlobalStatusRef.current = globalStatus
+    prevOpenRef.current = open
+
+    const justFinished = prevStatus === 'translating' && (globalStatus === 'done' || globalStatus === 'error')
+    const justClosed = prevOpen && !open
+    const alreadyDone = globalStatus === 'done' || globalStatus === 'error'
+
+    const shouldNotify = (justFinished && !open) || (justClosed && alreadyDone)
+    if (!shouldNotify) return
+
+    setToastVisible(true)
+    setToastFading(false)
+
+    // 清理旧定时器
+    toastTimerRef.current.forEach(clearTimeout)
+    toastTimerRef.current = []
+
+    // 3s 后开始淡出
+    const fadeTimer = setTimeout(() => setToastFading(true), 3000)
+    // 淡出动画 300ms 后彻底隐藏
+    const hideTimer = setTimeout(() => { setToastVisible(false); setToastFading(false) }, 3300)
+    toastTimerRef.current = [fadeTimer, hideTimer]
+  }, [globalStatus, open])
+
+  /** 点击 toast → 打开抽屉并关闭 toast */
+  const handleToastClick = useCallback(() => {
+    toastTimerRef.current.forEach(clearTimeout)
+    toastTimerRef.current = []
+    setToastVisible(false)
+    setToastFading(false)
+    onOpenChange(true)
+  }, [onOpenChange])
+
+  /** 手动关闭 toast */
+  const dismissToast = useCallback(() => {
+    toastTimerRef.current.forEach(clearTimeout)
+    toastTimerRef.current = []
+    setToastVisible(false)
+    setToastFading(false)
+  }, [])
+
+  // ── 全部翻译：启动后台翻译任务，不绑定 open 状态 ──
   const handleTranslateAll = useCallback(async () => {
     abortRef.current?.abort()
     const ctrl = new AbortController()
@@ -86,8 +164,6 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
     setGlobalStatus('translating')
     setError('')
     setProgress({ done: 0, total: sentences.length })
-
-    // 重置所有状态为 translating
     setSentenceStatuses(Array(sentences.length).fill('translating'))
     setTranslations(Array(sentences.length).fill(''))
 
@@ -125,16 +201,48 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
     onOpenChange(false)
   }, [sentences, translations, direction, onApplyAll, onOpenChange])
 
-  const handleClose = useCallback((open: boolean) => {
-    if (!open) abortRef.current?.abort()
-    onOpenChange(open)
+  // ── 关闭时不中断翻译，仅通知父组件 ──
+  const handleClose = useCallback((nextOpen: boolean) => {
+    onOpenChange(nextOpen)
   }, [onOpenChange])
 
   const doneCount = sentenceStatuses.filter(s => s === 'done').length
   const hasTranslations = doneCount > 0
+  const isToastError = globalStatus === 'error'
 
   return (
-    <Sheet open={open} onOpenChange={handleClose}>
+    <>
+    {/* ── toast 通知：抽屉关闭期间翻译完成/出错时显示 ── */}
+    <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}`}</style>
+    {toastVisible && (
+      <button
+        type="button"
+        onClick={handleToastClick}
+        className="fixed left-4 top-4 z-[100] flex max-w-sm items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left shadow-lg transition-opacity duration-300 hover:shadow-xl cursor-pointer"
+        style={{ opacity: toastFading ? 0 : 1, animation: toastFading ? undefined : 'fadeIn 300ms ease-out' }}
+      >
+        <span className={`flex size-8 shrink-0 items-center justify-center rounded-full ${isToastError ? 'bg-destructive/15 text-destructive' : 'bg-green-500/15 text-green-600'}`}>
+          {isToastError ? '!' : <Check className="size-4" />}
+        </span>
+        <span className="flex-1 text-sm font-medium">
+          {isToastError ? '翻译出错' : `翻译完成（${sentences.length} 条字幕）`}
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label="关闭"
+          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted"
+          onClick={(e) => { e.stopPropagation(); dismissToast() }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); dismissToast() } }}
+        >
+          <X className="size-4" />
+        </span>
+      </button>
+    )}
+
+    {/* ── Sheet 仅在 open 时渲染 UI，状态由外层组件持有 ── */}
+    {open && (
+    <Sheet open onOpenChange={handleClose}>
       <SheetHeader>
         <SheetTitle>翻译全部字幕</SheetTitle>
         <SheetDescription>
@@ -231,6 +339,8 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
         </div>
       </SheetFooter>
     </Sheet>
+    )}
+    </>
   )
 }
 

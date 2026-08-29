@@ -33,6 +33,8 @@ export function TranslateDialog({ open, onOpenChange, sentence, onApply }: Trans
   const [status, setStatus] = useState<'idle' | 'translating' | 'done' | 'error'>('idle')
   const [error, setError] = useState('')
   const abortRef = useRef<AbortController | null>(null)
+  /** 记录上次句子签名，避免关闭再打开时丢失已完成的翻译结果 */
+  const prevSentenceSigRef = useRef('')
 
   // 加载翻译模型配置
   useEffect(() => {
@@ -60,15 +62,19 @@ export function TranslateDialog({ open, onOpenChange, sentence, onApply }: Trans
     return () => { cancelled = true }
   }, [open])
 
-  // 打开时自动检测语言方向、重置状态
+  // 打开时自动检测语言方向；仅当句子变化时重置翻译状态（保留同一句子的已完成结果）
   useEffect(() => {
     if (!open || !sentence) return
+    const sig = `${sentence.index}:${sentence.textEn}:${sentence.textZh ?? ''}`
     const texts = [sentence.textEn, sentence.textZh].filter(Boolean) as string[]
     setDirection(detectDirection(texts))
-    setTranslation('')
-    setStatus('idle')
-    setError('')
-    abortRef.current?.abort()
+    if (sig !== prevSentenceSigRef.current) {
+      prevSentenceSigRef.current = sig
+      setTranslation('')
+      setStatus('idle')
+      setError('')
+      abortRef.current?.abort()
+    }
   }, [open, sentence])
 
   const handleTranslate = useCallback(async () => {
