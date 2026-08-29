@@ -17,6 +17,8 @@ import type { TranslateDirection } from '@/types/api'
 
 /** 单次请求文本条数上限 */
 const MAX_TEXTS = 500
+/** 单次 LLM 调用的文本块大小（本地小模型输出 token 有限且易丢句，需较小值） */
+const LLM_CHUNK_SIZE = 15
 
 /** CJK 判定正则 */
 const CJK_RE = /[⺀-鿿]/
@@ -30,9 +32,8 @@ export function detectDirection(texts: string[]): TranslateDirection {
 /**
  * 使用 LangChain ChatModel 批量翻译文本
  *
- * 整段发送：将全部文本一次性提交给模型，模型能看到完整上下文，
- * 翻译质量优于分块。序号标记 [1] [2] ... 保证句子边界不丢失，
- * 多层 fallback 解析 + 降级回填兜底极端情况。
+ * 分块串行：按 LLM_CHUNK_SIZE 分块调用模型，避免本地小模型丢句。
+ * 序号标记 [1] [2] ... + 多层 fallback 解析 + 降级回填兜底极端情况。
  *
  * @param texts    待翻译文本数组
  * @param config   翻译配置（含 provider、model、apiKey、baseUrl、direction）
@@ -59,9 +60,15 @@ export async function translateTexts(
 
   const model = createChatModel(config)
 
-  // 整段发送，模型能看到完整上下文，翻译质量更好；
-  // 序号标记 + fallback 解析保证句子边界不丢失
-  return translateSingleChunk(texts, targetLang, model, signal)
+  // 分块串行调用，避免本地小模型因输出 token 不足导致丢句
+  const results: string[] = []
+  for (let start = 0; start < texts.length; start += LLM_CHUNK_SIZE) {
+    signal?.throwIfAborted()
+    const chunk = texts.slice(start, start + LLM_CHUNK_SIZE)
+    const chunkResult = await translateSingleChunk(chunk, targetLang, model, signal)
+    results.push(...chunkResult)
+  }
+  return results
 }
 
 /**
@@ -124,7 +131,21 @@ async function translateSingleChunk(
         return translations
       }
 
-      // 条数不一致，记录诊断信息后重试
+      // 条数不一致：检查是否拿到大部分结果（≥90%），是则降级回填
+      const partial = extractNumberedTranslationsPartial(content, texts.length)
+      if (partial) {
+        const found = partial.filter((t) => t !== null).length
+        const ratio = found / texts.length
+        if (ratio >= 0.9) {
+          const filled = partial.map((t, i) => t ?? texts[i])
+          console.warn(
+            `[Translate] 降级回填: 模型返回了 ${found}/${texts.length} 条 (${Math.round(ratio * 100)}%), ${texts.length - found} 条缺失位置使用原文`,
+          )
+          return filled
+        }
+      }
+
+      // 条数差异较大，记录诊断信息后重试
       const actualCount = countParsedItems(content)
       console.warn(
         `[Translate] 响应格式校验失败 (attempt ${attempt + 1}):`,
