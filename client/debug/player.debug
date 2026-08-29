@@ -113,3 +113,11 @@
 
 26.
 @client/components/pages/player.tsx /html/body/div[2]/main/div/div[2]/section/div[1]/div/div/button 点击翻译当前句或翻译全部字幕后，弹窗中正在翻译的时候把弹窗关掉再打开翻译进度就没了，又得重新翻译，这怎么解决？
+
+
+27.
+@client/components/pages/player.tsx 字幕切换开关不能控制这块区域 /html/body/div[2]/main/div/div[2]/div/div[2]/div/div/p[2] 
+
+
+28.
+@client/components/pages/player.tsx 如果我想在这块区域 /html/body/div[2]/main/div/div[2]/div/div[2]/div/div/p[2] 增加一个单词选中后浮现一个“添加到生词本”的功能，该怎么实现？
