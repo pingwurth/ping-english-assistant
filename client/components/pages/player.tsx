@@ -198,7 +198,7 @@ function Player() {
       playerRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [record, playable, mediaUrl])
+  }, [materialId, playable, mediaUrl])
 
   /** 播放进度落盘（progress: 前缀）：合并历史 playedSentenceIndexes + 最新位置 */
   async function flushProgress(lastMs?: number) {
