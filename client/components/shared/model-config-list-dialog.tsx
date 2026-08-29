@@ -10,6 +10,7 @@ import { Card, CardContent, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { getDefaultEndpoint, DEFAULT_LOCAL_MODEL_URL } from '@/lib/service-endpoints'
+import { getKokoroModelId, setKokoroModelId } from '@/platform/kokoro-tts'
 
 /* ── 类型 & 常量 ── */
 
@@ -492,6 +493,125 @@ function ModelConfigDialog({
   )
 }
 
+/* ── KokoroConfigCard — Kokoro 本地 TTS 配置 ── */
+
+function KokoroConfigCard() {
+  const [modelId, setModelId] = useState('')
+  const [modelPath, setModelPath] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [editModelId, setEditModelId] = useState('')
+  const [editModelPath, setEditModelPath] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch('/api/settings/kokoro')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.modelId) setModelId(data.modelId)
+        if (data?.modelPath) setModelPath(data.modelPath)
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleEdit = () => {
+    setEditModelId(modelId)
+    setEditModelPath(modelPath)
+    setEditing(true)
+    setError('')
+  }
+
+  const handleCancel = () => {
+    setEditing(false)
+    setError('')
+  }
+
+  const handleSave = async () => {
+    if (!editModelId.trim()) { setError('模型 ID 不能为空'); return }
+    if (!editModelPath.trim()) { setError('模型路径不能为空'); return }
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch('/api/settings/kokoro', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId: editModelId.trim(), modelPath: editModelPath.trim() }),
+      })
+      if (!res.ok) throw new Error('保存失败')
+      setModelId(editModelId.trim())
+      setModelPath(editModelPath.trim())
+      setKokoroModelId(editModelId.trim())
+      setEditing(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-5">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base"><Headphones data-icon="inline-start" />Kokoro 配置</CardTitle>
+          {!editing && (
+            <Button size="sm" variant="outline" onClick={handleEdit}>
+              <Pencil className="mr-1 size-3" />编辑
+            </Button>
+          )}
+        </div>
+
+        <div className="rounded-xl border px-4 py-3">
+          <p className="text-xs font-medium text-muted-foreground">本地离线语音合成模型（ONNX Runtime Web）</p>
+          {editing ? (
+            <div className="mt-2 flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">模型 ID</label>
+                <Input
+                  value={editModelId}
+                  onChange={e => setEditModelId(e.target.value)}
+                  placeholder="onnx-community/Kokoro-82M-v1.0-ONNX"
+                />
+                <p className="text-xs text-muted-foreground">HuggingFace 模型 ID，用于下载模型文件</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">模型路径</label>
+                <Input
+                  value={editModelPath}
+                  onChange={e => setEditModelPath(e.target.value)}
+                  placeholder="/home/user/.ping-eng/kokoro-models"
+                />
+                <p className="text-xs text-muted-foreground">模型文件本地存储目录，启动时优先从此路径加载</p>
+              </div>
+              {error && <p className="text-xs text-destructive">{error}</p>}
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => void handleSave()} disabled={saving}>
+                  {saving ? '保存中...' : '保存'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleCancel}>取消</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 flex flex-col gap-1.5">
+              <div>
+                <p className="text-xs text-muted-foreground">模型 ID</p>
+                <p className="truncate text-sm font-medium">{modelId || '加载中...'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">模型路径</p>
+                <p className="truncate text-sm font-medium font-mono text-xs">{modelPath || '加载中...'}</p>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                运行时状态：{getKokoroModelId() === modelId ? '已同步' : '待加载'}
+              </p>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 /* ── ModelConfigListSection — 模型配置列表 ── */
 
 export function ModelConfigListSection({ highlightTtsModel, onHighlightDone, onConfigsChanged, onSaved }: {
@@ -631,6 +751,8 @@ export function ModelConfigListSection({ highlightTtsModel, onHighlightDone, onC
           )}
         </CardContent>
       </Card>
+
+      <KokoroConfigCard />
 
       <ModelConfigDialog
         open={dialogOpen}

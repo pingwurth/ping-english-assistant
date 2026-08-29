@@ -234,3 +234,38 @@ export async function writeLocalServices(services: LocalServices): Promise<void>
   raw.localServices = services
   await writeRaw(raw)
 }
+
+/* ── Kokoro TTS settings ─────────────────────────────── */
+
+export interface KokoroSettings {
+  /** HuggingFace 模型 ID（用于下载模型） */
+  modelId: string
+  /** 模型文件本地存储路径（绝对目录，模型文件存放于此） */
+  modelPath: string
+}
+
+const DEFAULT_KOKORO_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX'
+const DEFAULT_KOKORO_MODEL_PATH = join(SETTINGS_DIR, 'kokoro-models')
+
+export async function readKokoroSettings(): Promise<KokoroSettings> {
+  const raw = await readRaw()
+  const k = raw.kokoro as Record<string, unknown> | undefined
+  const settings: KokoroSettings = {
+    modelId: (k?.modelId as string) || DEFAULT_KOKORO_MODEL_ID,
+    modelPath: (k?.modelPath as string) || DEFAULT_KOKORO_MODEL_PATH,
+  }
+  // 首次读取时写入默认值，确保持久化到 settings.json
+  if (!k) {
+    raw.kokoro = settings
+    await writeRaw(raw)
+  }
+  // 确保模型目录存在
+  await mkdir(settings.modelPath, { recursive: true })
+  return settings
+}
+
+export async function writeKokoroSettings(settings: KokoroSettings): Promise<void> {
+  const raw = await readRaw()
+  raw.kokoro = settings
+  await writeRaw(raw)
+}

@@ -217,11 +217,11 @@ function ImportPage() {
           id, name: name.trim(),
           mediaType: mediaFile.type.startsWith('video') ? 'video' : 'audio',
           mediaRef: `idb://blobs/${id}`, mediaFileName: mediaFile.name, mediaSizeBytes: mediaFile.size,
-          subtitle: subtitle ? { ref: `idb://materials/${id}`, format: subtitle.data.format, isBilingual: subtitle.data.isBilingual, sentenceCount: subtitle.data.sentences.length } : undefined,
+          subtitle: subtitle ? { ref: `idb://materials/${id}`, format: subtitle.data.format, isBilingual: subtitle.data.isBilingual, sentenceCount: subtitle.data.sentences.length } : null,
           durationMs: mediaDurationMs ?? subtitle?.data.totalDurationMs ?? 0,
           createdAt: now, lastOpenedAt: now,
         },
-        subtitleData: subtitle?.data, // 解析结果随元数据同存，避免重复解析（架构 §4.2）
+        subtitleData: subtitle?.data ?? null, // 解析结果随元数据同存，避免重复解析（架构 §4.2）
       }
       await putMaterialRecord(record)
       if (fromTts && taskId) await consumeTtsExport(taskId)

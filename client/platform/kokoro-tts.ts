@@ -2,8 +2,8 @@
  * Kokoro-82M 本地离线语音合成 —— 基于 kokoro-js（ONNX Runtime Web）
  * —— 真源：docs/系统架构设计.md §3.4 Kokoro-82M
  *
- * 首次使用从 HuggingFace 下载 q8 ONNX 模型（约 90MB）并缓存到浏览器
- * Cache Storage，之后完全离线可用。
+ * 模型通过本地代理路由（/api/hf/）加载，首次请求下载到磁盘缓存
+ * （~/.ping-eng/kokoro-models/），后续直接从磁盘读取，无需重复下载。
  *
  * 合成策略（对齐 §3.4「句级时间轴为分句合成真实边界」）：
  *  - 按 [.!?;:\n] 分句，逐句调用模型，得到每句真实音频时长；
@@ -18,7 +18,13 @@ import type { KokoroTTS } from 'kokoro-js'
 /** Kokoro 音色 ID 联合类型（推导自 kokoro-js generate 选项） */
 type KokoroVoiceId = NonNullable<Parameters<KokoroTTS['generate']>[1]>['voice']
 
-const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX'
+const DEFAULT_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX'
+
+/** 当前模型 ID（可通过 setKokoroModelId 动态修改） */
+let currentModelId = DEFAULT_MODEL_ID
+
+/** 是否已配置 env.remoteHost */
+let remoteHostConfigured = false
 
 /** 句间静音（与云端路径的 buildTtsTimeline 估算口径一致） */
 const INTER_SENTENCE_GAP_MS = 120
@@ -56,13 +62,34 @@ export function subscribeKokoroLoad(cb: (e: KokoroLoadEvent) => void): () => voi
 let ttsPromise: Promise<KokoroTTS> | null = null
 let ttsReady = false
 
+/** 设置 Kokoro 模型来源 ID（需在首次加载前调用） */
+export function setKokoroModelId(id: string): void {
+  if (id && id !== currentModelId) {
+    currentModelId = id
+    // 重置加载状态，下次调用 getKokoroTts 时使用新 modelId
+    ttsPromise = null
+    ttsReady = false
+  }
+}
+
+/** 获取当前模型 ID */
+export function getKokoroModelId(): string {
+  return currentModelId
+}
+
 /** 懒加载单例：首次调用时下载并初始化模型 */
 export function getKokoroTts(): Promise<KokoroTTS> {
   if (!ttsPromise) {
     emitLoad({ phase: 'downloading' })
     ttsPromise = (async () => {
+      // 将模型请求重定向到本地代理路由，实现磁盘缓存
+      if (!remoteHostConfigured) {
+        const { env } = await import('@huggingface/transformers')
+        env.remoteHost = `${window.location.origin}/api/hf/`
+        remoteHostConfigured = true
+      }
       const { KokoroTTS } = await import('kokoro-js')
-      const tts = await KokoroTTS.from_pretrained(MODEL_ID, {
+      const tts = await KokoroTTS.from_pretrained(currentModelId, {
         dtype: 'q8',
         device: 'wasm',
         progress_callback: (p) => {
@@ -79,6 +106,13 @@ export function getKokoroTts(): Promise<KokoroTTS> {
     })
   }
   return ttsPromise
+}
+
+/** 静默预加载模型（启动时调用，失败不抛异常） */
+export function preloadKokoroModel(): void {
+  getKokoroTts().catch((err) => {
+    console.warn('[kokoro-tts] 预加载失败（不影响后续使用）:', err)
+  })
 }
 
 export interface KokoroTtsResult {

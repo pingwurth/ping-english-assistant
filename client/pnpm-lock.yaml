@@ -17,12 +17,15 @@ importers:
       '@base-ui/react':
         specifier: ^1.5.0
         version: 1.5.0(@date-fns/tz@1.4.1)(@types/react@19.2.14)(date-fns@4.1.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@huggingface/transformers':
+        specifier: ^3.8.1
+        version: 3.8.1
       '@langchain/core':
         specifier: ^1.2.9
-        version: 1.2.9(openai@7.8.0(undici@7.29.0)(zod@3.25.76))
+        version: 1.2.9(openai@7.8.0(undici@8.10.0)(zod@3.25.76))
       '@langchain/openai':
         specifier: ^1.5.10
-        version: 1.5.10(@langchain/core@1.2.9(openai@7.8.0(undici@7.29.0)(zod@3.25.76)))(undici@7.29.0)
+        version: 1.5.10(@langchain/core@1.2.9(openai@7.8.0(undici@8.10.0)(zod@3.25.76)))(undici@8.10.0)
       '@vercel/analytics':
         specifier: 1.6.1
         version: 1.6.1(next@16.3.0(@babel/core@7.29.7)(@types/node@24.10.4)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))(react@19.2.4)
@@ -35,6 +38,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      https-proxy-agent:
+        specifier: ^9.1.0
+        version: 9.1.0
       kokoro-js:
         specifier: ^1.2.1
         version: 1.2.1
@@ -62,6 +68,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      undici:
+        specifier: ^8.10.0
+        version: 8.10.0
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.3.3
@@ -1140,6 +1149,10 @@ packages:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
 
+  agent-base@9.0.0:
+    resolution: {integrity: sha512-TQf59BsZnytt8GdJKLPfUZ54g/iaUL2OWDSFCCvMOhsHduDQxO8xC4PNeyIkVcA5KwL2phPSv0douC0fgWzmnA==}
+    engines: {node: '>= 20'}
+
   ai@7.0.79:
     resolution: {integrity: sha512-zZkSUq6MgmXjwIfML2wkPFeQ5Azk8kGEWkciAtE0NgnFy3slj4ljsw5LvigsCbYXxTSVr+6iCHBTPZafpx1P0w==}
     engines: {node: '>=22'}
@@ -1687,6 +1700,10 @@ packages:
   https-proxy-agent@7.0.6:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
     engines: {node: '>= 14'}
+
+  https-proxy-agent@9.1.0:
+    resolution: {integrity: sha512-ag87y7cJJ9/3+GxFr8Oy4O5faDsGRGnBGsJj/YjOSsSx/5eadKLYTMPlzuR6obgoCDDm0abAAZitXXQkMOPSpA==}
+    engines: {node: '>= 20'}
 
   human-signals@2.1.0:
     resolution: {integrity: sha512-B4FFZ6q/T2jhhksgkbEW3HBvWIfDW85snkQgawt07S7J5QXTk6BkNV+0yAeZrM5QpMAdYlocGoljn0sJ/WQkFw==}
@@ -2381,6 +2398,15 @@ packages:
     resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
     engines: {node: '>= 0.10'}
 
+  proxy-agent-negotiate@1.1.0:
+    resolution: {integrity: sha512-N8IBcM3UgCVzz2L2Lqv8DVntDnnC8/hiV4nEDUPkqq72TPUgYWjQc+bdZlBPZK9LzPAvOY//gAt0S0DApoOXWQ==}
+    engines: {node: '>= 20'}
+    peerDependencies:
+      kerberos: ^2.0.0
+    peerDependenciesMeta:
+      kerberos:
+        optional: true
+
   qs@6.15.2:
     resolution: {integrity: sha512-Rzq0KEyX/w/tEybncDgdkZrJgVUsUMk3xjh3t5bv3S1HTAtg+uOYt72+ZfwiQwKdysThkTBdL/rTi6HDmX9Ddw==}
     engines: {node: '>=0.6'}
@@ -2729,6 +2755,10 @@ packages:
   undici@7.29.0:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
+
+  undici@8.10.0:
+    resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
+    engines: {node: '>=22.19.0'}
 
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
@@ -3467,12 +3497,12 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@langchain/core@1.2.9(openai@7.8.0(undici@7.29.0)(zod@3.25.76))':
+  '@langchain/core@1.2.9(openai@7.8.0(undici@8.10.0)(zod@3.25.76))':
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@standard-schema/spec': 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.9.0(openai@7.8.0(undici@7.29.0)(zod@3.25.76))
+      langsmith: 0.9.0(openai@7.8.0(undici@8.10.0)(zod@3.25.76))
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 3.25.76
@@ -3483,11 +3513,11 @@ snapshots:
       - openai
       - ws
 
-  '@langchain/openai@1.5.10(@langchain/core@1.2.9(openai@7.8.0(undici@7.29.0)(zod@3.25.76)))(undici@7.29.0)':
+  '@langchain/openai@1.5.10(@langchain/core@1.2.9(openai@7.8.0(undici@8.10.0)(zod@3.25.76)))(undici@8.10.0)':
     dependencies:
-      '@langchain/core': 1.2.9(openai@7.8.0(undici@7.29.0)(zod@3.25.76))
+      '@langchain/core': 1.2.9(openai@7.8.0(undici@8.10.0)(zod@3.25.76))
       js-tiktoken: 1.0.21
-      openai: 7.8.0(undici@7.29.0)(zod@3.25.76)
+      openai: 7.8.0(undici@8.10.0)(zod@3.25.76)
       zod: 3.25.76
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
@@ -3826,6 +3856,8 @@ snapshots:
       negotiator: 1.0.0
 
   agent-base@7.1.4: {}
+
+  agent-base@9.0.0: {}
 
   ai@7.0.79(zod@3.25.76):
     dependencies:
@@ -4351,6 +4383,15 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  https-proxy-agent@9.1.0:
+    dependencies:
+      agent-base: 9.0.0
+      debug: 4.4.3
+      proxy-agent-negotiate: 1.1.0
+    transitivePeerDependencies:
+      - kerberos
+      - supports-color
+
   human-signals@2.1.0: {}
 
   human-signals@8.0.1: {}
@@ -4463,11 +4504,11 @@ snapshots:
       '@huggingface/transformers': 3.8.1
       phonemizer: 1.2.1
 
-  langsmith@0.9.0(openai@7.8.0(undici@7.29.0)(zod@3.25.76)):
+  langsmith@0.9.0(openai@7.8.0(undici@8.10.0)(zod@3.25.76)):
     dependencies:
       p-queue: 6.6.2
     optionalDependencies:
-      openai: 7.8.0(undici@7.29.0)(zod@3.25.76)
+      openai: 7.8.0(undici@8.10.0)(zod@3.25.76)
 
   lightningcss-android-arm64@1.32.0:
     optional: true
@@ -4766,9 +4807,9 @@ snapshots:
       powershell-utils: 0.1.0
       wsl-utils: 0.3.1
 
-  openai@7.8.0(undici@7.29.0)(zod@3.25.76):
+  openai@7.8.0(undici@8.10.0)(zod@3.25.76):
     optionalDependencies:
-      undici: 7.29.0
+      undici: 8.10.0
       zod: 3.25.76
 
   ora@8.2.0:
@@ -4895,6 +4936,8 @@ snapshots:
     dependencies:
       forwarded: 0.2.0
       ipaddr.js: 1.9.1
+
+  proxy-agent-negotiate@1.1.0: {}
 
   qs@6.15.2:
     dependencies:
@@ -5330,6 +5373,8 @@ snapshots:
   undici-types@7.16.0: {}
 
   undici@7.29.0: {}
+
+  undici@8.10.0: {}
 
   unicorn-magic@0.3.0: {}
 
