@@ -101,12 +101,13 @@ export function getAllBooks(): VocabBook[] {
 // ─── 词条 CRUD ───
 
 /** 添加词条 */
-export async function addEntry(entry: Omit<VocabEntry, 'id' | 'addedAt'>): Promise<VocabEntry> {
+export async function addEntry(entry: Omit<VocabEntry, 'id' | 'addedAt' | 'frequency'>): Promise<VocabEntry> {
   await initVocab()
   const newEntry: VocabEntry = {
     ...entry,
     id: crypto.randomUUID(),
     addedAt: Date.now(),
+    frequency: 0,
     text: entry.text.trim(),
   }
   await recordsStore.put(RECORD_KEYS.vocabEntry(newEntry.id), newEntry)
@@ -137,4 +138,35 @@ export function hasText(text: string, bookId?: string): boolean {
     if (bookId && e.bookId !== bookId) return false
     return e.text.toLowerCase() === normalized
   })
+}
+
+/**
+ * 导入材料后调用：扫描字幕单词与生词本词条匹配，累加出现次数。
+ * @param words - 字幕中所有句子的单词扁平数组（建议已 toLowerCase）
+ */
+export async function updateFrequencies(words: string[]): Promise<void> {
+  await initVocab()
+
+  // 构建 word → 出现次数 Map
+  const wordCount = new Map<string, number>()
+  for (const w of words) {
+    const key = w.toLowerCase()
+    wordCount.set(key, (wordCount.get(key) ?? 0) + 1)
+  }
+
+  // 匹配生词本词条，累加 frequency
+  const { entries } = vocabStore.get()
+  const toUpdate: VocabEntry[] = []
+  for (const entry of entries) {
+    const count = wordCount.get(entry.text.toLowerCase())
+    if (count && count > 0) {
+      toUpdate.push({ ...entry, frequency: entry.frequency + count })
+    }
+  }
+
+  if (toUpdate.length === 0) return
+
+  // 批量写入
+  await Promise.all(toUpdate.map((e) => recordsStore.put(RECORD_KEYS.vocabEntry(e.id), e)))
+  await refresh()
 }

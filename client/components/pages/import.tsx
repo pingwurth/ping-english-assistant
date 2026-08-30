@@ -10,6 +10,7 @@ import { formatDuration } from '@/components/shared/player-parts'
 import { parseSubtitle, SubtitleParseError } from '@/core/subtitle'
 import type { SubtitleData } from '@/types/subtitle'
 import { putMaterialRecord, putMediaBlob, deleteMediaBlob } from '@/stores/material-store'
+import { updateFrequencies } from '@/stores/vocab-store'
 import type { MaterialRecord } from '@/platform/storage/schema'
 import { estimateUsage } from '@/platform/storage/idb'
 import { consumeTtsExport, readTtsExport } from '@/lib/tts-export'
@@ -224,6 +225,11 @@ function ImportPage() {
         subtitleData: subtitle?.data ?? null, // 解析结果随元数据同存，避免重复解析（架构 §4.2）
       }
       await putMaterialRecord(record)
+      // 更新生词本出现频率：扫描字幕单词与词条匹配
+      if (subtitle?.data?.sentences) {
+        const allWords = subtitle.data.sentences.flatMap((s) => s.words)
+        await updateFrequencies(allWords)
+      }
       if (fromTts && taskId) await consumeTtsExport(taskId)
       if (fromTranscribe && taskId) await consumeTranscribeExport(taskId)
       setDone(true)

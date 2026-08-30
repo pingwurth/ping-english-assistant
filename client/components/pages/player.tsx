@@ -12,6 +12,7 @@ import { SubtitleEditDialog } from '@/components/shared/subtitle-edit-dialog'
 import { TranslateDialog } from '@/components/shared/translate-dialog'
 import { TranslateDrawer } from '@/components/shared/translate-drawer'
 import { getMaterialRecord, getMediaBlob, getProgress, putMaterialRecord, touchMaterial } from '@/stores/material-store'
+import { updateFrequencies } from '@/stores/vocab-store'
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS, type MaterialRecord } from '@/platform/storage/schema'
 import { HtmlPlayerController } from '@/platform/html-player'
@@ -19,7 +20,7 @@ import { SentencePlayer } from '@/core/player/sentence-player'
 import { getDefaultLoop, getDefaultRate } from '@/lib/pref-keys'
 import { exportSrt, parseSubtitle } from '@/core/subtitle'
 import type { Favorite, LearningProgress } from '@/types/progress'
-import type { SubtitleMode, SubtitleSentence } from '@/types/subtitle'
+import type { SubtitleData, SubtitleMode, SubtitleSentence } from '@/types/subtitle'
 
 /** 倍速循环序列（原型阶段三档） */
 const RATES = [0.75, 1, 1.25]
@@ -281,27 +282,35 @@ function Player() {
     setFavSet(nextSet)
   }
 
+  /** 将已解析的字幕数据应用到当前材料：持久化 + 更新生词频率 + 刷新 UI */
+  const applySubtitleToRecord = useCallback(async (data: SubtitleData) => {
+    if (!record) return
+    const updatedRecord: MaterialRecord = {
+      ...record,
+      material: {
+        ...record.material,
+        subtitle: { ref: `idb://materials/${materialId}`, format: data.format, isBilingual: data.isBilingual, sentenceCount: data.sentences.length },
+      },
+      subtitleData: data,
+    }
+    await putMaterialRecord(updatedRecord)
+    const allWords = data.sentences.flatMap((s) => s.words)
+    await updateFrequencies(allWords)
+    setRecord(updatedRecord)
+    setActive(0)
+  }, [record, materialId])
+
   /** 导入字幕文件：解析后更新 record 并重新装配播放引擎 */
   const handleImportSubtitle = useCallback(async (file: File) => {
     if (!record) return
     try {
       const text = await file.text()
       const data = parseSubtitle(text, undefined, record.material.durationMs ?? undefined)
-      const updatedRecord: MaterialRecord = {
-        ...record,
-        material: {
-          ...record.material,
-          subtitle: { ref: `idb://materials/${materialId}`, format: data.format, isBilingual: data.isBilingual, sentenceCount: data.sentences.length },
-        },
-        subtitleData: data,
-      }
-      await putMaterialRecord(updatedRecord)
-      setRecord(updatedRecord)
-      setActive(0)
+      await applySubtitleToRecord(data)
     } catch {
       // 解析失败静默处理
     }
-  }, [record, materialId])
+  }, [record, applySubtitleToRecord])
 
   /** AI音频转字幕：打开对话框 */
   const handleAiConvert = useCallback(() => {
@@ -313,21 +322,11 @@ function Player() {
     if (!record) return
     try {
       const data = parseSubtitle(srtText, 'srt', record.material.durationMs ?? undefined)
-      const updatedRecord: MaterialRecord = {
-        ...record,
-        material: {
-          ...record.material,
-          subtitle: { ref: `idb://materials/${materialId}`, format: data.format, isBilingual: data.isBilingual, sentenceCount: data.sentences.length },
-        },
-        subtitleData: data,
-      }
-      await putMaterialRecord(updatedRecord)
-      setRecord(updatedRecord)
-      setActive(0)
+      await applySubtitleToRecord(data)
     } catch {
       // 解析失败静默处理
     }
-  }, [record, materialId])
+  }, [record, applySubtitleToRecord])
 
   /** 删除句子：移除后重排 index 并持久化 */
   const handleDeleteSentence = useCallback(async (index: number) => {

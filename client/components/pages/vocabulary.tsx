@@ -4,7 +4,7 @@
  * 路由：/vocabulary
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, BookOpen, Plus, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -25,6 +25,7 @@ function formatDate(ts: number): string {
 }
 
 function EntryItem({ entry, onDelete }: { entry: VocabEntry; onDelete: () => void }) {
+  const freq = entry.frequency ?? 0
   const [confirming, setConfirming] = useState(false)
 
   const handleDelete = () => {
@@ -43,9 +44,11 @@ function EntryItem({ entry, onDelete }: { entry: VocabEntry; onDelete: () => voi
         <div className="font-serif text-base font-semibold">{entry.text}</div>
         <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{entry.context}</div>
         <div className="mt-2 flex items-center gap-2">
-          <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-            {entry.materialId}
-          </span>
+          {freq > 0 && (
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+              出现 {freq} 次
+            </span>
+          )}
           <span className="text-xs text-muted-foreground">{formatDate(entry.addedAt)}</span>
         </div>
       </div>
@@ -68,6 +71,7 @@ export function Vocabulary() {
   const { books, entries, ready } = useStore(vocabStore)
   const [selectedBookId, setSelectedBookId] = useState<string>(DEFAULT_BOOK_ID)
   const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState<'addedAt' | 'frequency'>('addedAt')
   const [showCreateInput, setShowCreateInput] = useState(false)
   const [newBookName, setNewBookName] = useState('')
 
@@ -85,6 +89,16 @@ export function Vocabulary() {
   const filteredEntries = search
     ? bookEntries.filter((e) => e.text.toLowerCase().includes(search.toLowerCase()))
     : bookEntries
+
+  const sortedEntries = useMemo(() => {
+    const arr = [...filteredEntries]
+    if (sortBy === 'frequency') {
+      arr.sort((a, b) => (b.frequency ?? 0) - (a.frequency ?? 0) || b.addedAt - a.addedAt)
+    } else {
+      arr.sort((a, b) => b.addedAt - a.addedAt)
+    }
+    return arr
+  }, [filteredEntries, sortBy])
 
   const handleCreateBook = async () => {
     if (!newBookName.trim()) return
@@ -193,9 +207,9 @@ export function Vocabulary() {
             </div>
           </div>
 
-          {/* Search */}
-          <div className="border-b px-6 py-3">
-            <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
+          {/* Search + Sort */}
+          <div className="flex items-center gap-3 border-b px-6 py-3">
+            <div className="flex flex-1 items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
               <Search className="size-4 text-muted-foreground" />
               <input
                 type="text"
@@ -205,13 +219,31 @@ export function Vocabulary() {
                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
             </div>
+            <div className="flex shrink-0 items-center rounded-lg bg-muted/50 p-0.5">
+              <button
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  sortBy === 'addedAt' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                }`}
+                onClick={() => setSortBy('addedAt')}
+              >
+                添加时间
+              </button>
+              <button
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  sortBy === 'frequency' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                }`}
+                onClick={() => setSortBy('frequency')}
+              >
+                出现频率
+              </button>
+            </div>
           </div>
 
           {/* Entry list */}
           <div className="flex-1 overflow-auto px-4 py-2">
-            {filteredEntries.length > 0 ? (
+            {sortedEntries.length > 0 ? (
               <div className="divide-y">
-                {filteredEntries.map((entry) => (
+                {sortedEntries.map((entry) => (
                   <EntryItem
                     key={entry.id}
                     entry={entry}

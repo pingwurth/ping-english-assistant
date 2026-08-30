@@ -28,6 +28,8 @@ export interface VocabEntry {
   bookId: string
   /** 添加时间戳 */
   addedAt: number
+  /** 在所有已导入材料中的出现次数（由材料导入时累加） */
+  frequency: number
   /** 可选 LLM 释义 */
   definition?: string
 }
