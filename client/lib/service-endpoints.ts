@@ -12,7 +12,7 @@
 // Types
 // ---------------------------------------------------------------------------
 
-export type ServiceKind = 'tts' | 'asr' | 'translate'
+export type ServiceKind = 'tts' | 'asr' | 'translate' | 'mnemonic'
 export type ProviderKey = 'dashscope' | 'mimo' | string
 
 // ---------------------------------------------------------------------------
@@ -23,24 +23,28 @@ const DASHSCOPE_ENDPOINTS: Record<ServiceKind, string> = {
   tts: '/services/audio/tts/SpeechSynthesizer',
   asr: '/services/aigc/multimodal-generation/generation',
   translate: '/chat/completions',
+  mnemonic: '/chat/completions',
 }
 
 const QWEN_ENDPOINTS: Record<ServiceKind, string> = {
   tts: '/services/audio/tts/SpeechSynthesizer',
   asr: '/services/aigc/multimodal-generation/generation',
   translate: '/chat/completions',
+  mnemonic: '/chat/completions',
 }
 
 const MIMO_ENDPOINTS: Record<ServiceKind, string> = {
   tts: '/chat/completions',
   asr: '/chat/completions',
   translate: '/chat/completions',
+  mnemonic: '/chat/completions',
 }
 
 const LOCAL_ENDPOINTS: Record<ServiceKind, string> = {
   tts: '/v1/chat/completions',
   asr: '/v1/chat/completions',
   translate: '/v1/chat/completions',
+  mnemonic: '/v1/chat/completions',
 }
 
 const PROVIDER_ENDPOINTS: Record<string, Record<ServiceKind, string>> = {
@@ -77,6 +81,12 @@ const DEFAULT_MODELS: Record<ServiceKind, Record<string, string>> = {
     mimo: 'mimo-v2.5-asr',
   },
   translate: {
+    dashscope: 'qwen-turbo',
+    qwen: 'qwen-turbo',
+    mimo: 'mimo-v2.5',
+    local: '',
+  },
+  mnemonic: {
     dashscope: 'qwen-turbo',
     qwen: 'qwen-turbo',
     mimo: 'mimo-v2.5',

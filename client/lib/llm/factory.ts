@@ -24,7 +24,12 @@ import { resolveServiceUrl } from '@/lib/service-endpoints'
  *   - dashscope 的 chat completions 也兼容 OpenAI 格式（/chat/completions）
  *   - 非标准格式（DashScope 原生 ASR/TTS）走各自的 provider 封装
  */
-export function createChatModel(config: ChatModelConfig): ChatOpenAI {
+export interface CreateChatModelOptions {
+  /** 是否启用流式模式（默认 false） */
+  streaming?: boolean
+}
+
+export function createChatModel(config: ChatModelConfig, options?: CreateChatModelOptions): ChatOpenAI {
   if (!config.apiKey) {
     throw new LlmError('API_KEY_MISSING', '请先在设置页配置 API Key')
   }
@@ -34,6 +39,8 @@ export function createChatModel(config: ChatModelConfig): ChatOpenAI {
   if (!config.model) {
     throw new LlmError('MODEL_NOT_CONFIGURED', '该配置未设置翻译模型')
   }
+
+  const useStreaming = options?.streaming ?? false
 
   // 构建完整的 API base URL（包含 endpoint 路径）
   // ChatOpenAI 的 basePath 需要去掉 /chat/completions 后缀，只保留基础路径
@@ -55,14 +62,14 @@ export function createChatModel(config: ChatModelConfig): ChatOpenAI {
     apiKey: config.apiKey,
     configuration: {
       baseURL: basePath,
-      // DashScope 需要兼容 header
+      // DashScope 流式需要 SSE enable header
       defaultHeaders: provider === 'dashscope'
-        ? { 'X-DashScope-SSE': 'disable' }
+        ? { 'X-DashScope-SSE': useStreaming ? 'enable' : 'disable' }
         : undefined,
     },
     timeout: 120_000,
     maxRetries: 1,
-    streaming: false,
+    streaming: useStreaming,
   })
 }
 

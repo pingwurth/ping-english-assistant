@@ -8,7 +8,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { readLlmSettings, readLlmConfigById } from '@/lib/server-settings'
+import { readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
 import { translateTexts, LlmError } from '@/lib/llm'
 import type { TranslateDirection, TranslateRequest } from '@/types/api'
 
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
     // ── 读取配置 ────────────────────────────────────────────
     const settings = configId
       ? await readLlmConfigById(configId)
-      : await readLlmSettings()
+      : await readEffectiveLlmSettings()
     if (!settings?.baseUrl || !settings?.apiKey) {
       return NextResponse.json(
         { error: '请先在设置页配置翻译模型（Base URL 和 API Key）', code: 'SETTINGS_NOT_CONFIGURED' },

@@ -179,3 +179,26 @@
     background-color: color-mix(in oklab, var(--primary) 12%, transparent);
   }
 }
+
+/* 九宫格：选错时抖动 */
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+/* 九宫格：提示高亮闪烁 */
+.animate-hint-glow {
+  animation: hint-glow 1s ease-in-out;
+}
+
+@keyframes hint-glow {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  30%, 70% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 50%, transparent); }
+}

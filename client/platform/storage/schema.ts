@@ -20,4 +20,5 @@ export const RECORD_KEYS = {
   training: (recordId: string) => `train:${recordId}`,
   vocabBook: (bookId: string) => `vocabbook:${bookId}`,
   vocabEntry: (entryId: string) => `vocabentry:${entryId}`,
+  mnemonic: (entryId: string) => `mnemonic:${entryId}`,
 } as const

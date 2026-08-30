@@ -22,6 +22,11 @@ export interface LlmSettings {
   /** Translate endpoint path */
   translateEndpoint?: string | null
 
+  /** Mnemonic (生词助记) model name — falls back to translateModel */
+  mnemonicModel?: string | null
+  /** Mnemonic endpoint path */
+  mnemonicEndpoint?: string | null
+
   /** WhisperX alignment service URL */
   whisperAlignUrl?: string
   /** faster-whisper transcription service URL */
@@ -89,6 +94,28 @@ export async function writeLlmSettings(settings: LlmSettings): Promise<void> {
   const existing = await readRaw()
   existing.llm = settings
   await writeRaw(existing)
+}
+
+/**
+ * 读取有效的 LLM 配置（优先 legacy `llm`，其次 `llmConfigs` 默认配置）
+ *
+ * 多模型配置系统将配置存在 `llmConfigs` 数组中，仅在设为默认时同步到 `llm`。
+ * 此函数确保无论配置存储在哪，都能正确读取。
+ */
+export async function readEffectiveLlmSettings(): Promise<LlmSettings | null> {
+  // 优先读 legacy `llm` key
+  const legacy = await readLlmSettings()
+  if (legacy) return legacy
+
+  // fallback: 读 llmConfigs 的默认配置
+  const { configs, defaultId } = await readLlmConfigs()
+  if (configs.length === 0) return null
+
+  const defaultConfig = defaultId
+    ? configs.find(c => c.id === defaultId)
+    : configs[0]
+
+  return defaultConfig ? toLlmSettings(defaultConfig) : null
 }
 
 /* ── multi-model config CRUD ──────────────────────────── */

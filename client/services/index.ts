@@ -15,6 +15,7 @@ import { MockAsrService, type MockAsrOptions } from './mock/asr'
 import { MockSoeService, type MockSoeOptions } from './mock/soe'
 import { MockRecitationReportService, MockShadowingReportService, type MockReportOptions } from './mock/report'
 import { MockTtsService, type MockTtsOptions } from './mock/tts'
+import { MockMnemonicService, type MockMnemonicOptions } from './mock/mnemonic'
 
 /** mock 聚合（批次 E 起为完整 AppServices，含 tts） */
 export interface MockServices extends AppServices {}
@@ -25,6 +26,7 @@ export interface MockServicesOptions {
   /** 影子跟读与背诵报告共用同一组配置 */
   report?: MockReportOptions
   tts?: MockTtsOptions
+  mnemonic?: MockMnemonicOptions
 }
 
 /** 获取 mock 服务集（确定性、离线可用、零网络） */
@@ -35,6 +37,7 @@ export function getMockServices(options: MockServicesOptions = {}): MockServices
     shadowingReport: new MockShadowingReportService(options.report),
     recitationReport: new MockRecitationReportService(options.report),
     tts: new MockTtsService(options.tts),
+    mnemonic: new MockMnemonicService(options.mnemonic),
   }
 }
 
@@ -58,6 +61,7 @@ export type {
   ShadowingReportService,
   RecitationReportService,
   TtsService,
+  MnemonicService,
 } from './contracts'
 export { ApiError, toApiError, throwIfAborted, abortableDelay } from './contracts'
 export type { ApiErrorPayload, SoeEvalMode, TtsGenerateResult } from './contracts'

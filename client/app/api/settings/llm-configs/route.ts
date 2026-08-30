@@ -64,7 +64,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint } = body
+    const { name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, mnemonicModel, mnemonicEndpoint } = body
 
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: 'Missing required fields: baseUrl, apiKey' }, { status: 400 })
@@ -81,6 +81,8 @@ export async function POST(request: Request) {
       ttsEndpoint,
       translateModel,
       translateEndpoint,
+      mnemonicModel,
+      mnemonicEndpoint,
     })
 
     return NextResponse.json({ id })

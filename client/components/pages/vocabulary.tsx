@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, BookOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react'
+import { ArrowLeft, BookOpen, Pencil, Plus, Search, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -365,6 +365,18 @@ export function Vocabulary() {
                 )}
                 <span>添加于 {formatDate(selectedEntry.addedAt)}</span>
               </div>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  const id = selectedEntry.id
+                  setSelectedEntry(null)
+                  navigate(`/vocabulary/mnemonic/${id}`)
+                }}
+              >
+                <Sparkles className="mr-2 size-4" />
+                生词助记
+              </Button>
             </div>
           )}
         </DialogContent>

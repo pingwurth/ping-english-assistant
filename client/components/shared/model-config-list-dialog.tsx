@@ -3,7 +3,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { ChevronDown, Eye, EyeOff, Headphones, Languages, Mic, Pencil, Plus, RefreshCw, Settings2, Star, Trash2 } from 'lucide-react'
+import { ChevronDown, Eye, EyeOff, Headphones, Languages, Mic, Pencil, Plus, RefreshCw, Settings2, Sparkles, Star, Trash2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardTitle } from '@/components/ui/card'
@@ -26,6 +26,8 @@ export interface LlmConfigItem {
   ttsEndpoint?: string
   translateModel?: string
   translateEndpoint?: string
+  mnemonicModel?: string
+  mnemonicEndpoint?: string
 }
 
 const PROVIDERS = [
@@ -37,18 +39,20 @@ const PROVIDERS = [
 
 const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label || v
 
-type ServiceKind = 'asr' | 'tts' | 'translate'
+type ServiceKind = 'asr' | 'tts' | 'translate' | 'mnemonic'
 
 const SERVICE_STYLES: Record<ServiceKind, { accent: string; softBg: string; mutedBg: string; borderColor: string }> = {
   asr:       { accent: '#2563eb', softBg: '#eff4ff', mutedBg: '#dbeafe', borderColor: '#bfdbfe' },
   tts:       { accent: '#7c3aed', softBg: '#f5f0ff', mutedBg: '#ede4ff', borderColor: '#d8b4fe' },
   translate: { accent: '#0d9488', softBg: '#edfcfa', mutedBg: '#ccfbf1', borderColor: '#99f6e4' },
+  mnemonic:  { accent: '#d97706', softBg: '#fffbeb', mutedBg: '#fef3c7', borderColor: '#fde68a' },
 }
 
 const SERVICE_TYPES: { kind: ServiceKind; icon: typeof Mic; title: string; subtitle: string }[] = [
   { kind: 'asr', icon: Mic, title: 'ASR 模型', subtitle: '语音识别' },
   { kind: 'tts', icon: Headphones, title: 'TTS 模型', subtitle: '语音合成' },
   { kind: 'translate', icon: Languages, title: '翻译模型', subtitle: 'Translation' },
+  { kind: 'mnemonic', icon: Sparkles, title: '助记模型', subtitle: 'Mnemonic' },
 ]
 
 /* ── ModelSelect 子组件 ── */
@@ -143,6 +147,8 @@ function ModelConfigDialog({
   const [ttsEndpoint, setTtsEndpoint] = useState('')
   const [translateModel, setTranslateModel] = useState('')
   const [translateEndpoint, setTranslateEndpoint] = useState('')
+  const [mnemonicModel, setMnemonicModel] = useState('')
+  const [mnemonicEndpoint, setMnemonicEndpoint] = useState('')
   const [models, setModels] = useState<string[]>([])
   const [fetchingModels, setFetchingModels] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -165,11 +171,14 @@ function ModelConfigDialog({
       setTtsEndpoint(editingConfig.ttsEndpoint || '')
       setTranslateModel(editingConfig.translateModel || '')
       setTranslateEndpoint(editingConfig.translateEndpoint || '')
+      setMnemonicModel(editingConfig.mnemonicModel || '')
+      setMnemonicEndpoint(editingConfig.mnemonicEndpoint || '')
 
       const enabled = new Set<ServiceKind>()
       if (editingConfig.asrModel) enabled.add('asr')
       if (editingConfig.ttsModel) enabled.add('tts')
       if (editingConfig.translateModel) enabled.add('translate')
+      if (editingConfig.mnemonicModel) enabled.add('mnemonic')
       setEnabledServices(enabled)
 
       setLoadingConfig(true)
@@ -191,6 +200,8 @@ function ModelConfigDialog({
       setTtsEndpoint('')
       setTranslateModel('')
       setTranslateEndpoint('')
+      setMnemonicModel('')
+      setMnemonicEndpoint('')
       setEnabledServices(new Set())
     }
     setModels([])
@@ -242,6 +253,8 @@ function ModelConfigDialog({
         ttsEndpoint: enabledServices.has('tts') ? (ttsEndpoint.trim() || null) : null,
         translateModel: enabledServices.has('translate') ? (translateModel || null) : null,
         translateEndpoint: enabledServices.has('translate') ? (translateEndpoint.trim() || null) : null,
+        mnemonicModel: enabledServices.has('mnemonic') ? (mnemonicModel || null) : null,
+        mnemonicEndpoint: enabledServices.has('mnemonic') ? (mnemonicEndpoint.trim() || null) : null,
       }
       const url = '/api/settings/llm-configs'
       const res = isEdit
@@ -259,7 +272,7 @@ function ModelConfigDialog({
     } finally {
       setSaving(false)
     }
-  }, [name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, enabledServices, isEdit, editingConfig, onOpenChange, onSave, onSaved])
+  }, [name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, mnemonicModel, mnemonicEndpoint, enabledServices, isEdit, editingConfig, onOpenChange, onSave, onSaved])
 
   const handleProviderChange = (newProvider: string) => {
     setProvider(newProvider)
@@ -272,15 +285,19 @@ function ModelConfigDialog({
     setTtsEndpoint('')
     setTranslateModel('')
     setTranslateEndpoint('')
+    setMnemonicModel('')
+    setMnemonicEndpoint('')
     if (newProvider === 'mimo') {
       setTtsEndpoint(getDefaultEndpoint('mimo', 'tts'))
       setAsrEndpoint(getDefaultEndpoint('mimo', 'asr'))
       setTranslateEndpoint(getDefaultEndpoint('mimo', 'translate'))
+      setMnemonicEndpoint(getDefaultEndpoint('mimo', 'mnemonic'))
     }
     if (newProvider === 'dashscope') {
       setTtsEndpoint(getDefaultEndpoint('dashscope', 'tts'))
       setAsrEndpoint(getDefaultEndpoint('dashscope', 'asr'))
       setTranslateEndpoint(getDefaultEndpoint('dashscope', 'translate'))
+      setMnemonicEndpoint(getDefaultEndpoint('dashscope', 'mnemonic'))
     }
     if (newProvider === 'local') {
       setBaseUrl(DEFAULT_LOCAL_MODEL_URL)
@@ -303,29 +320,34 @@ function ModelConfigDialog({
     if (kind === 'asr') { setAsrModel(''); setAsrEndpoint('') }
     if (kind === 'tts') { setTtsModel(''); setTtsEndpoint('') }
     if (kind === 'translate') { setTranslateModel(''); setTranslateEndpoint('') }
+    if (kind === 'mnemonic') { setMnemonicModel(''); setMnemonicEndpoint('') }
   }
 
   const getModelValue = (kind: ServiceKind) => {
     if (kind === 'asr') return asrModel
     if (kind === 'tts') return ttsModel
+    if (kind === 'mnemonic') return mnemonicModel
     return translateModel
   }
 
   const setModelValue = (kind: ServiceKind, value: string) => {
     if (kind === 'asr') setAsrModel(value)
     if (kind === 'tts') setTtsModel(value)
+    if (kind === 'mnemonic') setMnemonicModel(value)
     if (kind === 'translate') setTranslateModel(value)
   }
 
   const getEndpointValue = (kind: ServiceKind) => {
     if (kind === 'asr') return asrEndpoint
     if (kind === 'tts') return ttsEndpoint
+    if (kind === 'mnemonic') return mnemonicEndpoint
     return translateEndpoint
   }
 
   const setEndpointValue = (kind: ServiceKind, value: string) => {
     if (kind === 'asr') setAsrEndpoint(value)
     if (kind === 'tts') setTtsEndpoint(value)
+    if (kind === 'mnemonic') setMnemonicEndpoint(value)
     if (kind === 'translate') setTranslateEndpoint(value)
   }
 
@@ -335,7 +357,7 @@ function ModelConfigDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogHeader>
         <DialogTitle>{isEdit ? '编辑模型配置' : '新增模型配置'}</DialogTitle>
-        <DialogDescription>配置 API 地址和密钥，按需添加 ASR、TTS 和翻译模型</DialogDescription>
+        <DialogDescription>配置 API 地址和密钥，按需添加 ASR、TTS、翻译和助记模型</DialogDescription>
       </DialogHeader>
       <DialogContent>
         <div className="flex flex-col gap-4">

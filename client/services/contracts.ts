@@ -20,6 +20,13 @@ import type {
   TtsGenerateResponseMeta,
   TtsSubtitleResponse,
 } from '../types/api'
+import type {
+  Association,
+  Exercises,
+  MnemonicCard,
+  MnemonicSseEvent,
+  SentenceEvaluation,
+} from '../types/mnemonic'
 
 /** 可抛出的 API 错误：同时满足统一错误格式 { code, message, detail? }（§3.3 统一约定） */
 export class ApiError extends Error implements ApiErrorShape {
@@ -135,6 +142,20 @@ export interface TtsService {
   getSubtitle(taskId: string, signal?: AbortSignal): Promise<TtsSubtitleResponse>
 }
 
+/** 契约⑧ 生词助记 —— LLM 生成助记卡片、联想、练习、造句批改 */
+export interface MnemonicService {
+  /** 生成即时助记卡片（非流式） */
+  generateCard(word: string, context: string, note?: string, signal?: AbortSignal): Promise<MnemonicCard>
+  /** 流式生成助记卡片 — 返回 AsyncGenerator，逐字段 yield SSE 事件 */
+  generateCardStream(word: string, context: string, note?: string, signal?: AbortSignal): AsyncGenerator<MnemonicSseEvent>
+  /** 生成联想记忆（hard 词自动触发或用户手动触发） */
+  generateAssociation(word: string, meaning: string, signal?: AbortSignal): Promise<Association>
+  /** 生成深度练习题（用户按需触发） */
+  generateExercises(word: string, meaning: string, collocations: string[], difficulty: string, signal?: AbortSignal): Promise<Exercises>
+  /** 批改用户造句 */
+  evaluateSentence(word: string, meaning: string, sentence: string, signal?: AbortSignal): Promise<SentenceEvaluation>
+}
+
 /** 服务聚合（供工厂 services/index.ts 与上层 store/页面注入使用） */
 export interface AppServices {
   asr: AsrService
@@ -142,4 +163,5 @@ export interface AppServices {
   shadowingReport: ShadowingReportService
   recitationReport: RecitationReportService
   tts: TtsService
+  mnemonic: MnemonicService
 }
