@@ -16,6 +16,7 @@ import { TTS } from '@/components/pages/tts'
 import { TranscribePage } from '@/components/pages/transcribe'
 import { SettingsPage } from '@/components/pages/settings'
 import { Report } from '@/components/pages/report'
+import { Vocabulary } from '@/components/pages/vocabulary'
 import { Placeholder } from '@/components/pages/placeholder'
 
 export default function StudyApp() {
@@ -51,6 +52,7 @@ export default function StudyApp() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/transcribe" element={<TranscribePage />} />
         <Route path="/tts" element={<TTS />} />
+        <Route path="/vocabulary" element={<Vocabulary />} />
         <Route path="*" element={<Placeholder title="页面未找到" />} />
       </Routes>
     </BrowserRouter>

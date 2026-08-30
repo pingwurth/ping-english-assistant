@@ -1,0 +1,1454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生词本 UI 设计</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-ground: #F6F3ED;
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #FAF8F5;
+    --bg-bubble: #1B2A22;
+    --bg-bubble-text: #FFFFFF;
+    --bg-dialog: #FFFFFF;
+    --bg-dialog-overlay: rgba(27, 42, 34, 0.4);
+    --bg-badge: #E8F0EC;
+    --bg-active-book: #1B6B45;
+    --bg-subtle: #EEEAE3;
+
+    --text-primary: #1B2A22;
+    --text-secondary: #5A6B60;
+    --text-tertiary: #8A978E;
+    --text-on-accent: #FFFFFF;
+    --text-link: #1B6B45;
+    --text-selected: #0E4A2E;
+
+    --accent: #1B6B45;
+    --accent-hover: #145536;
+    --accent-light: #E8F0EC;
+    --accent-muted: #A3C4B1;
+
+    --border: #D9D3C8;
+    --border-light: #E8E3DA;
+    --border-accent: #A3C4B1;
+
+    --shadow-sm: 0 1px 3px rgba(27, 42, 34, 0.06);
+    --shadow-md: 0 4px 16px rgba(27, 42, 34, 0.1);
+    --shadow-lg: 0 8px 32px rgba(27, 42, 34, 0.14);
+    --shadow-bubble: 0 6px 24px rgba(27, 42, 34, 0.2);
+
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+
+    --font-display: 'Crimson Pro', 'Georgia', serif;
+    --font-body: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Menlo', monospace;
+
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --duration: 200ms;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg-ground: #141E18;
+      --bg-card: #1B2A22;
+      --bg-card-hover: #223329;
+      --bg-bubble: #E8F0EC;
+      --bg-bubble-text: #1B2A22;
+      --bg-dialog: #1B2A22;
+      --bg-dialog-overlay: rgba(0, 0, 0, 0.6);
+      --bg-badge: #223329;
+      --bg-active-book: #2D9B63;
+      --bg-subtle: #1F2E25;
+
+      --text-primary: #E8E3DA;
+      --text-secondary: #A3B0A7;
+      --text-tertiary: #6B7D71;
+      --text-on-accent: #FFFFFF;
+      --text-link: #4DB87A;
+      --text-selected: #7DDBA5;
+
+      --accent: #2D9B63;
+      --accent-hover: #4DB87A;
+      --accent-light: #223329;
+      --accent-muted: #2D5F43;
+
+      --border: #2D3E33;
+      --border-light: #243329;
+      --border-accent: #2D5F43;
+
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+      --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+      --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+      --shadow-bubble: 0 6px 24px rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  [data-theme="dark"] {
+    --bg-ground: #141E18;
+    --bg-card: #1B2A22;
+    --bg-card-hover: #223329;
+    --bg-bubble: #E8F0EC;
+    --bg-bubble-text: #1B2A22;
+    --bg-dialog: #1B2A22;
+    --bg-dialog-overlay: rgba(0, 0, 0, 0.6);
+    --bg-badge: #223329;
+    --bg-active-book: #2D9B63;
+    --bg-subtle: #1F2E25;
+
+    --text-primary: #E8E3DA;
+    --text-secondary: #A3B0A7;
+    --text-tertiary: #6B7D71;
+    --text-on-accent: #FFFFFF;
+    --text-link: #4DB87A;
+    --text-selected: #7DDBA5;
+
+    --accent: #2D9B63;
+    --accent-hover: #4DB87A;
+    --accent-light: #223329;
+    --accent-muted: #2D5F43;
+
+    --border: #2D3E33;
+    --border-light: #243329;
+    --border-accent: #2D5F43;
+
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+    --shadow-bubble: 0 6px 24px rgba(0, 0, 0, 0.5);
+  }
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg-ground);
+    color: var(--text-primary);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Page layout ── */
+  .page {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+
+  .page-header {
+    margin-bottom: 56px;
+  }
+
+  .page-header h1 {
+    font-family: var(--font-display);
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .page-header p {
+    font-size: 15px;
+    color: var(--text-secondary);
+    max-width: 560px;
+  }
+
+  /* ── Section ── */
+  .section {
+    margin-bottom: 64px;
+  }
+
+  .section-label {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-light);
+    padding: 4px 10px;
+    border-radius: 4px;
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .section-desc {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 28px;
+    max-width: 520px;
+  }
+
+  /* ── Demo frame ── */
+  .demo-frame {
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+  }
+
+  .demo-chrome {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-light);
+    background: var(--bg-subtle);
+  }
+
+  .demo-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--border);
+  }
+
+  .demo-chrome-label {
+    margin-left: 8px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-weight: 500;
+  }
+
+  .demo-body {
+    padding: 28px;
+    position: relative;
+    min-height: 200px;
+  }
+
+  /* ── Subtitle simulation ── */
+  .subtitle-row {
+    display: flex;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: var(--radius-md);
+    transition: background var(--duration) var(--ease-out);
+    cursor: pointer;
+    position: relative;
+  }
+
+  .subtitle-row:hover {
+    background: var(--bg-card-hover);
+  }
+
+  .subtitle-row.active {
+    background: var(--accent-light);
+    border: 1px solid var(--border-accent);
+  }
+
+  .subtitle-row:not(.active) {
+    border: 1px solid transparent;
+  }
+
+  .subtitle-index {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    min-width: 20px;
+    padding-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .subtitle-content { flex: 1; }
+
+  .subtitle-en {
+    font-family: var(--font-display);
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--text-primary);
+  }
+
+  .subtitle-en .selected-text {
+    background: rgba(27, 107, 69, 0.18);
+    color: var(--text-selected);
+    border-radius: 3px;
+    padding: 1px 2px;
+  }
+
+  .subtitle-zh {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  .subtitle-time {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+    padding-top: 2px;
+    white-space: nowrap;
+  }
+
+  /* ── Word bubble ── */
+  .word-bubble {
+    position: absolute;
+    z-index: 50;
+    background: var(--bg-bubble);
+    color: var(--bg-bubble-text);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-bubble);
+    padding: 14px 18px;
+    min-width: 200px;
+    max-width: 280px;
+    animation: bubbleIn 0.25s var(--ease-out);
+  }
+
+  @keyframes bubbleIn {
+    from { opacity: 0; transform: translateY(6px) scale(0.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .word-bubble::before {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 32px;
+    width: 12px;
+    height: 12px;
+    background: var(--bg-bubble);
+    transform: rotate(45deg);
+    border-radius: 0 0 3px 0;
+  }
+
+  .word-bubble-text {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    letter-spacing: -0.01em;
+  }
+
+  .word-bubble-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font-body);
+    cursor: pointer;
+    transition: background var(--duration) var(--ease-out);
+    width: 100%;
+    justify-content: center;
+  }
+
+  .word-bubble-btn:hover {
+    background: var(--accent-hover);
+  }
+
+  .word-bubble-btn svg {
+    width: 14px; height: 14px;
+  }
+
+  /* ── Dialog overlay ── */
+  .dialog-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-dialog-overlay);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+    animation: overlayIn 0.2s ease;
+    border-radius: var(--radius-lg);
+  }
+
+  @keyframes overlayIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .dialog {
+    background: var(--bg-dialog);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 380px;
+    max-width: 90%;
+    animation: dialogIn 0.3s var(--ease-out);
+    overflow: hidden;
+  }
+
+  @keyframes dialogIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .dialog-header {
+    padding: 20px 24px 0;
+  }
+
+  .dialog-title {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .dialog-subtitle {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  .dialog-body {
+    padding: 20px 24px;
+  }
+
+  .dialog-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 10px;
+  }
+
+  .book-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .book-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--duration) var(--ease-out);
+  }
+
+  .book-option:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border);
+  }
+
+  .book-option.selected {
+    background: var(--accent-light);
+    border-color: var(--accent);
+  }
+
+  .book-radio {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    position: relative;
+    flex-shrink: 0;
+    transition: border-color var(--duration) var(--ease-out);
+  }
+
+  .book-option.selected .book-radio {
+    border-color: var(--accent);
+  }
+
+  .book-option.selected .book-radio::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .book-option-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    flex: 1;
+  }
+
+  .book-option-count {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .book-create-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm);
+    padding: 9px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font-body);
+    color: var(--text-secondary);
+    cursor: pointer;
+    width: 100%;
+    transition: all var(--duration) var(--ease-out);
+  }
+
+  .book-create-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-light);
+  }
+
+  .book-create-btn svg {
+    width: 14px; height: 14px;
+  }
+
+  .dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 0 24px 20px;
+  }
+
+  .btn {
+    padding: 8px 18px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font-body);
+    cursor: pointer;
+    transition: all var(--duration) var(--ease-out);
+    border: 1px solid transparent;
+  }
+
+  .btn-ghost {
+    background: none;
+    color: var(--text-secondary);
+    border-color: var(--border);
+  }
+
+  .btn-ghost:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border-color: var(--accent);
+  }
+
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+
+  /* ── Vocabulary page mock ── */
+  .vocab-page {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 0;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    min-height: 480px;
+    box-shadow: var(--shadow-md);
+  }
+
+  .vocab-sidebar {
+    background: var(--bg-subtle);
+    border-right: 1px solid var(--border-light);
+    padding: 20px 0;
+  }
+
+  .vocab-sidebar-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 16px;
+    margin-bottom: 12px;
+  }
+
+  .vocab-book-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: all var(--duration) var(--ease-out);
+    border-left: 3px solid transparent;
+  }
+
+  .vocab-book-item:hover {
+    background: var(--bg-card-hover);
+  }
+
+  .vocab-book-item.active {
+    background: var(--bg-card);
+    border-left-color: var(--accent);
+  }
+
+  .vocab-book-item-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .vocab-book-item.active .vocab-book-item-name {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .vocab-book-item-count {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    background: var(--bg-badge);
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vocab-sidebar-add {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color var(--duration) var(--ease-out);
+  }
+
+  .vocab-sidebar-add:hover {
+    color: var(--accent);
+  }
+
+  .vocab-sidebar-add svg {
+    width: 14px; height: 14px;
+  }
+
+  .vocab-main {
+    background: var(--bg-card);
+    padding: 24px;
+  }
+
+  .vocab-main-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .vocab-main-title {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .vocab-main-count {
+    font-size: 13px;
+    color: var(--text-tertiary);
+  }
+
+  .vocab-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    margin-bottom: 16px;
+    transition: border-color var(--duration) var(--ease-out);
+  }
+
+  .vocab-search:focus-within {
+    border-color: var(--accent);
+  }
+
+  .vocab-search svg {
+    width: 16px; height: 16px;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .vocab-search-input {
+    border: none;
+    background: none;
+    font-size: 13px;
+    font-family: var(--font-body);
+    color: var(--text-primary);
+    outline: none;
+    width: 100%;
+  }
+
+  .vocab-search-input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .vocab-entry-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .vocab-entry {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: start;
+    padding: 14px 12px;
+    border-radius: var(--radius-sm);
+    transition: background var(--duration) var(--ease-out);
+  }
+
+  .vocab-entry:hover {
+    background: var(--bg-card-hover);
+  }
+
+  .vocab-entry-text {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .vocab-entry-context {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .vocab-entry-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .vocab-entry-source {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    background: var(--bg-badge);
+    padding: 2px 7px;
+    border-radius: 10px;
+  }
+
+  .vocab-entry-date {
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+
+  .vocab-entry-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity var(--duration) var(--ease-out);
+  }
+
+  .vocab-entry:hover .vocab-entry-actions {
+    opacity: 1;
+  }
+
+  .vocab-entry-action-btn {
+    width: 28px; height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: none;
+    color: var(--text-tertiary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--duration) var(--ease-out);
+  }
+
+  .vocab-entry-action-btn:hover {
+    background: var(--bg-subtle);
+    color: var(--text-primary);
+  }
+
+  .vocab-entry-action-btn.danger:hover {
+    background: #FEE2E2;
+    color: #B91C1C;
+  }
+
+  [data-theme="dark"] .vocab-entry-action-btn.danger:hover,
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .vocab-entry-action-btn.danger:hover {
+      background: #3D1C1C;
+      color: #FCA5A5;
+    }
+  }
+
+  .vocab-entry-action-btn svg {
+    width: 14px; height: 14px;
+  }
+
+  /* ── Bubble success state ── */
+  .word-bubble-success {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--bg-bubble-text);
+  }
+
+  .word-bubble-success svg {
+    width: 16px; height: 16px;
+    color: var(--accent);
+  }
+
+  [data-theme="dark"] .word-bubble-success svg {
+    color: var(--accent-hover);
+  }
+
+  /* ── State tag ── */
+  .state-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+
+  .state-tag.new {
+    background: #DBEAFE;
+    color: #1E40AF;
+  }
+
+  .state-tag.added {
+    background: #D1FAE5;
+    color: #065F46;
+  }
+
+  [data-theme="dark"] .state-tag.new,
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .state-tag.new {
+      background: #1E3A5F;
+      color: #93C5FD;
+    }
+    :root:not([data-theme="light"]) .state-tag.added {
+      background: #1A3A2A;
+      color: #6EE7B7;
+    }
+  }
+
+  /* ── Inline annotation ── */
+  .annotation {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: var(--bg-subtle);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--accent-muted);
+  }
+
+  .annotation strong {
+    color: var(--text-secondary);
+  }
+
+  /* ── Flow diagram ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    padding: 24px 0;
+  }
+
+  .flow-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+
+  .flow-step svg {
+    width: 16px; height: 16px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .flow-arrow {
+    color: var(--text-tertiary);
+    padding: 0 6px;
+    font-size: 16px;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    .vocab-page {
+      grid-template-columns: 1fr;
+    }
+    .vocab-sidebar {
+      border-right: none;
+      border-bottom: 1px solid var(--border-light);
+    }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="page-header">
+    <h1>生词本功能 · UI 设计</h1>
+    <p>选词添加到生词本的完整交互方案：浮动气泡、选择弹窗、管理页面</p>
+  </div>
+
+  <!-- ════════════════════════════════════════ -->
+  <!-- Section 1: Interaction Flow -->
+  <!-- ════════════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label">交互流程</span>
+    <h2 class="section-title">用户操作路径</h2>
+    <p class="section-desc">从字幕区域选词到完成添加，共四步。支持单词、词组、短句。</p>
+
+    <div class="flow">
+      <div class="flow-step">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 11V7a5 5 0 0 1 10 0v4"/><rect x="3" y="11" width="18" height="11" rx="2"/></svg>
+        拖选文本
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>
+        气泡浮现
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        选择生词本
+      </div>
+      <span class="flow-arrow">→</span>
+      <div class="flow-step">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+        添加完成
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════ -->
+  <!-- Section 2: Word Bubble -->
+  <!-- ════════════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label">场景 A</span>
+    <h2 class="section-title">选词浮动气泡</h2>
+    <p class="section-desc">用户在字幕区域选中英文文本后，在选中位置附近浮现操作气泡。支持单词、词组、短句。</p>
+
+    <div class="demo-frame">
+      <div class="demo-chrome">
+        <span class="demo-dot"></span>
+        <span class="demo-dot"></span>
+        <span class="demo-dot"></span>
+        <span class="demo-chrome-label">播放器 · 字幕区域</span>
+      </div>
+      <div class="demo-body" style="padding: 20px 24px;">
+        <!-- Non-active sentence -->
+        <div class="subtitle-row">
+          <span class="subtitle-index">14</span>
+          <div class="subtitle-content">
+            <p class="subtitle-en">The quick brown fox jumps over the lazy dog.</p>
+            <p class="subtitle-zh">敏捷的棕色狐狸跳过了懒狗。</p>
+          </div>
+          <span class="subtitle-time">0:42</span>
+        </div>
+
+        <!-- Active sentence with selection -->
+        <div class="subtitle-row active" style="position: relative;">
+          <span class="subtitle-index">15</span>
+          <div class="subtitle-content">
+            <p class="subtitle-en">She decided to <span class="selected-text">look up</span> the unfamiliar word in the dictionary.</p>
+            <p class="subtitle-zh">她决定在词典中查阅那个不熟悉的单词。</p>
+          </div>
+          <span class="subtitle-time">0:45</span>
+
+          <!-- Bubble: Add state -->
+          <div class="word-bubble" style="top: -84px; left: 200px;">
+            <div class="word-bubble-text">look up</div>
+            <button class="word-bubble-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              添加到生词本
+            </button>
+          </div>
+        </div>
+
+        <div class="annotation">
+          <strong>气泡定位逻辑：</strong>跟随选中文本位置，上方浮动。超出视口时自动翻转到下方。点击外部 / 滚动 / Escape 关闭。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════ -->
+  <!-- Section 3: Bubble States -->
+  <!-- ════════════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label">气泡状态</span>
+    <h2 class="section-title">三种状态变化</h2>
+    <p class="section-desc">气泡根据词条收录情况呈现不同状态，添加成功后短暂展示确认信息。</p>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px;">
+      <!-- State 1: Add -->
+      <div class="demo-frame">
+        <div class="demo-chrome">
+          <span class="demo-dot"></span>
+          <span class="demo-chrome-label">未收录 <span class="state-tag new">默认</span></span>
+        </div>
+        <div class="demo-body" style="display: flex; justify-content: center; padding: 32px;">
+          <div class="word-bubble" style="position: relative; top: auto; left: auto;">
+            <div class="word-bubble-text">breakthrough</div>
+            <button class="word-bubble-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              添加到生词本
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- State 2: Already added -->
+      <div class="demo-frame">
+        <div class="demo-chrome">
+          <span class="demo-dot"></span>
+          <span class="demo-chrome-label">已收录 <span class="state-tag added">已添加</span></span>
+        </div>
+        <div class="demo-body" style="display: flex; justify-content: center; padding: 32px;">
+          <div class="word-bubble" style="position: relative; top: auto; left: auto;">
+            <div class="word-bubble-text">look up</div>
+            <div class="word-bubble-success">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+              已添加到「默认生词本」
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- State 3: Phrase -->
+      <div class="demo-frame">
+        <div class="demo-chrome">
+          <span class="demo-dot"></span>
+          <span class="demo-chrome-label">词组/短句</span>
+        </div>
+        <div class="demo-body" style="display: flex; justify-content: center; padding: 32px;">
+          <div class="word-bubble" style="position: relative; top: auto; left: auto;">
+            <div class="word-bubble-text">take it for granted</div>
+            <button class="word-bubble-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+              添加到生词本
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════ -->
+  <!-- Section 4: Book Picker Dialog -->
+  <!-- ════════════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label">场景 B</span>
+    <h2 class="section-title">生词本选择弹窗</h2>
+    <p class="section-desc">点击「添加到生词本」后弹出，选择目标生词本或创建新本。使用 shadcn Dialog 组件。</p>
+
+    <div class="demo-frame">
+      <div class="demo-chrome">
+        <span class="demo-dot"></span>
+        <span class="demo-dot"></span>
+        <span class="demo-dot"></span>
+        <span class="demo-chrome-label">弹窗 · 选择生词本</span>
+      </div>
+      <div class="demo-body" style="min-height: 380px;">
+        <!-- Faded subtitle background -->
+        <div style="opacity: 0.3; pointer-events: none;">
+          <div class="subtitle-row">
+            <span class="subtitle-index">15</span>
+            <div class="subtitle-content">
+              <p class="subtitle-en">She decided to <span class="selected-text">look up</span> the unfamiliar word in the dictionary.</p>
+            </div>
+            <span class="subtitle-time">0:45</span>
+          </div>
+        </div>
+
+        <!-- Dialog overlay -->
+        <div class="dialog-overlay">
+          <div class="dialog">
+            <div class="dialog-header">
+              <div class="dialog-title">添加到生词本</div>
+              <div class="dialog-subtitle">选择要添加到的生词本</div>
+            </div>
+            <div class="dialog-body">
+              <div class="dialog-label">选择生词本</div>
+              <div class="book-list">
+                <div class="book-option selected">
+                  <div class="book-radio"></div>
+                  <span class="book-option-name">默认生词本</span>
+                  <span class="book-option-count">23 词</span>
+                </div>
+                <div class="book-option">
+                  <div class="book-radio"></div>
+                  <span class="book-option-name">四级高频词汇</span>
+                  <span class="book-option-count">156 词</span>
+                </div>
+                <div class="book-option">
+                  <div class="book-radio"></div>
+                  <span class="book-option-name">考研阅读</span>
+                  <span class="book-option-count">48 词</span>
+                </div>
+              </div>
+              <button class="book-create-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                新建生词本
+              </button>
+            </div>
+            <div class="dialog-footer">
+              <button class="btn btn-ghost">取消</button>
+              <button class="btn btn-primary">确定添加</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════ -->
+  <!-- Section 5: Create Book Inline -->
+  <!-- ════════════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label">场景 C</span>
+    <h2 class="section-title">新建生词本（内联）</h2>
+    <p class="section-desc">点击「新建生词本」后，输入框内联展开，无需跳转新页面。</p>
+
+    <div class="demo-frame">
+      <div class="demo-chrome">
+        <span class="demo-dot"></span>
+        <span class="demo-chrome-label">弹窗 · 新建模式</span>
+      </div>
+      <div class="demo-body" style="display: flex; justify-content: center; min-height: 340px;">
+        <div class="dialog" style="align-self: center;">
+          <div class="dialog-header">
+            <div class="dialog-title">添加到生词本</div>
+            <div class="dialog-subtitle">选择要添加到的生词本</div>
+          </div>
+          <div class="dialog-body">
+            <div class="dialog-label">选择生词本</div>
+            <div class="book-list">
+              <div class="book-option">
+                <div class="book-radio"></div>
+                <span class="book-option-name">默认生词本</span>
+                <span class="book-option-count">23 词</span>
+              </div>
+              <div class="book-option">
+                <div class="book-radio"></div>
+                <span class="book-option-name">四级高频词汇</span>
+                <span class="book-option-count">156 词</span>
+              </div>
+            </div>
+            <!-- Inline create form -->
+            <div style="border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 12px; background: var(--accent-light); margin-bottom: 14px;">
+              <div style="font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 8px;">新建生词本</div>
+              <input type="text" placeholder="输入生词本名称…" value="日常口语" style="
+                width: 100%;
+                padding: 8px 10px;
+                border: 1px solid var(--border-accent);
+                border-radius: var(--radius-sm);
+                background: var(--bg-card);
+                font-size: 14px;
+                font-family: var(--font-body);
+                color: var(--text-primary);
+                outline: none;
+              ">
+            </div>
+          </div>
+          <div class="dialog-footer">
+            <button class="btn btn-ghost">取消</button>
+            <button class="btn btn-primary">确定添加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════ -->
+  <!-- Section 6: Vocabulary Page -->
+  <!-- ════════════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label">页面</span>
+    <h2 class="section-title">生词本管理页面</h2>
+    <p class="section-desc">左侧切换生词本，右侧展示词条列表。路由 <code style="font-family: var(--font-mono); font-size: 12px; background: var(--bg-subtle); padding: 2px 6px; border-radius: 4px;">/vocabulary</code></p>
+
+    <div class="demo-frame">
+      <div class="demo-chrome">
+        <span class="demo-dot"></span>
+        <span class="demo-dot"></span>
+        <span class="demo-dot"></span>
+        <span class="demo-chrome-label">生词本</span>
+      </div>
+      <div style="padding: 0;">
+        <div class="vocab-page">
+          <!-- Sidebar -->
+          <div class="vocab-sidebar">
+            <div class="vocab-sidebar-title">生词本</div>
+            <div class="vocab-book-item active">
+              <span class="vocab-book-item-name">默认生词本</span>
+              <span class="vocab-book-item-count">23</span>
+            </div>
+            <div class="vocab-book-item">
+              <span class="vocab-book-item-name">四级高频词汇</span>
+              <span class="vocab-book-item-count">156</span>
+            </div>
+            <div class="vocab-book-item">
+              <span class="vocab-book-item-name">考研阅读</span>
+              <span class="vocab-book-item-count">48</span>
+            </div>
+            <div class="vocab-book-item">
+              <span class="vocab-book-item-name">日常口语</span>
+              <span class="vocab-book-item-count">12</span>
+            </div>
+            <div class="vocab-sidebar-add">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              新建生词本
+            </div>
+          </div>
+
+          <!-- Main content -->
+          <div class="vocab-main">
+            <div class="vocab-main-header">
+              <div>
+                <span class="vocab-main-title">默认生词本</span>
+              </div>
+              <span class="vocab-main-count">23 个词条</span>
+            </div>
+
+            <div class="vocab-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input class="vocab-search-input" type="text" placeholder="搜索单词或词组…">
+            </div>
+
+            <div class="vocab-entry-list">
+              <!-- Entry 1 -->
+              <div class="vocab-entry">
+                <div>
+                  <div class="vocab-entry-text">breakthrough</div>
+                  <div class="vocab-entry-context">The scientist made a significant breakthrough in cancer research.</div>
+                  <div class="vocab-entry-meta">
+                    <span class="vocab-entry-source">TED Talks · 第8集</span>
+                    <span class="vocab-entry-date">今天 14:32</span>
+                  </div>
+                </div>
+                <div class="vocab-entry-actions">
+                  <button class="vocab-entry-action-btn" title="编辑">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button class="vocab-entry-action-btn danger" title="删除">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Entry 2 -->
+              <div class="vocab-entry">
+                <div>
+                  <div class="vocab-entry-text">look up</div>
+                  <div class="vocab-entry-context">She decided to look up the unfamiliar word in the dictionary.</div>
+                  <div class="vocab-entry-meta">
+                    <span class="vocab-entry-source">VOA慢速 · 第15集</span>
+                    <span class="vocab-entry-date">今天 14:28</span>
+                  </div>
+                </div>
+                <div class="vocab-entry-actions">
+                  <button class="vocab-entry-action-btn" title="编辑">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button class="vocab-entry-action-btn danger" title="删除">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Entry 3 -->
+              <div class="vocab-entry">
+                <div>
+                  <div class="vocab-entry-text">take it for granted</div>
+                  <div class="vocab-entry-context">We often take it for granted that our parents will always be there for us.</div>
+                  <div class="vocab-entry-meta">
+                    <span class="vocab-entry-source">BBC纪录片 · 第3集</span>
+                    <span class="vocab-entry-date">昨天 20:15</span>
+                  </div>
+                </div>
+                <div class="vocab-entry-actions">
+                  <button class="vocab-entry-action-btn" title="编辑">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button class="vocab-entry-action-btn danger" title="删除">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Entry 4 -->
+              <div class="vocab-entry">
+                <div>
+                  <div class="vocab-entry-text">nevertheless</div>
+                  <div class="vocab-entry-context">The task was difficult; nevertheless, they completed it on time.</div>
+                  <div class="vocab-entry-meta">
+                    <span class="vocab-entry-source">TED Talks · 第12集</span>
+                    <span class="vocab-entry-date">昨天 16:40</span>
+                  </div>
+                </div>
+                <div class="vocab-entry-actions">
+                  <button class="vocab-entry-action-btn" title="编辑">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button class="vocab-entry-action-btn danger" title="删除">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════ -->
+  <!-- Section 7: Empty State -->
+  <!-- ════════════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label">空状态</span>
+    <h2 class="section-title">空白引导</h2>
+    <p class="section-desc">新建生词本没有词条时，展示引导提示。</p>
+
+    <div class="demo-frame">
+      <div class="demo-chrome">
+        <span class="demo-dot"></span>
+        <span class="demo-chrome-label">空状态</span>
+      </div>
+      <div style="padding: 0;">
+        <div class="vocab-page">
+          <div class="vocab-sidebar">
+            <div class="vocab-sidebar-title">生词本</div>
+            <div class="vocab-book-item">
+              <span class="vocab-book-item-name">默认生词本</span>
+              <span class="vocab-book-item-count">23</span>
+            </div>
+            <div class="vocab-book-item active">
+              <span class="vocab-book-item-name">日常口语</span>
+              <span class="vocab-book-item-count">0</span>
+            </div>
+            <div class="vocab-sidebar-add">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              新建生词本
+            </div>
+          </div>
+          <div class="vocab-main" style="display: flex; align-items: center; justify-content: center;">
+            <div style="text-align: center; padding: 40px;">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" style="margin-bottom: 16px;">
+                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+              </svg>
+              <div style="font-size: 15px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px;">还没有收录任何单词</div>
+              <div style="font-size: 13px; color: var(--text-tertiary); max-width: 260px; margin: 0 auto;">在播放器的字幕区域选中英文文本，即可添加到这个生词本</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════ -->
+  <!-- Section 8: Mobile -->
+  <!-- ════════════════════════════════════════ -->
+  <div class="section">
+    <span class="section-label">移动端</span>
+    <h2 class="section-title">响应式适配</h2>
+    <p class="section-desc">生词本页面在移动端切换为上下布局，选词通过长按触发原生文本选择。</p>
+
+    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+      <div class="demo-frame" style="max-width: 360px; flex: 1; min-width: 280px;">
+        <div class="demo-chrome">
+          <span class="demo-dot"></span>
+          <span class="demo-chrome-label">移动端 · 生词本页面</span>
+        </div>
+        <div class="demo-body" style="padding: 0;">
+          <div style="background: var(--bg-subtle); padding: 12px 16px; border-bottom: 1px solid var(--border-light);">
+            <div style="font-size: 12px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px;">生词本</div>
+            <div style="display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+              <div style="padding: 6px 12px; background: var(--accent); color: var(--text-on-accent); border-radius: 20px; font-size: 12px; font-weight: 600; white-space: nowrap;">默认 (23)</div>
+              <div style="padding: 6px 12px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 20px; font-size: 12px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">四级 (156)</div>
+              <div style="padding: 6px 12px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 20px; font-size: 12px; font-weight: 500; color: var(--text-secondary); white-space: nowrap;">考研 (48)</div>
+            </div>
+          </div>
+          <div style="padding: 12px 16px;">
+            <div class="vocab-entry" style="padding: 10px 0; border-bottom: 1px solid var(--border-light);">
+              <div>
+                <div class="vocab-entry-text" style="font-size: 16px;">breakthrough</div>
+                <div class="vocab-entry-context" style="font-size: 12px;">The scientist made a significant breakthrough...</div>
+              </div>
+            </div>
+            <div class="vocab-entry" style="padding: 10px 0; border-bottom: 1px solid var(--border-light);">
+              <div>
+                <div class="vocab-entry-text" style="font-size: 16px;">look up</div>
+                <div class="vocab-entry-context" style="font-size: 12px;">She decided to look up the unfamiliar word...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="demo-frame" style="max-width: 360px; flex: 1; min-width: 280px;">
+        <div class="demo-chrome">
+          <span class="demo-dot"></span>
+          <span class="demo-chrome-label">移动端 · 选词气泡</span>
+        </div>
+        <div class="demo-body" style="padding: 20px;">
+          <div class="subtitle-row active" style="position: relative;">
+            <div class="subtitle-content" style="width: 100%;">
+              <p class="subtitle-en" style="font-size: 15px;">She decided to <span class="selected-text">look up</span> the unfamiliar word.</p>
+            </div>
+            <div class="word-bubble" style="top: -80px; left: 40px; right: 40px; min-width: auto;">
+              <div class="word-bubble-text" style="font-size: 16px;">look up</div>
+              <button class="word-bubble-btn" style="font-size: 12px; padding: 8px 12px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                添加到生词本
+              </button>
+            </div>
+          </div>
+          <div class="annotation" style="margin-top: 16px;">
+            <strong>移动端：</strong>长按触发系统文本选择，气泡自动适配窄屏宽度。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

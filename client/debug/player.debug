@@ -121,3 +121,7 @@
 
 28.
 @client/components/pages/player.tsx 如果我想在这块区域 /html/body/div[2]/main/div/div[2]/div/div[2]/div/div/p[2] 增加一个单词选中后浮现一个“添加到生词本”的功能，该怎么实现？
+
+
+29.
+@client/components/pages/player.tsx 生词本新增统计数据“出现频率”，首次导入材料后，要判断生词本中的词是否在材料中出现及出现次数，累加到“出现频率”中，生词本增加“按添加时间排序”和“按出现频率排序”

@@ -139,12 +139,13 @@ function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndex
           )}
         </div>
       </div>
-      <div ref={containerRef} onWheel={markManual} onTouchMove={markManual} className="flex-1 overflow-auto p-2">
+      <div ref={containerRef} onWheel={markManual} onTouchMove={markManual} className="relative flex-1 overflow-auto p-2">
         {items.length ? items.map((s, i) => (
           <div
             key={s.index}
             role="button"
             tabIndex={0}
+            data-sentence-index={s.index}
             ref={(el) => { if (el) itemRefs.current.set(i, el); else itemRefs.current.delete(i) }}
             onClick={() => onSelect(i)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(i) } }}

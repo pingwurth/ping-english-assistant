@@ -18,4 +18,6 @@ export const RECORD_KEYS = {
   progress: (materialId: string) => `progress:${materialId}`,
   favorite: (materialId: string, sentenceIndex: number) => `fav:${materialId}:${sentenceIndex}`,
   training: (recordId: string) => `train:${recordId}`,
+  vocabBook: (bookId: string) => `vocabbook:${bookId}`,
+  vocabEntry: (entryId: string) => `vocabentry:${entryId}`,
 } as const
