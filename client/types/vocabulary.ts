@@ -32,6 +32,8 @@ export interface VocabEntry {
   frequency: number
   /** 可选 LLM 释义 */
   definition?: string
+  /** 用户笔记 */
+  note?: string
 }
 
 /** 默认生词本 ID */

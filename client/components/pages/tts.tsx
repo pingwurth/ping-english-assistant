@@ -375,7 +375,6 @@ function TTS() {
       <div className="mx-auto max-w-3xl px-4 py-10">
         <PageIntro title="文字转语音" eyebrow="QWEN-AUDIO-TTS / KOKORO">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">英文学习工具</Badge>
             {engine === 'kokoro'
               ? <Badge variant="outline">kokoro-82m · 本地</Badge>
               : selectedConfig && <Badge variant="outline">{ttsModelName}</Badge>}

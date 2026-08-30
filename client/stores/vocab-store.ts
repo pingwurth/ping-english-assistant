@@ -122,6 +122,16 @@ export async function removeEntry(entryId: string): Promise<void> {
   await refresh()
 }
 
+/** 更新词条 */
+export async function updateEntry(entryId: string, updates: Partial<Pick<VocabEntry, 'note'>>): Promise<void> {
+  await initVocab()
+  const entry = await recordsStore.get<VocabEntry>(RECORD_KEYS.vocabEntry(entryId))
+  if (!entry) return
+  const updated: VocabEntry = { ...entry, ...updates }
+  await recordsStore.put(RECORD_KEYS.vocabEntry(entryId), updated)
+  await refresh()
+}
+
 /** 获取指定生词本下的所有词条 */
 export function getEntriesByBook(bookId: string): VocabEntry[] {
   return vocabStore.get().entries.filter((e) => e.bookId === bookId)

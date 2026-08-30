@@ -50,8 +50,8 @@ function DialogHeader({ children }: { children: React.ReactNode }) {
   return <div className="border-b p-6 pb-4">{children}</div>
 }
 
-function DialogTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-lg font-semibold">{children}</h2>
+function DialogTitle({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <h2 className={`text-lg font-semibold ${className ?? ''}`}>{children}</h2>
 }
 
 function DialogDescription({ children }: { children: React.ReactNode }) {

@@ -11,6 +11,7 @@ import { Plus } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { useStore } from '@/stores/store'
 import { vocabStore, createBook, addEntry } from '@/stores/vocab-store'
 
@@ -34,6 +35,7 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
   const [selectedBookId, setSelectedBookId] = useState<string>(books[0]?.id ?? 'default')
   const [showCreate, setShowCreate] = useState(false)
   const [newBookName, setNewBookName] = useState('')
+  const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const handleConfirm = async () => {
@@ -55,6 +57,7 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
         materialId,
         sentenceIndex,
         bookId: targetBookId,
+        note: note.trim() || undefined,
       })
 
       onAdded(targetBookName)
@@ -79,6 +82,12 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
         </DialogHeader>
 
         <div className="space-y-3">
+          <div className="rounded-lg bg-muted/50 p-3">
+            <div className="text-xs font-medium text-muted-foreground">添加生词</div>
+            <div className="mt-1 font-serif text-base font-semibold">{selectedText}</div>
+            <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{sentenceTextEn}</div>
+          </div>
+
           <div className="text-xs font-medium text-muted-foreground">选择生词本</div>
 
           <div className="space-y-1.5">
@@ -111,6 +120,7 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
                 onChange={(e) => setNewBookName(e.target.value)}
                 autoFocus
                 onKeyDown={(e) => { if (e.key === 'Enter' && newBookName.trim()) handleConfirm() }}
+                onBlur={() => { if (!newBookName.trim()) setShowCreate(false) }}
               />
             </div>
           ) : (
@@ -122,6 +132,17 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
               新建生词本
             </button>
           )}
+
+          <div>
+            <div className="mb-1 text-xs font-medium text-muted-foreground">笔记（可选）</div>
+            <Textarea
+              placeholder="添加你的笔记…"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              className="text-sm"
+            />
+          </div>
         </div>
 
         <div className="mt-4 flex justify-end gap-2">

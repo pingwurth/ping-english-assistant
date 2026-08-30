@@ -5,12 +5,14 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { ArrowLeft, BookOpen, Plus, Search, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, BookOpen, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { useStore } from '@/stores/store'
-import { vocabStore, initVocab, createBook, removeBook, removeEntry } from '@/stores/vocab-store'
+import { vocabStore, initVocab, createBook, removeBook, removeEntry, updateEntry, addEntry } from '@/stores/vocab-store'
 import { DEFAULT_BOOK_ID } from '@/types/vocabulary'
 import type { VocabBook, VocabEntry } from '@/types/vocabulary'
 
@@ -24,11 +26,12 @@ function formatDate(ts: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-function EntryItem({ entry, onDelete }: { entry: VocabEntry; onDelete: () => void }) {
+function EntryItem({ entry, onDelete, onClick }: { entry: VocabEntry; onDelete: () => void; onClick: () => void }) {
   const freq = entry.frequency ?? 0
   const [confirming, setConfirming] = useState(false)
 
-  const handleDelete = () => {
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation()
     if (confirming) {
       onDelete()
       setConfirming(false)
@@ -39,10 +42,13 @@ function EntryItem({ entry, onDelete }: { entry: VocabEntry; onDelete: () => voi
   }
 
   return (
-    <div className="group flex items-start gap-3 rounded-lg p-3 transition-colors hover:bg-muted/50">
+    <div className="group flex items-start gap-3 rounded-lg p-3 transition-colors hover:bg-muted/50 cursor-pointer" onClick={onClick}>
       <div className="min-w-0 flex-1">
         <div className="font-serif text-base font-semibold">{entry.text}</div>
         <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{entry.context}</div>
+        {entry.note && (
+          <div className="mt-1 line-clamp-1 text-xs text-primary/80">📝 {entry.note}</div>
+        )}
         <div className="mt-2 flex items-center gap-2">
           {freq > 0 && (
             <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
@@ -68,12 +74,18 @@ function EntryItem({ entry, onDelete }: { entry: VocabEntry; onDelete: () => voi
 }
 
 export function Vocabulary() {
+  const navigate = useNavigate()
   const { books, entries, ready } = useStore(vocabStore)
   const [selectedBookId, setSelectedBookId] = useState<string>(DEFAULT_BOOK_ID)
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState<'addedAt' | 'frequency'>('addedAt')
   const [showCreateInput, setShowCreateInput] = useState(false)
   const [newBookName, setNewBookName] = useState('')
+  const [selectedEntry, setSelectedEntry] = useState<VocabEntry | null>(null)
+  const [editingNote, setEditingNote] = useState(false)
+  const [noteValue, setNoteValue] = useState('')
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const [addForm, setAddForm] = useState({ text: '', context: '', note: '' })
 
   useEffect(() => { initVocab() }, [])
 
@@ -120,15 +132,29 @@ export function Vocabulary() {
     await removeEntry(entryId)
   }
 
+  const handleAddWord = async () => {
+    if (!addForm.text.trim()) return
+    await addEntry({
+      text: addForm.text.trim(),
+      context: addForm.context.trim() || addForm.text.trim(),
+      materialId: '',
+      sentenceIndex: -1,
+      bookId: selectedBookId,
+      note: addForm.note.trim() || undefined,
+    })
+    setAddForm({ text: '', context: '', note: '' })
+    setShowAddDialog(false)
+  }
+
   return (
     <div className="flex min-h-dvh flex-col bg-background">
       {/* Header */}
       <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur-sm">
         <div className="mx-auto flex h-14 max-w-5xl items-center gap-4 px-4">
-          <Link to="/" className="flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground">
+          <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground">
             <ArrowLeft className="size-4" />
             <span className="text-sm">返回</span>
-          </Link>
+          </button>
           <div className="h-4 w-px bg-border" />
           <h1 className="font-serif text-lg font-semibold">生词本</h1>
         </div>
@@ -205,6 +231,10 @@ export function Vocabulary() {
               <h2 className="font-serif text-xl font-semibold">{selectedBook?.name ?? '生词本'}</h2>
               <span className="text-sm text-muted-foreground">{bookEntries.length} 个词条</span>
             </div>
+            <Button size="sm" onClick={() => setShowAddDialog(true)}>
+              <Plus className="mr-1 size-4" />
+              添加生词
+            </Button>
           </div>
 
           {/* Search + Sort */}
@@ -248,6 +278,7 @@ export function Vocabulary() {
                     key={entry.id}
                     entry={entry}
                     onDelete={() => handleRemoveEntry(entry.id)}
+                    onClick={() => setSelectedEntry(entry)}
                   />
                 ))}
               </div>
@@ -265,6 +296,124 @@ export function Vocabulary() {
           </div>
         </section>
       </main>
+
+      {/* Entry detail dialog */}
+      <Dialog open={!!selectedEntry} onOpenChange={(open) => { if (!open) { setSelectedEntry(null); setEditingNote(false) } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">{selectedEntry?.text}</DialogTitle>
+          </DialogHeader>
+          {selectedEntry && (
+            <div className="space-y-4">
+              <div>
+                <div className="text-xs font-medium text-muted-foreground">所在句子</div>
+                <div className="mt-1 text-sm">{selectedEntry.context}</div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium text-muted-foreground">笔记</div>
+                  {!editingNote && (
+                    <button
+                      className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      onClick={() => { setEditingNote(true); setNoteValue(selectedEntry.note ?? '') }}
+                    >
+                      <Pencil className="size-3" />
+                      {selectedEntry.note ? '编辑' : '添加'}
+                    </button>
+                  )}
+                </div>
+                {editingNote ? (
+                  <div className="mt-1 space-y-2">
+                    <Textarea
+                      value={noteValue}
+                      onChange={(e) => setNoteValue(e.target.value)}
+                      rows={3}
+                      className="text-sm"
+                      autoFocus
+                    />
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditingNote(false)}
+                      >
+                        取消
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          await updateEntry(selectedEntry.id, { note: noteValue.trim() || undefined })
+                          setSelectedEntry({ ...selectedEntry, note: noteValue.trim() || undefined })
+                          setEditingNote(false)
+                        }}
+                      >
+                        保存
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  selectedEntry.note && (
+                    <div className="mt-1 whitespace-pre-wrap text-sm">{selectedEntry.note}</div>
+                  )
+                )}
+              </div>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                {selectedEntry.frequency > 0 && (
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">
+                    出现 {selectedEntry.frequency} 次
+                  </span>
+                )}
+                <span>添加于 {formatDate(selectedEntry.addedAt)}</span>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add word dialog */}
+      <Dialog open={showAddDialog} onOpenChange={(open) => { if (!open) setShowAddDialog(false) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>添加生词</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">单词或词组 *</div>
+              <Input
+                placeholder="输入单词或词组…"
+                value={addForm.text}
+                onChange={(e) => setAddForm({ ...addForm, text: e.target.value })}
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter' && addForm.text.trim()) handleAddWord() }}
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">所在句子（可选）</div>
+              <Textarea
+                placeholder="输入例句或上下文…"
+                value={addForm.context}
+                onChange={(e) => setAddForm({ ...addForm, context: e.target.value })}
+                rows={2}
+                className="text-sm"
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">笔记（可选）</div>
+              <Textarea
+                placeholder="添加你的笔记…"
+                value={addForm.note}
+                onChange={(e) => setAddForm({ ...addForm, note: e.target.value })}
+                rows={2}
+                className="text-sm"
+              />
+            </div>
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowAddDialog(false)}>取消</Button>
+            <Button onClick={handleAddWord} disabled={!addForm.text.trim()}>添加</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
