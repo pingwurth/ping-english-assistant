@@ -6,13 +6,13 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, BookOpen, Pencil, Plus, Search, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowLeft, BookOpen, Eraser, Pencil, Plus, Search, Sparkles, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useStore } from '@/stores/store'
-import { vocabStore, initVocab, createBook, removeBook, removeEntry, updateEntry, addEntry } from '@/stores/vocab-store'
+import { vocabStore, initVocab, createBook, removeBook, removeEntry, updateEntry, addEntry, clearEntriesByBook } from '@/stores/vocab-store'
 import { DEFAULT_BOOK_ID } from '@/types/vocabulary'
 import type { VocabBook, VocabEntry } from '@/types/vocabulary'
 
@@ -86,6 +86,7 @@ export function Vocabulary() {
   const [noteValue, setNoteValue] = useState('')
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [addForm, setAddForm] = useState({ text: '', context: '', note: '' })
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
 
   useEffect(() => { initVocab() }, [])
 
@@ -231,10 +232,23 @@ export function Vocabulary() {
               <h2 className="font-serif text-xl font-semibold">{selectedBook?.name ?? '生词本'}</h2>
               <span className="text-sm text-muted-foreground">{bookEntries.length} 个词条</span>
             </div>
-            <Button size="sm" onClick={() => setShowAddDialog(true)}>
-              <Plus className="mr-1 size-4" />
-              添加生词
-            </Button>
+            <div className="flex items-center gap-2">
+              {bookEntries.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowClearConfirm(true)}
+                  className="text-destructive hover:bg-destructive/10"
+                >
+                  <Eraser className="mr-1 size-4" />
+                  清空
+                </Button>
+              )}
+              <Button size="sm" onClick={() => setShowAddDialog(true)}>
+                <Plus className="mr-1 size-4" />
+                添加生词
+              </Button>
+            </div>
           </div>
 
           {/* Search + Sort */}
@@ -423,6 +437,35 @@ export function Vocabulary() {
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setShowAddDialog(false)}>取消</Button>
             <Button onClick={handleAddWord} disabled={!addForm.text.trim()}>添加</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Clear entries confirm dialog */}
+      <Dialog open={showClearConfirm} onOpenChange={(open) => { if (!open) setShowClearConfirm(false) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>清空生词本</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="text-sm text-muted-foreground">
+              确定要清空「{selectedBook?.name ?? '生词本'}」中的所有 <span className="font-semibold text-foreground">{bookEntries.length}</span> 个词条吗？
+            </div>
+            <div className="mt-2 text-sm text-destructive">
+              此操作不可撤销。
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowClearConfirm(false)}>取消</Button>
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                await clearEntriesByBook(selectedBookId)
+                setShowClearConfirm(false)
+              }}
+            >
+              确认清空
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

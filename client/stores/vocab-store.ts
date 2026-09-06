@@ -137,6 +137,16 @@ export function getEntriesByBook(bookId: string): VocabEntry[] {
   return vocabStore.get().entries.filter((e) => e.bookId === bookId)
 }
 
+/** 清空指定生词本下的所有词条 */
+export async function clearEntriesByBook(bookId: string): Promise<void> {
+  await initVocab()
+  const { entries } = vocabStore.get()
+  const toDelete = entries.filter((e) => e.bookId === bookId)
+  if (toDelete.length === 0) return
+  await Promise.all(toDelete.map((e) => recordsStore.delete(RECORD_KEYS.vocabEntry(e.id))))
+  await refresh()
+}
+
 /**
  * 检查文本是否已收录（大小写不敏感）。
  * bookId 可选：指定时仅在该生词本内检查，否则全局检查。
