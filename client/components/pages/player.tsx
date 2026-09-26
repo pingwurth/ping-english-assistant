@@ -28,6 +28,8 @@ import type { SubtitleData, SubtitleMode, SubtitleSentence } from '@/types/subti
 const RATES = [0.75, 1, 1.25]
 /** 学习进度写入节流：5s（播放过的句子增量持久化） */
 const PROGRESS_FLUSH_MS = 5000
+/** 复制原文时的前缀（仅原文；译文按原样复制） */
+const SENTENCE_ANALYSIS_PREFIX = '句子解析：'
 /** 背景图片列表（非视频内容时自动轮播） */
 const BACKGROUND_IMAGES = [
   '/background/1.png',
@@ -415,9 +417,11 @@ function Player() {
     setMode('bilingual')
   }, [record])
 
-  /** 复制当前句原文/译文：成功后按钮短暂显示对勾回执 */
+  /** 复制当前句原文/译文：成功后按钮短暂显示对勾回执；原文带「句子解析：」前缀，粘贴到笔记/AI 时自带上下文 */
   const handleCopySentence = useCallback(async (kind: 'en' | 'zh', text: string) => {
-    if (!(await copyText(text))) return
+    if (!text.trim()) return
+    const payload = kind === 'en' ? `${SENTENCE_ANALYSIS_PREFIX}${text}` : text
+    if (!(await copyText(payload))) return
     setCopiedKind(kind)
     clearTimeout(copiedTimerRef.current)
     copiedTimerRef.current = setTimeout(() => setCopiedKind(null), 1500)
