@@ -36,6 +36,14 @@ export function getHeadphoneHint(): boolean {
 }
 export function setHeadphoneHint(v: boolean): void { setPref('pref:headphoneHint', v) }
 
+export type PrefTrainingScope = 'all' | 'favorites'
+
+/** 训练范围默认选择（P3 训练中心写入，P4/P5/P6 逐句训练页读取） */
+export function getTrainingScope(): PrefTrainingScope {
+  return getPref<PrefTrainingScope>('pref:trainingScope', 'all') === 'favorites' ? 'favorites' : 'all'
+}
+export function setTrainingScope(v: PrefTrainingScope): void { setPref('pref:trainingScope', v) }
+
 /** 是否启用翻译功能（默认关闭） */
 export function getTranslateEnabled(): boolean {
   return getPref<boolean>('pref:translateEnabled', false)

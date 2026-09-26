@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Languages, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetHeader, SheetTitle, SheetDescription, SheetContent, SheetFooter } from '@/components/ui/sheet'
+import { TranslateDirectionToggle } from '@/components/shared/translate-direction-toggle'
 import { translateTexts, detectDirection } from '@/lib/translate'
+import { useTranslateConfigs } from '@/lib/use-translate-configs'
 import type { SubtitleSentence } from '@/types/subtitle'
 import type { TranslateDirection } from '@/types/api'
 
@@ -11,13 +13,6 @@ interface TranslateDrawerProps {
   onOpenChange: (open: boolean) => void
   sentences: SubtitleSentence[]
   onApplyAll: (updated: SubtitleSentence[], direction: TranslateDirection) => void
-}
-
-/** 翻译配置项 */
-interface TranslateConfig {
-  id: string
-  name: string
-  translateModel: string
 }
 
 /** 单句翻译状态 */
@@ -31,8 +26,7 @@ function directionLabel(d: TranslateDirection): string {
 export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: TranslateDrawerProps) {
   // ── 所有状态在组件顶层声明，不依赖 open ──
   // 这样 Sheet 关闭（子树卸载）时状态仍然存活
-  const [configs, setConfigs] = useState<TranslateConfig[]>([])
-  const [selectedConfigId, setSelectedConfigId] = useState('')
+  const { configs, configId: selectedConfigId, setConfigId: setSelectedConfigId } = useTranslateConfigs(open)
   const [direction, setDirection] = useState<TranslateDirection>('en2zh')
   const [translations, setTranslations] = useState<string[]>([])
   const [sentenceStatuses, setSentenceStatuses] = useState<SentenceStatus[]>([])
@@ -42,8 +36,6 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
   const abortRef = useRef<AbortController | null>(null)
   /** 上一次句子列表签名，用于判断 sentences 内容是否真正变化 */
   const prevSentencesSigRef = useRef('')
-  /** configs 是否已加载过（避免重复请求） */
-  const configsLoadedRef = useRef(false)
   /** 上一次 globalStatus，用于检测 translating → done/error 转变 */
   const prevGlobalStatusRef = useRef<'idle' | 'translating' | 'done' | 'error'>('idle')
   /** toast 可见性 */
@@ -52,41 +44,14 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
   const [toastFading, setToastFading] = useState(false)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
-  // ── 翻译模型配置：首次打开时加载一次，之后复用 ──
-  useEffect(() => {
-    if (!open || configsLoadedRef.current) return
-    configsLoadedRef.current = true
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch('/api/settings/llm-configs')
-        const data = await res.json()
-        if (cancelled) return
-        const tConfigs = (data.configs || [])
-          .filter((c: { translateModel?: string }) => c.translateModel)
-          .map((c: { id: string; name: string; translateModel: string }) => ({
-            id: c.id,
-            name: c.name,
-            translateModel: c.translateModel,
-          }))
-        setConfigs(tConfigs)
-        if (tConfigs.length > 0) {
-          const defaultCfg = tConfigs.find((c: TranslateConfig) => c.id === data.defaultId) || tConfigs[0]
-          setSelectedConfigId(defaultCfg.id)
-        }
-      } catch { /* ignore */ }
-    })()
-    return () => { cancelled = true }
-  }, [open])
-
   // ── 检测语言方向；仅当句子列表内容真正变化时才重置翻译状态 ──
   useEffect(() => {
     if (sentences.length === 0) return
     const sig = sentences.map(s => `${s.index}:${s.textEn}:${s.textZh ?? ''}`).join('|')
     if (sig !== prevSentencesSigRef.current) {
       prevSentencesSigRef.current = sig
-      const allTexts = sentences.flatMap(s => [s.textEn, s.textZh].filter(Boolean)) as string[]
-      setDirection(detectDirection(allTexts))
+      // 与单句翻译同一口径：按原文行（textEn）语言判定，双语字幕因此默认「英 → 中」
+      setDirection(detectDirection(sentences.map(s => s.textEn)))
       setTranslations(Array(sentences.length).fill(''))
       setSentenceStatuses(Array(sentences.length).fill('pending'))
       setGlobalStatus('idle')
@@ -103,6 +68,18 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
       toastTimerRef.current.forEach(clearTimeout)
     }
   }, [])
+
+  /** 手动切换翻译方向：旧译文对应的是另一种源文本，一并清空以免被「全部应用」误写回字幕 */
+  const handleDirectionChange = useCallback((next: TranslateDirection) => {
+    if (next === direction) return
+    abortRef.current?.abort()
+    setDirection(next)
+    setTranslations(Array(sentences.length).fill(''))
+    setSentenceStatuses(Array(sentences.length).fill('pending'))
+    setGlobalStatus('idle')
+    setError('')
+    setProgress({ done: 0, total: 0 })
+  }, [direction, sentences.length])
 
   // ── 上一次 open 状态，用于检测 open false→true→false 的关闭动作 ──
   const prevOpenRef = useRef(open)
@@ -259,6 +236,7 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
               <span className="text-sm font-medium">翻译设置</span>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              <TranslateDirectionToggle value={direction} onChange={handleDirectionChange} />
               <select
                 value={selectedConfigId}
                 onChange={e => setSelectedConfigId(e.target.value)}
@@ -273,7 +251,6 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
                   ))
                 )}
               </select>
-              <span className="text-xs text-muted-foreground">{directionLabel(direction)}</span>
             </div>
             {configs.length === 0 && (
               <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置翻译模型</p>

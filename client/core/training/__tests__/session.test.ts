@@ -2,7 +2,7 @@
  * core/training/session 单测：submit/next/hint/skip/attempt 状态迁移与小结汇总（scoring）。
  */
 import { describe, expect, it } from 'vitest'
-import { createSession, currentSentence, submit, attempt, hint, next, skip, retryAt, makeRecordId } from '../session'
+import { createSession, currentSentence, sentencesInScope, submit, attempt, hint, next, skip, retryAt, makeRecordId } from '../session'
 import { summarize, formatElapsed } from '../scoring'
 import type { SubtitleSentence } from '@/types/subtitle'
 
@@ -18,6 +18,30 @@ function makeSentences(n: number): SubtitleSentence[] {
 }
 
 const OK = { correct: true, accuracy: 100 }
+
+describe('sentencesInScope', () => {
+  const sentences = makeSentences(5)
+
+  it('全文范围：返回副本（不共享引用），顺序不变', () => {
+    const out = sentencesInScope(sentences, { type: 'all' })
+    expect(out.map((s) => s.index)).toEqual([0, 1, 2, 3, 4])
+    expect(out).not.toBe(sentences)
+    expect(out[0]).toBe(sentences[0])
+  })
+
+  it('省略 scope 时按全文处理', () => {
+    expect(sentencesInScope(sentences)).toHaveLength(5)
+  })
+
+  it('收藏范围：按 sentenceIndexes 过滤并保持原时间轴顺序', () => {
+    const out = sentencesInScope(sentences, { type: 'favorites', sentenceIndexes: [4, 1] })
+    expect(out.map((s) => s.index)).toEqual([1, 4])
+  })
+
+  it('收藏范围：无匹配句序号 → 空数组', () => {
+    expect(sentencesInScope(sentences, { type: 'favorites', sentenceIndexes: [99] })).toEqual([])
+  })
+})
 
 describe('createSession', () => {
   it('初始状态：active、cursor=0、注入 now', () => {

@@ -2,7 +2,8 @@
  * 训练页共享外壳（P4/P5 复用）：
  *  - TrainingSessionShell：页头（eyebrow + 标题 + n/total 徽标）+ 真实进度条；
  *  - SessionSummaryOverlay：完成小结浮层（Card/Badge 组合，不引 dialog）；
- *  - useTrainingMaterial：按 prefs 中最近进入的训练材料加载记录（回落 mock-001）。
+ *  - useTrainingMaterial：按 prefs 中最近进入的训练材料加载记录（回落 mock-001），
+ *    并解析训练范围（全文 / 收藏句）供逐句模式过滤题目。
  */
 
 import { useEffect, useState } from 'react'
@@ -11,7 +12,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress'
 import { Shell } from '@/components/shared/shell'
 import { getMaterialRecord } from '@/stores/material-store'
+import { favoriteSentenceIndexes } from '@/stores/favorite-store'
 import { getPref } from '@/platform/storage/prefs'
+import { getTrainingScope } from '@/lib/pref-keys'
+import type { TrainingScope } from '@/core/training/session'
 import type { MaterialRecord } from '@/platform/storage/schema'
 
 /** 训练页外壳：页头 + 逐句真实进度（current = 已完成句数，0-based 游标） */
@@ -31,20 +35,32 @@ function SummaryStat({ label, value }: { label: string; value: string }) {
   return <div className="flex items-center justify-between rounded-xl bg-muted px-4 py-3"><span className="text-sm text-muted-foreground">{label}</span><span className="font-semibold tabular-nums">{value}</span></div>
 }
 
-/** 训练材料加载：P3 进入时写入 prefs('training-material')，训练页据此取句 */
-function useTrainingMaterial(): { record: MaterialRecord | null; loading: boolean } {
+/**
+ * 训练材料与范围加载：P3 进入时写入 prefs('training-material') 与 prefs('pref:trainingScope')，
+ * 训练页据此取句并按范围过滤。
+ * 范围选了收藏句但该材料此刻没有收藏（例如训练中取消了收藏）时回落全文，避免空会话。
+ */
+function useTrainingMaterial(): { record: MaterialRecord | null; loading: boolean; scope: TrainingScope } {
   const [record, setRecord] = useState<MaterialRecord | null>(null)
+  const [scope, setScope] = useState<TrainingScope>({ type: 'all' })
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       const id = getPref<string>('training-material', 'mock-001')
       const rec = (await getMaterialRecord(id)) ?? (await getMaterialRecord('mock-001'))
+      if (rec && getTrainingScope() === 'favorites') {
+        const sentenceIndexes = await favoriteSentenceIndexes(rec.material.id)
+        if (sentenceIndexes.length) {
+          if (!cancelled) { setRecord(rec); setScope({ type: 'favorites', sentenceIndexes }); setLoading(false) }
+          return
+        }
+      }
       if (!cancelled) { setRecord(rec ?? null); setLoading(false) }
     })().catch(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [])
-  return { record, loading }
+  return { record, loading, scope }
 }
 
 export { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial }

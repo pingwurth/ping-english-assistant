@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, Download, FileText, Gauge, Languages, Pause, Pencil, Play, RotateCcw, SkipBack, SkipForward, Sparkles, Subtitles, Trash2, Upload, Volume2, VolumeX } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -40,15 +40,14 @@ function PlayerControlBar({ playing, setPlaying, mode, setMode, loop, setLoop, s
  *  - active 变化时 scrollIntoView({block:'nearest'}) 自动滚动；
  *  - 用户手动滚动（wheel/touch/键盘）后暂停自动跟随 5s；
  *  - favoriteIndexes 中的句子显示 ★ 收藏标记。
+ *  - onTranslate 为整篇翻译入口（单句翻译在字幕编辑弹窗内）。
  */
-function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndexes, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items?: SubtitleSentence[]; favoriteIndexes?: Set<number>; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: (scope: 'current' | 'all') => void }) {
+function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndexes, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items?: SubtitleSentence[]; favoriteIndexes?: Set<number>; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: () => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const manualUntilRef = useRef(0)
   const programmaticRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const translateMenuRef = useRef<HTMLDivElement | null>(null)
-  const [showTranslateMenu, setShowTranslateMenu] = useState(false)
 
   useEffect(() => {
     if (active < 0) return
@@ -67,24 +66,7 @@ function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndex
     window.setTimeout(() => { programmaticRef.current = false }, 300)
   }, [active])
 
-  // 点击外部关闭翻译菜单
-  useEffect(() => {
-    if (!showTranslateMenu) return
-    const handleClickOutside = (e: MouseEvent) => {
-      if (translateMenuRef.current && !translateMenuRef.current.contains(e.target as Node)) {
-        setShowTranslateMenu(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showTranslateMenu])
-
   const markManual = () => { if (!programmaticRef.current) manualUntilRef.current = Date.now() + 5000 }
-
-  const handleTranslateSelect = useCallback((scope: 'current' | 'all') => {
-    setShowTranslateMenu(false)
-    onTranslate?.(scope)
-  }, [onTranslate])
 
   return (
     <section className="flex min-h-0 flex-1 flex-col rounded-2xl border bg-card">
@@ -110,32 +92,9 @@ function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndex
             </Button>
           )}
           {onTranslate && (
-            <div className="relative" ref={translateMenuRef}>
-              <Button
-                variant="ghost"
-                size="icon"
-                title="翻译字幕"
-                onClick={() => setShowTranslateMenu(!showTranslateMenu)}
-              >
-                <Languages className="size-4" />
-              </Button>
-              {showTranslateMenu && (
-                <div className="absolute right-0 z-50 mt-1 w-40 rounded-lg border bg-background shadow-lg">
-                  <button
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
-                    onMouseDown={(e) => { e.preventDefault(); handleTranslateSelect('current') }}
-                  >
-                    翻译当前句
-                  </button>
-                  <button
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
-                    onMouseDown={(e) => { e.preventDefault(); handleTranslateSelect('all') }}
-                  >
-                    翻译全部字幕
-                  </button>
-                </div>
-              )}
-            </div>
+            <Button variant="ghost" size="icon" title="翻译全部字幕" onClick={onTranslate}>
+              <Languages className="size-4" />
+            </Button>
           )}
         </div>
       </div>
@@ -170,8 +129,8 @@ function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndex
               <span>{formatDuration(s.startMs)}</span>
               {favoriteIndexes?.has(s.index) && <span aria-label="已收藏" className="text-primary">★</span>}
             </div>
-            {(mode === 'bilingual' || mode === 'english') && <p className="leading-relaxed">{s.textEn}</p>}
-            {(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 leading-relaxed text-muted-foreground">{s.textZh}</p>}
+            {(mode === 'bilingual' || mode === 'english') && <p className="whitespace-pre-line leading-relaxed">{s.textEn}</p>}
+            {(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 whitespace-pre-line leading-relaxed text-muted-foreground">{s.textZh}</p>}
           </div>
         )) : (
           <div className="flex min-h-40 flex-col items-center justify-center gap-4 p-6 text-center">

@@ -12,6 +12,7 @@ import {
   splitBilingual,
   splitWords,
   detectBilingual,
+  exportSrt,
   SubtitleParseError,
 } from '../index'
 import { stripWordPunctuation } from '../bilingual'
@@ -40,11 +41,13 @@ describe('双语拆分与 words', () => {
     expect(isCJK("Don't stop")).toBe(false)
   })
 
-  it('splitBilingual：上英下中 / 上中下英 / 单行 / 多行合并', () => {
+  it('splitBilingual：上英下中 / 上中下英 / 单行 / 多行合并（保留原文换行）', () => {
     expect(splitBilingual(['Hello world', '你好世界'])).toEqual({ textEn: 'Hello world', textZh: '你好世界' })
     expect(splitBilingual(['你好世界', 'Hello world'])).toEqual({ textEn: 'Hello world', textZh: '你好世界' })
     expect(splitBilingual(['Only english'])).toEqual({ textEn: 'Only english', textZh: null })
-    expect(splitBilingual(['part one', 'part two', '中文一行'])).toEqual({ textEn: 'part one part two', textZh: '中文一行' })
+    expect(splitBilingual(['part one', 'part two', '中文一行'])).toEqual({ textEn: 'part one\npart two', textZh: '中文一行' })
+    expect(splitBilingual(['中文上半句', '中文下半句', 'Hello'])).toEqual({ textEn: 'Hello', textZh: '中文上半句\n中文下半句' })
+    expect(splitBilingual(['part one', 'part two'])).toEqual({ textEn: 'part one\npart two', textZh: null })
     expect(splitBilingual([])).toEqual({ textEn: '', textZh: null })
   })
 
@@ -99,6 +102,16 @@ describe('parseSubtitle SRT', () => {
     const data = parseSubtitle(text)
     expect(data.sentences.map((s) => s.textEn)).toEqual(['Earlier', 'Later'])
     expect(data.sentences.map((s) => s.index)).toEqual([0, 1])
+  })
+
+  it('换行折行的英文 cue 保留原文断行（words 仍按空白切分）', () => {
+    const text = ['1', '00:00:01,000 --> 00:00:04,000', 'I would like to make', 'a reservation for two.', ''].join('\n')
+    const data = parseSubtitle(text)
+    expect(data.sentences[0]!.textEn).toBe('I would like to make\na reservation for two.')
+    expect(data.sentences[0]!.words).toEqual(['I', 'would', 'like', 'to', 'make', 'a', 'reservation', 'for', 'two'])
+    // 导出 SRT 原样回写断行，再次解析结果一致（往返无损）
+    const again = parseSubtitle(exportSrt(data.sentences))
+    expect(again.sentences[0]!.textEn).toBe(data.sentences[0]!.textEn)
   })
 
   it('显式指定 format=srt 时不做嗅探', () => {

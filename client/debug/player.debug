@@ -125,3 +125,12 @@
 
 29.
 @client/components/pages/player.tsx 生词本新增统计数据“出现频率”，首次导入材料后，要判断生词本中的词是否在材料中出现及出现次数，累加到“出现频率”中，生词本增加“按添加时间排序”和“按出现频率排序”
+
+30.
+@client/components/pages/player.tsx 字幕原文存在换行，但是字幕列表区域、当前句区域、播放区显示的时候都没有换行，为什么？
+- /html/body/div[8]/main/div/div[2]/section/div[2]
+- /html/body/div[8]/main/div/div[2]/div/div[2]/div/div/p[2]
+- /html/body/div[8]/main/div/div[2]/div/div[1]/div[2]
+
+31.
+@client/components/pages/player.tsx 右侧的字幕列表右上方的翻译按钮取消单句翻译选项，默认全文；把单句翻译的功能迁移到字幕编辑弹窗 /html/body/div[2]/main/div[2]/div

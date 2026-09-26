@@ -10,7 +10,7 @@ import type { SubtitleSentence } from '@/types/subtitle'
 import type { TrainingMode } from '@/types/training'
 import type { SentenceResult } from './scoring'
 
-/** 训练范围：全文 / 收藏句（原型阶段收藏范围降级，见 P3 说明） */
+/** 训练范围：全文 / 收藏句（由 P3 训练中心选择，写入 prefs:pref:trainingScope） */
 export type TrainingScope = { type: 'all' } | { type: 'favorites'; sentenceIndexes: number[] }
 
 export type SessionStatus = 'active' | 'done'
@@ -31,8 +31,11 @@ export interface SessionState {
   startedAt: number
 }
 
-/** 依据范围解析题目队列 */
-function resolveQueue(sentences: SubtitleSentence[], scope: TrainingScope): SubtitleSentence[] {
+/**
+ * 依据范围过滤句子（保持原时间轴顺序）。
+ * 逐句模式（九宫格/听写/跟读）统一从这里取范围，避免各自实现过滤口径。
+ */
+export function sentencesInScope(sentences: SubtitleSentence[], scope: TrainingScope = { type: 'all' }): SubtitleSentence[] {
   if (scope.type === 'all') return [...sentences]
   const set = new Set(scope.sentenceIndexes)
   return sentences.filter((s) => set.has(s.index))
@@ -45,7 +48,7 @@ export function createSession(
   scope: TrainingScope = { type: 'all' },
   now: number = Date.now(),
 ): SessionState {
-  const queue = resolveQueue(sentences, scope)
+  const queue = sentencesInScope(sentences, scope)
   return {
     mode,
     queue,

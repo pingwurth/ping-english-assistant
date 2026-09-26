@@ -17,7 +17,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { MicPermissionOverlay, ScorePanel } from '@/components/shared/score-panel'
 import { RecordButton } from '@/components/shared/record-button'
 import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial } from '@/components/shared/training-session-shell'
-import { makeRecordId } from '@/core/training/session'
+import { makeRecordId, sentencesInScope } from '@/core/training/session'
 import { SentencePlayer } from '@/core/player/sentence-player'
 import { HtmlPlayerController } from '@/platform/html-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
@@ -54,7 +54,7 @@ function WaveBars({ level, active }: { level: number; active: boolean }) {
 }
 
 function ReadAloud() {
-  const { record, loading } = useTrainingMaterial()
+  const { record, loading, scope } = useTrainingMaterial()
   const soe = useMemo(() => getMockServices().soe, [])
 
   const [cursor, setCursor] = useState(0)
@@ -79,7 +79,8 @@ function ReadAloud() {
   /** maxreach/卸载场景调用最新 stopRecording 闭包 */
   const stopRef = useRef<() => Promise<void>>(async () => {})
 
-  const sentences = record?.subtitleData?.sentences ?? []
+  // 题目范围：全文 / 收藏句（播放时间轴仍用完整句子列表，见下方播放引擎装配）
+  const sentences = useMemo(() => sentencesInScope(record?.subtitleData?.sentences ?? [], scope), [record, scope])
   const sentence = sentences[cursor]
 
   // 媒体 Blob → ObjectURL（SSR 安全：仅 effect 内；卸载时 revoke）

@@ -5,8 +5,9 @@
  *  1. 块内文本行（已去序号/时间轴行）参与判定；
  *  2. isCJK：含中日韩统一表意字符 → 中文行；
  *  3. 两行且上英下中 → textEn/textZh；上中下英 → 反序；单行 → textEn；
- *     多行（>2）→ 英文行合并为 textEn、中文行合并为 textZh；
- *  4. words：textEn 按空格切分并剥离首尾标点（保留撇号，如 don't 为一个词）。
+ *     多行（>2）→ 英文行合并为 textEn、中文行合并为 textZh，**保留原文换行**（'\n' 连接，
+ *     渲染侧配 whitespace-pre-line 呈现；下游切词一律用 /\s+/ 故不受影响）；
+ *  4. words：textEn 按空白切分并剥离首尾标点（保留撇号，如 don't 为一个词）。
  */
 
 /** 含中日韩统一表意字符（含假名/谚文扩展区）即判为中文行 */
@@ -46,8 +47,9 @@ export function splitBilingual(lines: string[]): SplitResult {
     // 两行同类（双英/双中）：按语义行并入对应语言
   }
   // 多行（或两行同类）：连续英文行合并为 textEn，连续中文行合并为 textZh
-  const en = ls.filter((l) => !isCJK(l)).join(' ')
-  const zh = ls.filter((l) => isCJK(l)).join('')
+  // 以 '\n' 连接而非空格：保留原文断行（导出 SRT 亦可原样回写）
+  const en = ls.filter((l) => !isCJK(l)).join('\n')
+  const zh = ls.filter((l) => isCJK(l)).join('\n')
   return { textEn: en, textZh: zh || null }
 }
 

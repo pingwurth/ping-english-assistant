@@ -26,7 +26,7 @@ function DiffView({ tokens }: { tokens: DiffToken[] }) {
 }
 
 function Dictation() {
-  const { record, loading } = useTrainingMaterial()
+  const { record, loading, scope } = useTrainingMaterial()
   const [session, setSession] = useState<SessionState | null>(null)
   const [value, setValue] = useState('')
   const [tokens, setTokens] = useState<DiffToken[] | null>(null)
@@ -41,9 +41,9 @@ function Dictation() {
   // 材料就绪 → 开启会话
   useEffect(() => {
     if (!record) return
-    setSession(createSession('dictation', record.subtitleData?.sentences ?? []))
+    setSession(createSession('dictation', record.subtitleData?.sentences ?? [], scope))
     writtenRef.current = new Set()
-  }, [record])
+  }, [record, scope])
 
   // 媒体 Blob → ObjectURL（SSR 安全：仅 effect 内）
   useEffect(() => {
@@ -114,7 +114,7 @@ function Dictation() {
   }
   const onNext = () => { if (session) setSession(next(session)) }
   const onRetryWeak = (idx: number) => { if (session) { setSession(retryAt(session, idx)); writtenRef.current.delete(idx) } }
-  const restart = () => { if (record) { setSession(createSession('dictation', record.subtitleData?.sentences ?? [])); writtenRef.current = new Set() } }
+  const restart = () => { if (record) { setSession(createSession('dictation', record.subtitleData?.sentences ?? [], scope)); writtenRef.current = new Set() } }
 
   if (loading) return <TrainingSessionShell eyebrow="单句听写" title="听音写下完整句子" current={0} total={0}><div className="flex min-h-40 items-center justify-center text-muted-foreground">正在加载材料…</div></TrainingSessionShell>
   if (!record || !session || session.queue.length === 0) {

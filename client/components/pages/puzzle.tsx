@@ -28,7 +28,7 @@ const MAX_HINTS = 3
 const MAX_ATTEMPTS = 2
 
 function Puzzle() {
-  const { record, loading } = useTrainingMaterial()
+  const { record, loading, scope } = useTrainingMaterial()
   const [session, setSession] = useState<SessionState | null>(null)
   const [gridState, setGridState] = useState<PuzzleGridState | null>(null)
   const [selected, setSelected] = useState<string[]>([])
@@ -45,9 +45,9 @@ function Puzzle() {
   // 材料就绪 → 开启全文范围会话
   useEffect(() => {
     if (!record) return
-    setSession(createSession('puzzle', record.subtitleData?.sentences ?? []))
+    setSession(createSession('puzzle', record.subtitleData?.sentences ?? [], scope))
     writtenRef.current = false
-  }, [record])
+  }, [record, scope])
 
   // 媒体 Blob → ObjectURL
   useEffect(() => {
@@ -191,7 +191,7 @@ function Puzzle() {
   const onNext = () => { if (session) setSession(next(session)) }
   const restart = () => {
     if (record) {
-      setSession(createSession('puzzle', record.subtitleData?.sentences ?? []))
+      setSession(createSession('puzzle', record.subtitleData?.sentences ?? [], scope))
       writtenRef.current = false
     }
   }
