@@ -10,6 +10,7 @@ import {
   getGridHint,
   gridScore,
   initGridState,
+  isSameWord,
   selectGridWord,
   splitWords,
   type PuzzleGridState,
@@ -32,10 +33,10 @@ function Puzzle() {
   const [session, setSession] = useState<SessionState | null>(null)
   const [gridState, setGridState] = useState<PuzzleGridState | null>(null)
   const [selected, setSelected] = useState<string[]>([])
-  const [verdict, setVerdict] = useState<{ correct: boolean; firstErrorIndex: number } | null>(null)
   const [resolved, setResolved] = useState(false)
   const [shakeIndex, setShakeIndex] = useState<number | null>(null)
-  const [hintIndex, setHintIndex] = useState<number | null>(null)
+  /** 被提示的答案词文本（同词多格时高亮全部同文本格） */
+  const [hintText, setHintText] = useState<string | null>(null)
   const [plays, setPlays] = useState(0)
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const writtenRef = useRef(false)
@@ -91,9 +92,9 @@ function Puzzle() {
     const distractorPool = collectDistractorWords(allSentences, sentence.index, new Set())
     setGridState(initGridState(sentence, distractorPool))
     setSelected([])
-    setVerdict(null)
     setResolved(false)
     setShakeIndex(null)
+    setHintText(null)
     setPlays(0)
   }, [sentence, queue, record])
 
@@ -140,7 +141,6 @@ function Puzzle() {
       setGridState(result.state)
       const pickedWord = gridState.grid[index]!.text
       setSelected([...selected, pickedWord])
-      setVerdict(null)
       setShakeIndex(null)
 
       // 检查句子是否完成（所有目标词已选完）
@@ -173,10 +173,11 @@ function Puzzle() {
   const useHintAction = () => {
     if (!session || !gridState || !sentence || resolved || session.hintCount >= MAX_HINTS) return
     const hintIdx = getGridHint(gridState)
-    if (hintIdx < 0) return
-    // 高亮答案格
-    setHintIndex(hintIdx)
-    setTimeout(() => setHintIndex(null), 1000)
+    const word = hintIdx >= 0 ? gridState.grid[hintIdx]?.text : undefined
+    if (!word) return
+    // 高亮答案词（同词多格时一并高亮）
+    setHintText(word)
+    setTimeout(() => setHintText(null), 1000)
     setSession(hint(session))
   }
 
@@ -198,6 +199,8 @@ function Puzzle() {
 
   const targets = sentence ? splitWords(sentence) : []
   const pickedCount = gridState ? gridState.cursor : 0
+  /** 当前应选词文本（同词多格时全部同文本格一起高亮） */
+  const answerText = gridState && !gridState.done ? gridState.targets[gridState.cursor] ?? null : null
 
   return <TrainingSessionShell eyebrow="九宫格训练" title="拼出正确句子" current={session.cursor} total={session.queue.length}>
     <Card>
@@ -227,9 +230,9 @@ function Puzzle() {
         {gridState && !gridState.done && (
           <div className="grid grid-cols-3 gap-3">
             {gridState.grid.map((cell, i) => {
-              const isAnswer = resolved && gridState.answerIndex === i
+              const isAnswer = resolved && answerText !== null && isSameWord(cell.text, answerText)
               const isShaking = shakeIndex === i
-              const isHinting = hintIndex === i
+              const isHinting = hintText !== null && isSameWord(cell.text, hintText)
               return (
                 <button
                   key={cell.id}
@@ -264,13 +267,6 @@ function Puzzle() {
           </div>
         </div>
 
-        {/* 判定反馈 */}
-        {verdict && (
-          <div className={`rounded-xl p-4 ${verdict.correct ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive'}`}>
-            {verdict.correct ? '完全正确！+10 分' : `首个错误在第 ${verdict.firstErrorIndex + 1} 个词`}
-          </div>
-        )}
-
         {resolved && (
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={playSegment} disabled={!playable}>重听</Button>
@@ -284,7 +280,7 @@ function Puzzle() {
 
     {mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}
 
-    {summary && <SessionSummaryOverlay open title="本轮完成" description={record.material.name} footer={<><Link to="/"><Button variant="outline">返回材料库</Button></Link><Button onClick={restart}>再来一轮</Button></>}>
+    {summary && <SessionSummaryOverlay open title="本轮完成" description={record.material.name} footer={<><Link to={`/training/${record.material.id}`}><Button variant="outline">返回训练中心</Button></Link><Button onClick={restart}>再来一轮</Button></>}>
       <SummaryStat label="正确率" value={`${summary.correctCount} / ${summary.total}（${summary.accuracy}%）`} />
       <SummaryStat label="用时" value={formatElapsed(summary.durationMs)} />
       <SummaryStat label="得分" value={`${gridScore(summary.correctCount, totalHints)} 分（提示 -${totalHints * 2}）`} />

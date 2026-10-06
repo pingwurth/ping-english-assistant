@@ -85,10 +85,22 @@ describe('sentenceAccuracy', () => {
     expect(sentenceAccuracy([{ type: 'extra', text: 'x' }], 0)).toBe(0)
   })
 
-  it('正确率 = correct / 目标词数（四舍五入）', () => {
+  it('正确率 = correct / max(目标词数, 输入词数)（四舍五入）', () => {
     const tokens = diffWords('good evening', 'good morning') // 1/2
     expect(sentenceAccuracy(tokens, 2)).toBe(50)
     const tokens3 = diffWords('a b', 'a b c') // 2/3 → 67
     expect(sentenceAccuracy(tokens3, 3)).toBe(67)
+  })
+
+  it('多词（extra）参与扣分：字数多于目标句时按输入词数算', () => {
+    // 目标词全对，但夹带 2 个多词 → 3/5，而不是 100
+    const tokens = diffWords('i think you should answer', 'you should answer')
+    expect(tokens.filter((t) => t.type === 'extra')).toHaveLength(2)
+    expect(sentenceAccuracy(tokens, 3)).toBe(60)
+  })
+
+  it('输入词数少于目标词数时按目标词数算（漏词扣分）', () => {
+    const tokens = diffWords('a b', 'a b c d') // 2/4
+    expect(sentenceAccuracy(tokens, 4)).toBe(50)
   })
 })

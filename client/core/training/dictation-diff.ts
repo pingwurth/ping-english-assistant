@@ -93,9 +93,16 @@ export function diffWords(input: string, target: string): DiffToken[] {
   return merged
 }
 
-/** 单句正确率（0-100）：正确词数 / 目标词数；目标为空时按输入是否为空给 100/0 */
+/**
+ * 单句正确率（0-100）：正确词数 / max(目标词数, 输入词数)。
+ * 分母取两者较大者 —— 漏词和多词都扣分；只按目标词数算会让"句子写对了但夹带一堆多词"也拿 100。
+ * 目标为空时按输入是否为空给 100/0。
+ */
 export function sentenceAccuracy(tokens: DiffToken[], targetWordCount: number): number {
   if (targetWordCount === 0) return tokens.length === 0 ? 100 : 0
   const correct = tokens.filter((t) => t.type === 'correct').length
-  return Math.round((correct / targetWordCount) * 100)
+  // 输入侧词数：correct/wrong 各含一个输入词，extra 即多写的词（diffWords 的配对不变量）
+  const inputWordCount = tokens.filter((t) => t.type !== 'missing').length
+  const denom = Math.max(targetWordCount, inputWordCount)
+  return denom ? Math.round((correct / denom) * 100) : 0
 }

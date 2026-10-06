@@ -168,6 +168,92 @@ describe('selectGridWord', () => {
     expect(selectGridWord(state, GRID_SIZE).correct).toBe(false)
   })
 
+  it('同句重复词：点任意一个同词格都算对（判定按词匹配，不是 index）', () => {
+    const sentence = makeSentence(['that', 'is', 'that', 'ok'])
+    const state = initGridState(sentence, ['a', 'b', 'c', 'd', 'e'])
+
+    const thatIndexes = state.grid.map((c, i) => ({ text: c.text, i })).filter((c) => c.text === 'that').map((c) => c.i)
+    expect(thatIndexes).toHaveLength(2)
+
+    // 两个 "that" 格各自判定都应正确，且都推进到 cursor=1
+    for (const i of thatIndexes) {
+      const r = selectGridWord(state, i)
+      expect(r.correct).toBe(true)
+      expect(r.state.cursor).toBe(1)
+    }
+  })
+
+  it('同句同词大小写不同（You … you）：区分大小写，各只有一个正确格', () => {
+    // 种子材料原句：You should answer the questions as you listen.
+    const words = ['You', 'should', 'answer', 'the', 'questions', 'as', 'you', 'listen.']
+    const sentence = makeSentence(words)
+    const state = initGridState(sentence, ['do', 'not', 'here', 'now', 'ok'])
+
+    const upperYou = state.grid.findIndex((c) => c.text === 'You')
+    const lowerYou = state.grid.findIndex((c) => c.text === 'you')
+    expect(upperYou).toBeGreaterThanOrEqual(0)
+    expect(lowerYou).toBeGreaterThanOrEqual(0)
+
+    // cursor=0 目标为 'You'：点小写 'you' 判错，state 不变
+    const wrong = selectGridWord(state, lowerYou)
+    expect(wrong.correct).toBe(false)
+    expect(wrong.state).toBe(state)
+
+    // 点大写 'You' 才判对
+    const right = selectGridWord(state, upperYou)
+    expect(right.correct).toBe(true)
+    expect(right.state.cursor).toBe(1)
+
+    // 整句按精确文本仍可依次选完（游标 6 的目标 'you' 对应剩下的小写格）
+    let s = right.state
+    while (!s.done) {
+      const target = s.targets[s.cursor]!
+      const idx = s.grid.findIndex((c) => c.text === target)
+      expect(idx).toBeGreaterThanOrEqual(0)
+      const r = selectGridWord(s, idx)
+      expect(r.correct).toBe(true)
+      s = r.state
+    }
+    expect(s.cursor).toBe(words.length)
+  })
+
+  it('同句重复词：cursor 推进后下一个目标词仍在 grid 中', () => {
+    // "it is it" —— 点掉第一个 it 后，下一个目标仍是 it
+    const sentence = makeSentence(['it', 'is', 'it'])
+    const state = initGridState(sentence, ['a', 'b', 'c', 'd', 'e', 'f'])
+
+    const first = selectGridWord(state, state.answerIndex)
+    expect(first.correct).toBe(true)
+    expect(first.state.targets[first.state.cursor]).toBe('is')
+
+    const isIndex = first.state.grid.findIndex((c) => c.text === 'is')
+    const second = selectGridWord(first.state, isIndex)
+    expect(second.correct).toBe(true)
+    expect(second.state.targets[second.state.cursor]).toBe('it')
+    expect(second.state.answerIndex).toBeGreaterThanOrEqual(0)
+    expect(second.state.grid[second.state.answerIndex]!.text).toBe('it')
+
+    // 剩下的那个 it 格可继续选对
+    const last = selectGridWord(second.state, second.state.answerIndex)
+    expect(last.correct).toBe(true)
+    expect(last.state.done).toBe(true)
+  })
+
+  it('词文本不等于当前目标词 → 仍判错', () => {
+    // grid 里有 "is"（第 2 个目标词），但 cursor 在第 1 个目标词 "it" 上
+    const sentence = makeSentence(['it', 'is', 'ok'])
+    const state = initGridState(sentence, ['a', 'b', 'c', 'd', 'e', 'f'])
+
+    const isIndex = state.grid.findIndex((c) => c.text === 'is')
+    const r = selectGridWord(state, isIndex)
+    expect(r.correct).toBe(false)
+    expect(r.state).toBe(state)
+
+    // 干扰词同样判错
+    const distractorIndex = state.grid.findIndex((c) => c.text === 'a')
+    expect(selectGridWord(state, distractorIndex).correct).toBe(false)
+  })
+
   it('已完成状态 → 任何选择都返回 correct=false', () => {
     const sentence = makeSentence(['a'])
     const distractors = ['b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']

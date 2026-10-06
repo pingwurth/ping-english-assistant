@@ -113,7 +113,10 @@ export interface PuzzleGridState {
   pool: string[]
   /** 当前 9 格 */
   grid: GridCell[]
-  /** 当前正确答案在 grid 中的 index */
+  /**
+   * 提示锚点：等于当前目标词（targets[cursor]）的某一格 index，不在 grid 中为 -1。
+   * 逐字重复的词有多个同文本格时取首个——判定按文本匹配，不依赖此 index。
+   */
   answerIndex: number
   /** 是否已完成 */
   done: boolean
@@ -124,6 +127,16 @@ export interface PuzzleGridState {
  */
 export function splitWords(sentence: SubtitleSentence): string[] {
   return sentence.textEn.trim().split(/\s+/).filter(Boolean)
+}
+
+/**
+ * 词格与目标词的等价判定：**区分大小写**（精确文本相等）。
+ * 同一句里逐字重复的词（如 "that … that"）在 grid 中有多个格，点其中任意一格都算对；
+ * 但 "You" 与 "you" 是两个不同的词，各自只有一个正确格——句首大写、专有名词大写
+ * 都在考察范围内，不能放宽。
+ */
+export function isSameWord(a: string, b: string): boolean {
+  return a === b
 }
 
 /**
@@ -187,7 +200,7 @@ export function initGridState(
   const grid: GridCell[] = shuffled.map((text, i) => ({ id: i, text }))
 
   // 定位答案（targets[0]）
-  const answerIndex = grid.findIndex((c) => c.text === targets[0])
+  const answerIndex = grid.findIndex((c) => isSameWord(c.text, targets[0]))
 
   return {
     targets,
@@ -201,6 +214,8 @@ export function initGridState(
 
 /**
  * 用户点击 grid 中第 pickedIndex 格。
+ * 判定按**词文本**精确匹配当前目标词 targets[cursor]（区分大小写，见 isSameWord）：
+ * 逐字重复的词在 grid 中有多个格，点其中任意一格都算对；大小写不同的词只认对应的那一格。
  * - 正确：cursor 推进，移除该格，从 pool 补词，重新洗牌
  * - 错误：返回 correct=false，state 不变
  */
@@ -209,12 +224,12 @@ export function selectGridWord(
   pickedIndex: number,
   rng: Rng = Math.random,
 ): { state: PuzzleGridState; correct: boolean } {
-  if (state.done || pickedIndex < 0 || pickedIndex >= state.grid.length) {
+  const picked = state.grid[pickedIndex]
+  if (state.done || !picked) {
     return { state, correct: false }
   }
 
-  const correct = pickedIndex === state.answerIndex
-  if (!correct) return { state, correct: false }
+  if (!isSameWord(picked.text, state.targets[state.cursor] ?? '')) return { state, correct: false }
 
   const newCursor = state.cursor + 1
 
@@ -226,43 +241,19 @@ export function selectGridWord(
     }
   }
 
-  // 移除选中的格子
-  const remaining = state.grid.filter((_, i) => i !== pickedIndex)
-
-  // 从 pool 取一个词补入（优先目标句剩余词）
-  let newPool = [...state.pool]
-  const newGridTexts = remaining.map((c) => c.text)
-
+  // 移除选中的格子，并从 pool 取一个词补入（优先目标句剩余词）
+  const newGridTexts = state.grid.filter((_, i) => i !== pickedIndex).map((c) => c.text)
+  const newPool = [...state.pool]
   if (newPool.length > 0) {
-    // 从 pool 头部取一个
-    const word = newPool.shift()!
-    newGridTexts.push(word)
+    newGridTexts.push(newPool.shift()!)
   }
 
-  // 打乱
-  const shuffled = shuffle(newGridTexts, rng)
-  const newGrid: GridCell[] = shuffled.map((text, i) => ({ id: i, text }))
-
-  // 定位新答案
   const nextTarget = state.targets[newCursor]
-  const answerIndex = newGrid.findIndex((c) => c.text === nextTarget)
+  // 安全检查：下一目标词必须在 grid 中（滑窗算法保证，防御性处理）
+  if (!newGridTexts.some((t) => isSameWord(t, nextTarget))) newGridTexts[0] = nextTarget
 
-  // 安全检查：答案必须在 grid 中（算法保证，但防御性处理）
-  if (answerIndex === -1) {
-    // 强制插入答案
-    newGrid[0] = { id: newGrid.length, text: nextTarget }
-    return {
-      state: {
-        targets: state.targets,
-        cursor: newCursor,
-        pool: newPool,
-        grid: shuffle(newGrid.map((c) => c.text), rng).map((text, i) => ({ id: i, text })),
-        answerIndex: 0, // 会在下面重新定位
-        done: false,
-      },
-      correct: true,
-    }
-  }
+  // 打乱后再定位新答案（洗牌会改变 index）
+  const newGrid: GridCell[] = shuffle(newGridTexts, rng).map((text, i) => ({ id: i, text }))
 
   return {
     state: {
@@ -270,7 +261,7 @@ export function selectGridWord(
       cursor: newCursor,
       pool: newPool,
       grid: newGrid,
-      answerIndex,
+      answerIndex: newGrid.findIndex((c) => isSameWord(c.text, nextTarget)),
       done: false,
     },
     correct: true,
@@ -278,7 +269,7 @@ export function selectGridWord(
 }
 
 /**
- * 获取提示：返回答案在 grid 中的 index。
+ * 获取提示：返回答案在 grid 中的 index（同词多格时为首个，调用方按文本高亮更稳妥）。
  */
 export function getGridHint(state: PuzzleGridState): number {
   return state.answerIndex

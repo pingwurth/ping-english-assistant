@@ -26,7 +26,7 @@ import { writeTtsExport } from '@/lib/tts-export'
 import { translateTexts, detectDirection, mergeBilingualSrt } from '@/lib/translate'
 import { getTranslateEnabled, setTranslateEnabled } from '@/lib/pref-keys'
 import { parseSubtitle } from '@/core/subtitle'
-import { generateKokoroTts, KOKORO_VOICES, type KokoroLoadEvent } from '@/platform/kokoro-tts'
+import { generateKokoroTts, KOKORO_VOICES, type KokoroLoadState } from '@/platform/kokoro-tts'
 
 /** 云端 TTS 默认音色（settings 加载前的 fallback） */
 const DEFAULT_CLOUD_VOICES = [
@@ -73,7 +73,7 @@ function TTS() {
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
   const [cloudVoices, setCloudVoices] = useState<ReadonlyArray<{ id: string; label: string }>>(DEFAULT_CLOUD_VOICES)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
-  const [kokoroLoad, setKokoroLoad] = useState<KokoroLoadEvent | null>(null)
+  const [kokoroLoad, setKokoroLoad] = useState<KokoroLoadState>(null)
   const [phase, setPhase] = useState<GenPhase>('idle')
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [err, setErr] = useState('')
@@ -466,7 +466,7 @@ function TTS() {
                 </label>
               )}
               {generating
-                ? <Button variant="secondary" onClick={cancelGenerate}><Square data-icon="inline-start" />取消生成</Button>
+                ? <Button variant="secondary" className="hover:bg-destructive/15 hover:text-destructive dark:hover:bg-destructive/25" onClick={cancelGenerate}><Square data-icon="inline-start" />取消生成</Button>
                 : <Button onClick={() => void startGenerate()} disabled={!canGenerate}><Sparkles data-icon="inline-start" />生成语音</Button>}
             </div>
             {!isKokoro && ttsConfigs.length === 0 && (
@@ -484,21 +484,25 @@ function TTS() {
                 <div className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
                   {kokoroLoad?.phase === 'downloading'
-                    ? `下载 Kokoro 模型 ${Math.round(kokoroLoad.percent ?? 0)}%${kokoroLoad.file ? ` · ${kokoroLoad.file}` : ''}`
-                    : kokoroLoad?.phase === 'initializing'
-                      ? '正在加载 Kokoro 模型…'
-                      : translateProgress
-                        ? `正在翻译第 ${translateProgress.done}/${translateProgress.total} 句…`
-                        : progress.total > 0
-                          ? `合成第 ${progress.done}/${progress.total} 句…`
-                          : engine === 'kokoro' ? '正在本地合成语音…' : '正在调用云端语音合成…'}
+                    ? typeof kokoroLoad.percent === 'number'
+                      ? `首次下载 Kokoro 模型 ${Math.round(kokoroLoad.percent)}%${kokoroLoad.file ? ` · ${kokoroLoad.file}` : ''}`
+                      : `正在下载 ${kokoroLoad.file ?? 'Kokoro 模型文件'}…`
+                    : kokoroLoad?.phase === 'loading'
+                      ? `正在从本地缓存加载模型…${kokoroLoad.file ? ` · ${kokoroLoad.file}` : ''}`
+                      : kokoroLoad?.phase === 'initializing'
+                        ? '正在初始化 Kokoro 模型…'
+                        : translateProgress
+                          ? `正在翻译第 ${translateProgress.done}/${translateProgress.total} 句…`
+                          : progress.total > 0
+                            ? `合成第 ${progress.done}/${progress.total} 句…`
+                            : engine === 'kokoro' ? '正在本地合成语音…' : '正在调用云端语音合成…'}
                 </div>
                 <Progress
-                  value={kokoroLoading && kokoroLoad?.phase === 'downloading'
-                    ? Math.round(kokoroLoad.percent ?? 0)
+                  value={kokoroLoading
+                    ? (typeof kokoroLoad?.percent === 'number' ? Math.round(kokoroLoad.percent) : 5)
                     : progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 5}
                 />
-                {engine === 'kokoro' && <p className="mt-2 text-xs text-muted-foreground">本地合成，无需联网（首次使用需下载约 80MB 模型）</p>}
+                {engine === 'kokoro' && <p className="mt-2 text-xs text-muted-foreground">本地合成，无需联网（模型缓存在 ~/.ping-eng/kokoro-models，只有首次使用才下载）</p>}
               </div>
             )}
 

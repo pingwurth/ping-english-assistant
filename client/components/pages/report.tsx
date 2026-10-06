@@ -71,13 +71,13 @@ function splitTranscriptSegments(transcript: string): string[] {
   return segs.filter((s) => s.length > 0)
 }
 
-/** 降级 diff 的逐词着色（correct 正常 / wrong 红删 / missing 红底 / extra 灰删） */
+/** 降级 diff 的逐词着色（correct 正常 / wrong 错词红删（括号内为正确词）/ missing 红底 / extra 灰删） */
 function DiffTokens({ tokens }: { tokens: DiffToken[] }) {
   return (
     <p className="leading-relaxed">
       {tokens.map((t, i) => {
         if (t.type === 'correct') return <span key={i}>{t.text} </span>
-        if (t.type === 'wrong') return <span key={i} className="text-destructive"><span className="line-through">{t.text}</span>{t.input ? <span className="font-medium">（{t.input}）</span> : null} </span>
+        if (t.type === 'wrong') return <span key={i}><span className="text-destructive line-through">{t.input}</span>{t.input ? <span className="font-medium text-green-600 dark:text-green-400">（{t.text}）</span> : null} </span>
         if (t.type === 'missing') return <span key={i} className="rounded bg-destructive/10 px-0.5 font-medium text-destructive">{t.text} </span>
         return <span key={i} className="text-muted-foreground line-through">{t.text} </span>
       })}
@@ -261,7 +261,7 @@ function Report() {
                     })
                   })()}
                   <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                    <span><span className="text-destructive line-through">红删</span> = 读错/漏读</span>
+                    <span><span className="text-destructive line-through">红删</span> = 读错词（<span className="text-green-600 dark:text-green-400">绿括号</span> = 正确词）</span>
                     <span><span className="rounded bg-destructive/10 px-1 text-destructive">红底</span> = 未读出</span>
                     <span><span className="text-muted-foreground line-through">灰删</span> = 多读出</span>
                   </div>
@@ -285,6 +285,9 @@ function Report() {
             <div className="flex flex-col gap-3 sm:flex-row">
               <Link to={payload.mode === 'recitation' ? '/training/recitation' : '/training/shadowing'} className="flex-1">
                 <Button variant="outline" className="w-full"><RotateCcw data-icon="inline-start" />再次练习</Button>
+              </Link>
+              <Link to={`/training/${payload.materialId}`} className="flex-1">
+                <Button variant="outline" className="w-full">返回训练中心</Button>
               </Link>
               <Link to={`/player/${payload.materialId}`} className="flex-1">
                 <Button className="w-full">返回精听 →</Button>
