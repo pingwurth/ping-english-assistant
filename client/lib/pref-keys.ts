@@ -31,11 +31,6 @@ export function getRecordMode(): PrefRecordMode {
 }
 export function setRecordMode(v: PrefRecordMode): void { setPref('pref:recordMode', v) }
 
-export function getHeadphoneHint(): boolean {
-  return getPref<boolean>('pref:headphoneHint', true)
-}
-export function setHeadphoneHint(v: boolean): void { setPref('pref:headphoneHint', v) }
-
 export type PrefTrainingScope = 'all' | 'favorites'
 
 /** 训练范围默认选择（P3 训练中心写入，P4/P5/P6 逐句训练页读取） */

@@ -6,7 +6,6 @@
  *  - [暂停/继续] 同步暂停播放与录音（player.pause/play + recorder.pause/resume）；
  *    注意 recorder pause/resume 保留静音段（约定见 platform/recorder.ts），转写结果含暂停间隔；
  *  - 播放自然结束 / 录音到达 60s 上限 / 用户点击 [结束并分析] 三条路径统一走 finish()；
- *  - 耳机提示受 pref:headphoneHint 开关控制（"不再提示"勾选写回 prefs，lib/pref-keys.ts）；
  *  - echoCancellation 已由 recorder 默认开启（getUserMedia 约束）；
  *  - 麦克风权限拒绝渲染引导浮层（§6.3，shared/score-panel.tsx MicPermissionOverlay）；
  *  - 会话载荷契约见 lib/report-session.ts（供批次 E 的 P9 报告页消费）。
@@ -22,7 +21,6 @@ import { Progress } from '@/components/ui/progress'
 import { Shell } from '@/components/shared/shell'
 import { MicPermissionOverlay } from '@/components/shared/score-panel'
 import { setReportPayload } from '@/lib/report-session'
-import { getHeadphoneHint, setHeadphoneHint } from '@/lib/pref-keys'
 import { SentencePlayer } from '@/core/player/sentence-player'
 import { HtmlPlayerController } from '@/platform/html-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
@@ -56,8 +54,6 @@ function Shadowing() {
   const [activeIdx, setActiveIdx] = useState(-1)
   const [showSub, setShowSub] = useState(false)
   const [paused, setPaused] = useState(false)
-  /** 耳机提示开关：读 pref:headphoneHint（false 时跳过提示卡直接进入就绪） */
-  const [headphoneHint, setHeadphoneHintOn] = useState(() => getHeadphoneHint())
   const [permDenied, setPermDenied] = useState(false)
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
@@ -249,18 +245,10 @@ function Shadowing() {
                 <p className="font-medium">{record.material.name}</p>
                 <p className="mt-1 text-sm text-muted-foreground">{sentences.length} 句 · 全长 {formatClock(durationMs)} · 录音上限 60 秒（原型）</p>
               </div>
-              {headphoneHint && (
-                <div className="flex flex-col gap-2 rounded-xl bg-primary/10 p-4 text-left text-primary">
-                  <div className="flex items-start gap-3">
-                    <Headphones className="mt-0.5 size-5 shrink-0" />
-                    <p className="text-sm leading-relaxed">建议佩戴耳机进行跟读，避免扬声器外放被麦克风拾取产生回声干扰。开始后原音将全文连播，请同步跟读并录音。</p>
-                  </div>
-                  <label className="flex cursor-pointer items-center gap-2 pl-8 text-xs text-primary/80">
-                    <input type="checkbox" className="size-3.5 accent-current" onChange={(e) => { setHeadphoneHint(!e.target.checked); setHeadphoneHintOn(!e.target.checked) }} />
-                    不再提示
-                  </label>
-                </div>
-              )}
+              <div className="flex items-start gap-3 rounded-xl bg-primary/10 p-4 text-left text-primary">
+                <Headphones className="mt-0.5 size-5 shrink-0" />
+                <p className="text-sm leading-relaxed">建议佩戴耳机进行跟读，避免扬声器外放被麦克风拾取产生回声干扰。开始后原音将全文连播，请同步跟读并录音。</p>
+              </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
               <Button onClick={() => void begin()}>开始跟读</Button>
             </CardContent>

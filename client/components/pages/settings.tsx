@@ -12,8 +12,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, Gauge, Headphones, Mic, Repeat, Trash2 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import { Database, Gauge, Mic, Repeat, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -26,8 +25,8 @@ import { initMaterials, materialStore, removeMaterial } from '@/stores/material-
 import { useStore } from '@/stores/store'
 import { DEFAULT_WHISPER_ALIGN_URL, DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
 import {
-  getDefaultLoop, getDefaultRate, getHeadphoneHint, getRecordMode,
-  PREF_LOOPS, PREF_RATES, setDefaultLoop, setDefaultRate, setHeadphoneHint, setRecordMode,
+  getDefaultLoop, getDefaultRate, getRecordMode,
+  PREF_LOOPS, PREF_RATES, setDefaultLoop, setDefaultRate, setRecordMode,
   type PrefLoop, type PrefRate, type PrefRecordMode,
 } from '@/lib/pref-keys'
 import type { TrainingRecord } from '@/types/training'
@@ -95,13 +94,11 @@ function TrainingSettingsSection() {
   const [rate, setRate] = useState<PrefRate>(1)
   const [loop, setLoop] = useState<PrefLoop>(0)
   const [recordMode, setRecordModeState] = useState<PrefRecordMode>('hold')
-  const [headphoneHint, setHeadphoneHintState] = useState(true)
 
   useEffect(() => {
     setRate(getDefaultRate())
     setLoop(getDefaultLoop())
     setRecordModeState(getRecordMode())
-    setHeadphoneHintState(getHeadphoneHint())
   }, [])
 
   const cycleRate = () => {
@@ -118,10 +115,6 @@ function TrainingSettingsSection() {
     const next: PrefRecordMode = recordMode === 'hold' ? 'tap' : 'hold'
     setRecordModeState(next)
     setRecordMode(next)
-  }
-  const toggleHeadphoneHint = () => {
-    setHeadphoneHintState(!headphoneHint)
-    setHeadphoneHint(!headphoneHint)
   }
 
   return (
@@ -160,21 +153,6 @@ function TrainingSettingsSection() {
             </div>
             <Button variant="outline" onClick={cycleRecordMode} aria-label="切换录音交互方式">
               {recordMode === 'hold' ? '按住录音' : '点击录音'}
-            </Button>
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium">耳机提示</p>
-              <CardDescription>开始跟读前提醒佩戴耳机</CardDescription>
-            </div>
-            <Button
-              variant={headphoneHint ? 'secondary' : 'outline'}
-              onClick={toggleHeadphoneHint}
-              aria-pressed={headphoneHint}
-              aria-label="切换耳机提示"
-            >
-              <Headphones data-icon="inline-start" />{headphoneHint ? '已开启' : '已关闭'}
-              <Badge variant={headphoneHint ? 'default' : 'secondary'}>{headphoneHint ? '开' : '关'}</Badge>
             </Button>
           </div>
         </CardContent>
