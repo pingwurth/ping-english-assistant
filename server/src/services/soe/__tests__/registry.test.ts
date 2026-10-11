@@ -15,7 +15,9 @@ describe('createSoeProviderRegistry', () => {
   })
 
   it('tencent 凭据 → 注册表含 tencent', () => {
-    const r = createSoeProviderRegistry(mkEnv({ TENCENT_SECRET_ID: 'id', TENCENT_SECRET_KEY: 'key' }))
+    const r = createSoeProviderRegistry(
+      mkEnv({ TENCENT_APP_ID: '1250000000', TENCENT_SECRET_ID: 'id', TENCENT_SECRET_KEY: 'key' }),
+    )
     expect([...r.providers.keys()]).toContain('tencent')
   })
 
@@ -31,6 +33,7 @@ describe('createSoeProviderRegistry', () => {
       mkEnv({
         AZURE_SPEECH_KEY: 'k',
         AZURE_SPEECH_REGION: 'eastasia',
+        TENCENT_APP_ID: '1250000000',
         TENCENT_SECRET_ID: 'id',
         TENCENT_SECRET_KEY: 'key',
         IFLYTEK_APP_ID: 'app',
@@ -43,7 +46,7 @@ describe('createSoeProviderRegistry', () => {
 
   it('defaultName 跟随 SOE_PROVIDER', () => {
     const r = createSoeProviderRegistry(
-      mkEnv({ SOE_PROVIDER: 'tencent', TENCENT_SECRET_ID: 'id', TENCENT_SECRET_KEY: 'key' }),
+      mkEnv({ SOE_PROVIDER: 'tencent', TENCENT_APP_ID: '1250000000', TENCENT_SECRET_ID: 'id', TENCENT_SECRET_KEY: 'key' }),
     )
     expect(r.defaultName).toBe('tencent')
   })

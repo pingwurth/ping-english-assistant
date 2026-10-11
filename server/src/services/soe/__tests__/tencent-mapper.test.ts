@@ -1,7 +1,34 @@
 import { describe, expect, it } from 'vitest'
 import { mapTencentToContract, type TencentSoeResponse } from '../soe-mapper'
 
-const base: TencentSoeResponse['Response'] = {
+/** 新版 WS result 形态：Tag 词标签 + PhoneInfo 音素数组（字段名 Phoneme/Phone 混用防御） */
+const newStyle: TencentSoeResponse = {
+  PronAccuracy: 84.2,
+  PronFluency: 0.889,
+  PronCompletion: 0.8,
+  SuggestedScore: 85.6,
+  Words: [
+    {
+      Word: 'hello',
+      ReferenceWord: 'hello',
+      PronAccuracy: 90.4,
+      Tag: 0,
+      PhoneInfo: [
+        { Phone: 'h', PronAccuracy: 92 },
+        { Phoneme: 'ə', PronAccuracy: 87.6 },
+      ],
+    },
+    { Word: 'world', PronAccuracy: 78.2, Tag: 1 },
+    { Word: 'extra', PronAccuracy: 60, Tag: 2 },
+    { Word: 'wrld', PronAccuracy: 55.5, Tag: 3 },
+    { Word: 'plain' },
+    { Word: 'odd', PronAccuracy: 70, Tag: 9 },
+  ],
+  RequestId: 'req-1',
+}
+
+/** 旧版 REST 形态：MatchTag + PhoneInfos（防御性双形状兼容） */
+const legacyStyle: TencentSoeResponse = {
   PronAccuracy: 84.2,
   PronFluency: 0.889,
   PronCompletion: 0.8,
@@ -11,22 +38,15 @@ const base: TencentSoeResponse['Response'] = {
       Word: 'hello',
       PronAccuracy: 90.4,
       MatchTag: 0,
-      PhoneInfos: [
-        { Phone: 'h', PronAccuracy: 92 },
-        { Phone: 'ə', PronAccuracy: 87.6 },
-      ],
+      PhoneInfos: [{ Phone: 'h', PronAccuracy: 92 }],
     },
-    { Word: 'world', PronAccuracy: 78.2, MatchTag: 1 },
-    { Word: 'extra', PronAccuracy: 60, MatchTag: 2 },
-    { Word: 'wrld', PronAccuracy: 55.5, MatchTag: 3 },
-    { Word: 'plain' },
+    { Word: 'world', PronAccuracy: 78.2, MatchTag: 3 },
   ],
-  RequestId: 'req-1',
 }
 
 describe('mapTencentToContract', () => {
   it('百分制取整 + [0,1] 小数 ×100（85.6/84.2/0.889/0.8 → 86/84/89/80）', () => {
-    const r = mapTencentToContract(base)
+    const r = mapTencentToContract(newStyle)
     expect(r.total).toBe(86)
     expect(r.accuracy).toBe(84)
     expect(r.fluency).toBe(89)
@@ -34,28 +54,38 @@ describe('mapTencentToContract', () => {
   })
 
   it('PronAccuracy=-1 → 0', () => {
-    const r = mapTencentToContract({ ...base, PronAccuracy: -1, SuggestedScore: -1 })
+    const r = mapTencentToContract({ ...newStyle, PronAccuracy: -1, SuggestedScore: -1 })
     expect(r.accuracy).toBe(0)
     expect(r.total).toBe(0)
   })
 
   it('SuggestedScore 缺失 → total 回退 PronAccuracy', () => {
-    const r = mapTencentToContract({ ...base, SuggestedScore: undefined })
+    const r = mapTencentToContract({ ...newStyle, SuggestedScore: undefined })
     expect(r.total).toBe(84)
   })
 
-  it('MatchTag 0/1/2/3 → None/Omission/Insertion/Mispronunciation，缺失 → undefined', () => {
-    const r = mapTencentToContract(base)
+  it('Tag 0/1/2/3 → None/Omission/Insertion/Mispronunciation，缺失/未知 → undefined', () => {
+    const r = mapTencentToContract(newStyle)
     const types = r.words.map((w) => w.errorType)
-    expect(types).toEqual(['None', 'Omission', 'Insertion', 'Mispronunciation', undefined])
+    expect(types).toEqual(['None', 'Omission', 'Insertion', 'Mispronunciation', undefined, undefined])
   })
 
-  it('PhoneInfos 映射为 phonemes', () => {
-    const r = mapTencentToContract(base)
+  it('旧版 MatchTag 形态同样映射（防御性兼容）', () => {
+    const r = mapTencentToContract(legacyStyle)
+    expect(r.words.map((w) => w.errorType)).toEqual(['None', 'Mispronunciation'])
+  })
+
+  it('PhoneInfo 音素数组映射（Phone/Phoneme 字段双形状）', () => {
+    const r = mapTencentToContract(newStyle)
     expect(r.words[0]?.phonemes).toEqual([
       { symbol: 'h', score: 92 },
       { symbol: 'ə', score: 88 },
     ])
+  })
+
+  it('旧版 PhoneInfos 形态同样映射音素', () => {
+    const r = mapTencentToContract(legacyStyle)
+    expect(r.words[0]?.phonemes).toEqual([{ symbol: 'h', score: 92 }])
   })
 
   it('Words 缺失 → []', () => {

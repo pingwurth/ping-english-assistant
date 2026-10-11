@@ -27,7 +27,7 @@ const credsSchema: z.ZodType<SoeRequestCreds> = z.object({
     .object({ key: z.string().optional(), region: z.string().optional(), host: z.string().optional() })
     .optional(),
   tencent: z
-    .object({ secretId: z.string().optional(), secretKey: z.string().optional() })
+    .object({ appId: z.string().optional(), secretId: z.string().optional(), secretKey: z.string().optional() })
     .optional(),
   iflytek: z
     .object({

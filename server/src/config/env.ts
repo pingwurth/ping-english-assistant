@@ -16,7 +16,8 @@ export const envSchema = z.object({
   /** 自定义域名资源（如 https://my-speech.cognitiveservices.azure.com）；设置后优先于 REGION */
   AZURE_SPEECH_HOST: z.string().optional(),
   AZURE_SPEECH_KEY: z.string().optional(),
-  /** 腾讯云智聆口语评测：访问管理 CAM → API 密钥管理 */
+  /** 腾讯云口语评测（新版 OEN WS）：账号 AppID（数字，控制台「账号信息」页）+ CAM 密钥 */
+  TENCENT_APP_ID: z.string().optional(),
   TENCENT_SECRET_ID: z.string().optional(),
   TENCENT_SECRET_KEY: z.string().optional(),
   /** 科大讯飞 ISE 流式版：控制台「语音评测」应用三件套 */
@@ -57,9 +58,9 @@ export function azureCredsOk(env: Env): boolean {
   return Boolean(env.AZURE_SPEECH_KEY && (env.AZURE_SPEECH_HOST || env.AZURE_SPEECH_REGION))
 }
 
-/** 腾讯凭据齐备：SecretId + SecretKey */
+/** 腾讯凭据齐备：AppID + SecretId + SecretKey 三件全填 */
 export function tencentCredsOk(env: Env): boolean {
-  return Boolean(env.TENCENT_SECRET_ID && env.TENCENT_SECRET_KEY)
+  return Boolean(env.TENCENT_APP_ID && env.TENCENT_SECRET_ID && env.TENCENT_SECRET_KEY)
 }
 
 /** 讯飞凭据齐备：APP_ID + API_KEY + API_SECRET 三件全填 */
@@ -98,7 +99,7 @@ export function loadEnv(): Env {
         if (!env.AZURE_SPEECH_KEY) throw new Error('SOE_PROVIDER=azure 需要 AZURE_SPEECH_KEY')
         throw new Error('SOE_PROVIDER=azure 需要 AZURE_SPEECH_REGION 或 AZURE_SPEECH_HOST 其一')
       case 'tencent':
-        throw new Error('SOE_PROVIDER=tencent 需要 TENCENT_SECRET_ID 与 TENCENT_SECRET_KEY')
+        throw new Error('SOE_PROVIDER=tencent 需要 TENCENT_APP_ID / TENCENT_SECRET_ID / TENCENT_SECRET_KEY')
       case 'iflytek':
         throw new Error('SOE_PROVIDER=iflytek 需要 IFLYTEK_APP_ID / IFLYTEK_API_KEY / IFLYTEK_API_SECRET')
       case 'mock':

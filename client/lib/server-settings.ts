@@ -304,7 +304,7 @@ export interface SoeSettingsConfig {
   provider: 'mock' | 'azure' | 'tencent' | 'iflytek'
   proxyUrl: string
   azure?: { key: string; region: string; host: string }
-  tencent?: { secretId: string; secretKey: string }
+  tencent?: { appId: string; secretId: string; secretKey: string }
   iflytek?: { appId: string; apiKey: string; apiSecret: string }
 }
 

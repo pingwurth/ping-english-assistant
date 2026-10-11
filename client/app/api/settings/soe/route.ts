@@ -45,7 +45,7 @@ export async function PUT(request: Request) {
       provider: provider as SoeSettingsConfig['provider'],
       proxyUrl: proxyUrl.trim(),
       azure: normalizeCreds(azure, ['key', 'region', 'host']) as SoeSettingsConfig['azure'],
-      tencent: normalizeCreds(tencent, ['secretId', 'secretKey']) as SoeSettingsConfig['tencent'],
+      tencent: normalizeCreds(tencent, ['appId', 'secretId', 'secretKey']) as SoeSettingsConfig['tencent'],
       iflytek: normalizeCreds(iflytek, ['appId', 'apiKey', 'apiSecret']) as SoeSettingsConfig['iflytek'],
     }
     await writeSoeConfig(config)

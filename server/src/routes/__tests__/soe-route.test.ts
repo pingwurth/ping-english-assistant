@@ -100,6 +100,18 @@ describe('POST /api/v1/soe/evaluate（请求级 creds）', () => {
     expect(res.json().code).not.toBe('PROVIDER_UNAVAILABLE')
   })
 
+  it("provider=tencent + creds 齐备（含 appId）→ 非 503（越过注册表解析，fake 密钥走到上游 WS 错误）", async () => {
+    const app = await buildApp(mkEnv({ SOE_TIMEOUT_MS: 2000, SOE_RETRY: 0 }), { logger: false })
+    const res = await post(app, [
+      { name: 'refText', value: 'hello' },
+      { name: 'provider', value: 'tencent' },
+      { name: 'creds', value: JSON.stringify({ tencent: { appId: '1250000000', secretId: 'AKIDfake', secretKey: 'fakekey' } }) },
+      audioPart,
+    ])
+    expect(res.statusCode).not.toBe(503)
+    expect(res.json().code).not.toBe('PROVIDER_UNAVAILABLE')
+  })
+
   it('provider=tencent 无 creds → 503 PROVIDER_UNAVAILABLE', async () => {
     const app = await buildApp(mkEnv(), { logger: false })
     const res = await post(app, [{ name: 'refText', value: 'hello' }, { name: 'provider', value: 'tencent' }, audioPart])

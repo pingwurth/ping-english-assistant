@@ -1,61 +1,57 @@
 /**
- * 腾讯云智聆口语评测（SOE）provider —— 备选方案（选型报告 §5.2）。
+ * 腾讯云「口语评测（新版/OEN）」provider —— wss://soe.cloud.tencent.com/soe/api/<appid>。
  *
- * TC3-HMAC-SHA256 签名 POST https://soe.tencentcloudapi.com（soe 2018-07-24 版）：
- *   - TransmitOralProcessWithInit 一次性模式：WorkMode=1（整段音频 base64 随 UserAudioData 提交）
- *   - EvalMode=1 句子级 / ServerType=0 英文 / VoiceFileType=2 wav（保留头）/ VoiceEncodeType=1 base64
- *   - ⚠️ 勿手动设置 Host 头 —— WHATWG fetch 禁止头会被静默丢弃，Host 由 URL 决定，签名仍用 HOST 常量
- *   - ⚠️ 多数腾讯 API 错误是 HTTP 200 + body.Response.Error：先查信封再看状态码
- * 接口细节查询于 2026-10：cloud.tencent.com/document/product/884
- * 超时 SOE_TIMEOUT_MS + 重试 SOE_RETRY 次（仅网络错/超时/上游错重试，报告 §6.1）。
+ * 录音模式（rec_mode=1）一次性 WS 会话（结构与官方 JS SDK soe/src/soeSocket.ts 同构）：
+ *   - 全部初始化参数进 URL query（含 HMAC-SHA1+Base64 签名，构造见 tencent-ws-auth.ts）
+ *   - 握手成功首帧 {"code":0,"message":"success","voice_id":"..."}；code!==0 即失败
+ *   - 音频整段单二进制帧上行（裸字节、非 base64，≤60s），随后文本帧 {"type":"end"}
+ *   - 结果均为文本帧 {"code","message","voice_id","message_id","result","final"}：
+ *     result 是内嵌 JSON 字符串；final=1 后客户端主动 close(1000)
+ *   - 常见错误码：4002 鉴权失败 / 4006 并发超限 / 4008 分片等待超时 / 4105 无人声（4000~5002 族）
+ * 接口文档查询于 2026-10：cloud.tencent.com/document/product/1774/107497。
+ * 超时 SOE_TIMEOUT_MS + 重试 SOE_RETRY 次（与 azure/iflytek 相同重试条件，报告 §6.1）。
  */
 
-import { randomUUID } from 'node:crypto'
+import WebSocket from 'ws'
 import { ApiError, ERR, apiError } from '../../lib/api-error'
 import type { Env } from '../../config/env'
 import { mapTencentToContract, type TencentSoeResponse } from './soe-mapper'
-import { tc3HmacSha256Sign } from './tencent-sign'
+import { buildTencentSoeWsUrl } from './tencent-ws-auth'
 import type { SoeEvaluateResponse, SoeInput, SoeProvider } from './soe-provider'
 
-const HOST = 'soe.tencentcloudapi.com'
-const SERVICE = 'soe'
-const VERSION = '2018-07-24'
-const ACTION = 'TransmitOralProcessWithInit'
-/** 单片音频上限：raw 700KB → base64 ≈ 933KB < API 1MB 上限 */
-const MAX_RAW_BYTES = 700_000
+/** OEN 录音模式整段音频上限：60s @16kHz/16bit/mono ≈ 1.92MB */
+const MAX_AUDIO_BYTES = 1_920_000
 
-/** 信封内 Error.Code → 契约错误（腾讯 API 错误的主要形态：HTTP 200 + Response.Error） */
-function mapEnvelopeError(err: NonNullable<TencentSoeResponse['Response']['Error']>): ApiError {
-  const code = err.Code
-  if (code.startsWith('AuthFailure') || code.startsWith('UnauthorizedOperation')) {
-    return apiError(ERR.SOE_UPSTREAM_ERROR, '评分上游认证失败：检查 TENCENT_SECRET_ID / TENCENT_SECRET_KEY', {
+/** 腾讯 OEN WS 文本帧中我们关心的子集 */
+interface SoeWsMessage {
+  code?: number
+  message?: string
+  voice_id?: string
+  message_id?: number
+  /** 内嵌 JSON 字符串（final=1 帧携带完整评分结果；防御：也可能已是对象） */
+  result?: string | TencentSoeResponse
+  final?: number
+}
+
+/** WS 错误码 → 契约错误（错误码族 4000~5002，常见值见类头注释） */
+function mapWsError(code: number, message: string | undefined): ApiError {
+  if (code === 4002) {
+    return apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯云鉴权失败：检查 TENCENT_SECRET_ID / TENCENT_SECRET_KEY / TENCENT_APP_ID', {
       code,
-      message: err.Message,
+      message,
     })
   }
-  if (code.startsWith('LimitExceeded') || code.startsWith('RequestLimitExceeded')) {
-    return apiError(ERR.UPSTREAM_RATE_LIMIT, '评分上游限流，请稍后重试', { code })
-  }
-  if (code.includes('VadNotDetectedSpeak')) {
-    return apiError(ERR.SOE_NO_SPEECH, '未检测到语音，请对着麦克风再读一次', { code })
-  }
-  if (code.includes('VoiceMsgOversized') || code.includes('TooLongPackage')) {
-    return apiError(ERR.PAYLOAD_TOO_LARGE, '腾讯 SOE 单片音频上限约 1MB（base64），请缩短录音', { code })
-  }
-  const lower = code.toLowerCase()
-  if (lower.includes('base64') || lower.includes('decode') || lower.includes('wav')) {
-    return apiError(ERR.SOE_UPSTREAM_ERROR, '评分上游拒绝了音频数据（格式不符）', { code, message: err.Message })
-  }
-  return apiError(ERR.SOE_UPSTREAM_ERROR, '评分上游错误', { code, message: err.Message })
+  if (code === 4006) return apiError(ERR.UPSTREAM_RATE_LIMIT, '评分上游并发超限，请稍后重试', { code, message })
+  if (code === 4008) return apiError(ERR.UPSTREAM_TIMEOUT, '评分上游分片等待超时', { code, message })
+  if (code === 4105) return apiError(ERR.SOE_NO_SPEECH, '未检测到语音，请对着麦克风再读一次', { code })
+  return apiError(ERR.SOE_UPSTREAM_ERROR, `腾讯 SOE 错误 ${code}: ${message ?? ''}`, { code, message })
 }
 
 export function createTencentSoeProvider(env: Env): SoeProvider {
-  const url = `https://${HOST}/`
-
   const evaluate = async (input: SoeInput, signal?: AbortSignal): Promise<SoeEvaluateResponse> => {
-    // 上游单片上限提前拒绝（不可重试的确定性失败）
-    if (input.audio.length > MAX_RAW_BYTES) {
-      throw apiError(ERR.PAYLOAD_TOO_LARGE, '腾讯 SOE 单片音频上限约 1MB（base64），请缩短录音', {
+    // 录音模式整段上限提前拒绝（确定性失败，重试无意义）
+    if (input.audio.length > MAX_AUDIO_BYTES) {
+      throw apiError(ERR.PAYLOAD_TOO_LARGE, '腾讯 SOE 录音模式整段音频上限约 60s（1.92MB），请缩短录音', {
         bytes: input.audio.length,
       })
     }
@@ -64,99 +60,127 @@ export function createTencentSoeProvider(env: Env): SoeProvider {
     let lastErr: unknown
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
-        return await callOnce(input, signal)
+        // 每次重试独立会话：重新生成 timestamp/nonce/voice_id/签名/连接
+        return await sessionOnce(input, signal)
       } catch (err) {
         lastErr = err
-        // 超时/客户端断开不重试；网络错与 5xx/429 按配置重试
+        // 超时/客户端断开不重试；网络错与上游错误按配置重试
         if (attempt === attempts || !isRetryable(err)) throw err
       }
     }
     throw lastErr // 不可达（attempts≥1），取悦类型系统
   }
 
-  const callOnce = async (input: SoeInput, signal?: AbortSignal): Promise<SoeEvaluateResponse> => {
-    if (!env.TENCENT_SECRET_ID || !env.TENCENT_SECRET_KEY) {
-      throw apiError(ERR.SOE_UPSTREAM_ERROR, 'TENCENT_SECRET_ID / TENCENT_SECRET_KEY 未配置')
+  const sessionOnce = async (input: SoeInput, signal?: AbortSignal): Promise<SoeEvaluateResponse> => {
+    if (!env.TENCENT_APP_ID || !env.TENCENT_SECRET_ID || !env.TENCENT_SECRET_KEY) {
+      throw apiError(ERR.SOE_UPSTREAM_ERROR, 'TENCENT_APP_ID / TENCENT_SECRET_ID / TENCENT_SECRET_KEY 未配置')
     }
 
-    // 签名与发送必须用同一个 JSON.stringify 产物（TC3 对 payload 做 sha256，差一个字节即签名失效）
-    const timestamp = Math.floor(Date.now() / 1000)
-    const payload = JSON.stringify({
-      SessionId: randomUUID(),
-      RefText: input.refText,
-      SeqId: 1,
-      IsEnd: 1,
-      WorkMode: 1, // 一次性
-      EvalMode: 1, // 句子
-      ServerType: 0, // 英文
-      ScoreCoefficient: 1.0,
-      VoiceFileType: 2, // wav 头保留
-      VoiceEncodeType: 1, // base64
-      UserAudioData: input.audio.toString('base64'),
-    })
-
-    const sign = tc3HmacSha256Sign({
+    const { url } = buildTencentSoeWsUrl({
+      appId: env.TENCENT_APP_ID,
       secretId: env.TENCENT_SECRET_ID,
       secretKey: env.TENCENT_SECRET_KEY,
-      service: SERVICE,
-      host: HOST,
-      action: ACTION,
-      payload,
-      timestamp,
+      refText: input.refText,
     })
 
-    let res: Response
     const timeoutSignal = AbortSignal.timeout(env.SOE_TIMEOUT_MS)
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: sign.authorization,
-          'Content-Type': 'application/json; charset=utf-8',
-          'X-TC-Action': ACTION,
-          'X-TC-Timestamp': String(timestamp),
-          'X-TC-Version': VERSION,
-        },
-        body: payload,
-        signal: combined,
-      })
-    } catch (err) {
-      if (signal?.aborted) throw err // 调用方取消：原样上抛
-      const reason = err instanceof Error ? err.message : String(err)
-      throw apiError(ERR.UPSTREAM_TIMEOUT, '评分上游请求超时或网络不可达', { reason })
-    }
 
-    const text = await res.text().catch(() => '')
-    let body: TencentSoeResponse | undefined
-    try {
-      body = JSON.parse(text) as TencentSoeResponse
-    } catch {
-      body = undefined
-    }
+    return await new Promise<SoeEvaluateResponse>((resolve, reject) => {
+      let settled = false
+      let sock: WebSocket
 
-    // (1) 信封内错误（腾讯多数 API 错误是 HTTP 200 + Response.Error）
-    const envErr = body?.Response?.Error
-    if (envErr) throw mapEnvelopeError(envErr)
-
-    // (2) 非信封错误按状态码归一
-    if (res.status !== 200) {
-      if (res.status === 401 || res.status === 403) {
-        throw apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯认证失败：检查 TENCENT_SECRET_ID / TENCENT_SECRET_KEY', {
-          status: res.status,
-          body: text.slice(0, 500),
-        })
+      const onAbort = (): void => {
+        if (signal?.aborted) {
+          // 调用方取消：原样上抛（非 ApiError → 不重试）
+          fail(signal.reason ?? new Error('aborted'))
+        } else {
+          fail(apiError(ERR.UPSTREAM_TIMEOUT, '腾讯 SOE 会话超时'))
+        }
       }
-      if (res.status === 429) throw apiError(ERR.UPSTREAM_RATE_LIMIT, '评分上游限流，请稍后重试')
-      throw apiError(ERR.SOE_UPSTREAM_ERROR, `评分上游错误（HTTP ${res.status}）`, { body: text.slice(0, 500) })
-    }
 
-    // (3) HTTP 200 无 Error 但缺结果字段
-    const resp = body?.Response
-    if (!resp || typeof resp.PronAccuracy !== 'number') {
-      throw apiError(ERR.SOE_UPSTREAM_ERROR, '评分响应缺少结果字段', { body: text.slice(0, 500) })
-    }
-    return mapTencentToContract(resp)
+      const cleanup = (): void => combined.removeEventListener('abort', onAbort)
+
+      const fail = (err: unknown): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        sock?.terminate()
+        reject(err)
+      }
+
+      const settle = (value: SoeEvaluateResponse): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        sock?.close(1000)
+        resolve(value)
+      }
+
+      combined.addEventListener('abort', onAbort, { once: true })
+      if (combined.aborted) onAbort()
+
+      sock = new WebSocket(url, { handshakeTimeout: env.SOE_TIMEOUT_MS })
+
+      // 握手非 101（签名/参数错时腾讯直接拒绝协议升级）
+      sock.on('unexpected-response', (_req, res) => {
+        fail(apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯 WS 握手失败', { statusCode: res.statusCode }))
+      })
+      sock.on('error', (err: Error) => {
+        fail(apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯 WS 连接错误', { reason: err.message }))
+      })
+      // 正常收尾在 settle 中先置 settled；此处只兜「结果未回先断」（与官方 SDK onclose 同判）
+      sock.on('close', () => {
+        fail(apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯连接在结果返回前关闭'))
+      })
+
+      sock.on('open', () => {
+        try {
+          // 录音模式：整段 WAV 单二进制帧（Buffer 直发即 binary，无需 base64），再发结束标记
+          sock.send(input.audio)
+          sock.send(JSON.stringify({ type: 'end' }))
+        } catch (err) {
+          fail(apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯音频发送失败', {
+            reason: err instanceof Error ? err.message : String(err),
+          }))
+        }
+      })
+
+      sock.on('message', (raw: Buffer, isBinary: boolean) => {
+        if (isBinary) return // 评分结果均为文本帧，二进制帧直接忽略
+        let msg: SoeWsMessage
+        try {
+          msg = JSON.parse(raw.toString('utf8')) as SoeWsMessage
+        } catch {
+          fail(apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯评分消息解析失败'))
+          return
+        }
+        if (typeof msg.code === 'number' && msg.code !== 0) {
+          fail(mapWsError(msg.code, msg.message))
+          return
+        }
+        if (msg.final === 1) {
+          if (msg.result === undefined) {
+            fail(apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯评分响应缺少结果字段', { message: msg.message }))
+            return
+          }
+          // result 是内嵌 JSON 字符串（防御：已对象则直接用）
+          let result: TencentSoeResponse
+          if (typeof msg.result === 'string') {
+            try {
+              result = JSON.parse(msg.result) as TencentSoeResponse
+            } catch {
+              fail(apiError(ERR.SOE_UPSTREAM_ERROR, '腾讯评分结果解析失败'))
+              return
+            }
+          } else {
+            result = msg.result
+          }
+          settle(mapTencentToContract(result))
+        }
+        // 其余为中间帧（握手成功/识别中），忽略
+      })
+    })
   }
 
   const isRetryable = (err: unknown): boolean => {

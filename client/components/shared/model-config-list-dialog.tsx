@@ -649,16 +649,16 @@ interface SoeConfig {
   provider: 'mock' | 'azure' | 'tencent' | 'iflytek'
   proxyUrl: string
   azure?: { key?: string; region?: string; host?: string }
-  tencent?: { secretId?: string; secretKey?: string }
+  tencent?: { appId?: string; secretId?: string; secretKey?: string }
   iflytek?: { appId?: string; apiKey?: string; apiSecret?: string }
 }
 
 const soeProviderLabel = (v: SoeConfig['provider']) => SOE_PROVIDERS.find(p => p.value === v)?.label || v
 
-/** 凭据齐备判定（与服务端 providerCredsOk 同口径：azure 密钥+端点、tencent 两件、iflytek 三件） */
+/** 凭据齐备判定（与服务端 providerCredsOk 同口径：azure 密钥+端点、tencent 三件、iflytek 三件） */
 function soeCredsOk(c: SoeConfig, name: 'azure' | 'tencent' | 'iflytek'): boolean {
   if (name === 'azure') return Boolean(c.azure?.key && (c.azure?.host || c.azure?.region))
-  if (name === 'tencent') return Boolean(c.tencent?.secretId && c.tencent?.secretKey)
+  if (name === 'tencent') return Boolean(c.tencent?.appId && c.tencent?.secretId && c.tencent?.secretKey)
   return Boolean(c.iflytek?.appId && c.iflytek?.apiKey && c.iflytek?.apiSecret)
 }
 
@@ -668,7 +668,7 @@ function SoeConfigCard() {
   const [editProvider, setEditProvider] = useState<SoeConfig['provider']>('mock')
   const [editProxyUrl, setEditProxyUrl] = useState('')
   const [editAzure, setEditAzure] = useState({ key: '', region: '', host: '' })
-  const [editTencent, setEditTencent] = useState({ secretId: '', secretKey: '' })
+  const [editTencent, setEditTencent] = useState({ appId: '', secretId: '', secretKey: '' })
   const [editIflytek, setEditIflytek] = useState({ appId: '', apiKey: '', apiSecret: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -701,7 +701,7 @@ function SoeConfigCard() {
     setEditProvider(c.provider)
     setEditProxyUrl(c.proxyUrl)
     setEditAzure({ key: c.azure?.key ?? '', region: c.azure?.region ?? '', host: c.azure?.host ?? '' })
-    setEditTencent({ secretId: c.tencent?.secretId ?? '', secretKey: c.tencent?.secretKey ?? '' })
+    setEditTencent({ appId: c.tencent?.appId ?? '', secretId: c.tencent?.secretId ?? '', secretKey: c.tencent?.secretKey ?? '' })
     setEditIflytek({ appId: c.iflytek?.appId ?? '', apiKey: c.iflytek?.apiKey ?? '', apiSecret: c.iflytek?.apiSecret ?? '' })
     setEditing(true)
     setError('')
@@ -819,6 +819,14 @@ function SoeConfigCard() {
 
               {editProvider === 'tencent' && (
                 <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">AppID</label>
+                    <Input
+                      value={editTencent.appId}
+                      onChange={(e) => setEditTencent({ ...editTencent, appId: e.target.value })}
+                      placeholder="腾讯云账号 AppID（数字，控制台「账号信息」页）"
+                    />
+                  </div>
                   <div className="flex flex-col gap-1.5">
                     <label className="text-sm font-medium">SecretId</label>
                     <Input

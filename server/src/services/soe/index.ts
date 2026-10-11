@@ -30,7 +30,7 @@ export function createSoeProviderRegistry(env: Env): SoeProviderRegistry {
 /** 请求级密钥（multipart creds 字段的 JSON 形态；字段全可选） */
 export interface SoeRequestCreds {
   azure?: { key?: string; region?: string; host?: string }
-  tencent?: { secretId?: string; secretKey?: string }
+  tencent?: { appId?: string; secretId?: string; secretKey?: string }
   iflytek?: { appId?: string; apiKey?: string; apiSecret?: string }
 }
 
@@ -54,6 +54,7 @@ export function resolveSoeProvider(
     if (has(azure.host)) merged.AZURE_SPEECH_HOST = azure.host
   }
   if (tencent) {
+    if (has(tencent.appId)) merged.TENCENT_APP_ID = tencent.appId
     if (has(tencent.secretId)) merged.TENCENT_SECRET_ID = tencent.secretId
     if (has(tencent.secretKey)) merged.TENCENT_SECRET_KEY = tencent.secretKey
   }
