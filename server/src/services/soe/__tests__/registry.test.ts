@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createSoeProviderRegistry } from '../index'
+import { createSoeProviderRegistry, resolveSoeProvider } from '../index'
 import { mkEnv } from '../../../testing/fixtures'
 
 describe('createSoeProviderRegistry', () => {
@@ -46,5 +46,42 @@ describe('createSoeProviderRegistry', () => {
       mkEnv({ SOE_PROVIDER: 'tencent', TENCENT_SECRET_ID: 'id', TENCENT_SECRET_KEY: 'key' }),
     )
     expect(r.defaultName).toBe('tencent')
+  })
+})
+
+describe('resolveSoeProvider（请求级密钥解析）', () => {
+  it('请求级 azure 密钥齐备（env 无凭据）→ 现场构造 azure provider', () => {
+    const env = mkEnv()
+    const registry = createSoeProviderRegistry(env)
+    const p = resolveSoeProvider(registry, env, 'azure', { azure: { key: 'k', region: 'eastasia' } })
+    expect(p?.name).toBe('azure')
+  })
+
+  it('请求级 azure 密钥不全且 env 无凭据 → undefined', () => {
+    const env = mkEnv()
+    const registry = createSoeProviderRegistry(env)
+    expect(resolveSoeProvider(registry, env, 'azure', { azure: { key: 'k' } })).toBeUndefined()
+  })
+
+  it('无请求密钥且 env 有 azure 凭据 → 注册表实例（不重复构造）', () => {
+    const env = mkEnv({ AZURE_SPEECH_KEY: 'env-key', AZURE_SPEECH_REGION: 'eastasia' })
+    const registry = createSoeProviderRegistry(env)
+    expect(resolveSoeProvider(registry, env, 'azure')).toBe(registry.providers.get('azure'))
+  })
+
+  it('name=mock 携带任意 creds → mock provider（密钥无关）', () => {
+    const env = mkEnv()
+    const registry = createSoeProviderRegistry(env)
+    const p = resolveSoeProvider(registry, env, 'mock', { tencent: { secretId: 'x', secretKey: 'y' } })
+    expect(p).toBe(registry.providers.get('mock'))
+  })
+
+  it('请求密钥覆盖 env（同为 azure）→ 新构造实例，非注册表实例', () => {
+    const env = mkEnv({ AZURE_SPEECH_KEY: 'env-key', AZURE_SPEECH_REGION: 'eastasia' })
+    const registry = createSoeProviderRegistry(env)
+    const p = resolveSoeProvider(registry, env, 'azure', { azure: { key: 'req-key' } })
+    expect(p).toBeDefined()
+    expect(p).not.toBe(registry.providers.get('azure'))
+    expect(p?.name).toBe('azure')
   })
 })

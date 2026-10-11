@@ -296,3 +296,31 @@ export async function writeKokoroSettings(settings: KokoroSettings): Promise<voi
   raw.kokoro = settings
   await writeRaw(raw)
 }
+
+/* ── SOE 语音评测设置 ─────────────────────────────────── */
+
+/** 语音评测配置（settings.json 的 soe section；密钥仅存本机，由 BFF 注入代理请求） */
+export interface SoeSettingsConfig {
+  provider: 'mock' | 'azure' | 'tencent' | 'iflytek'
+  proxyUrl: string
+  azure?: { key: string; region: string; host: string }
+  tencent?: { secretId: string; secretKey: string }
+  iflytek?: { appId: string; apiKey: string; apiSecret: string }
+}
+
+/** 读取 soe 配置；section 缺失或 provider/proxyUrl 形态不符 → null（调用方回落默认值） */
+export async function readSoeConfig(): Promise<SoeSettingsConfig | null> {
+  const raw = await readRaw()
+  const s = raw.soe as Partial<SoeSettingsConfig> | undefined
+  if (!s) return null
+  const providers = ['mock', 'azure', 'tencent', 'iflytek']
+  if (typeof s.provider !== 'string' || !providers.includes(s.provider)) return null
+  if (typeof s.proxyUrl !== 'string' || !s.proxyUrl.trim()) return null
+  return s as SoeSettingsConfig
+}
+
+export async function writeSoeConfig(cfg: SoeSettingsConfig): Promise<void> {
+  const raw = await readRaw()
+  raw.soe = cfg
+  await writeRaw(raw)
+}

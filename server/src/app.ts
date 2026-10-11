@@ -41,6 +41,6 @@ export async function buildApp(env: Env, opts?: { logger?: boolean }): Promise<F
     soeProviders: [...soe.providers.keys()],
   }))
 
-  await app.register(buildSoeRoute(soe))
+  await app.register(buildSoeRoute(soe, env))
   return app
 }

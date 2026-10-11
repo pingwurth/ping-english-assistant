@@ -86,3 +86,32 @@ describe('GET /healthz', () => {
     expect(res.json()).toEqual({ ok: true, soeProvider: 'mock', soeProviders: ['mock'] })
   })
 })
+
+describe('POST /api/v1/soe/evaluate（请求级 creds）', () => {
+  it("provider=azure + creds 齐备 → 非 503（越过注册表解析，fake 密钥走到上游错误）", async () => {
+    const app = await buildApp(mkEnv({ SOE_TIMEOUT_MS: 2000, SOE_RETRY: 0 }), { logger: false })
+    const res = await post(app, [
+      { name: 'refText', value: 'hello' },
+      { name: 'provider', value: 'azure' },
+      { name: 'creds', value: JSON.stringify({ azure: { key: 'FAKE', region: 'not-a-real-region' } }) },
+      audioPart,
+    ])
+    expect(res.statusCode).not.toBe(503)
+    expect(res.json().code).not.toBe('PROVIDER_UNAVAILABLE')
+  })
+
+  it('provider=tencent 无 creds → 503 PROVIDER_UNAVAILABLE', async () => {
+    const app = await buildApp(mkEnv(), { logger: false })
+    const res = await post(app, [{ name: 'refText', value: 'hello' }, { name: 'provider', value: 'tencent' }, audioPart])
+    expect(res.statusCode).toBe(503)
+    expect(res.json().code).toBe('PROVIDER_UNAVAILABLE')
+  })
+
+  it('creds 非法 JSON → 400 BAD_REQUEST', async () => {
+    const app = await buildApp(mkEnv(), { logger: false })
+    const res = await post(app, [{ name: 'refText', value: 'hello' }, { name: 'creds', value: '{oops' }, audioPart])
+    expect(res.statusCode).toBe(400)
+    expect(res.json().code).toBe('BAD_REQUEST')
+    expect(res.json().message).toContain('JSON')
+  })
+})

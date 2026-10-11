@@ -9,8 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { buildServiceUrl, DEFAULT_LOCAL_MODEL_URL, DEFAULT_SOE_PROXY_URL, getDefaultEndpoint } from '@/lib/service-endpoints'
-import { getSoeProvider, getSoeProxyUrl, setSoeProvider, setSoeProxyUrl, type PrefSoeProvider } from '@/lib/pref-keys'
+import { DEFAULT_LOCAL_MODEL_URL, DEFAULT_SOE_PROXY_URL, getDefaultEndpoint } from '@/lib/service-endpoints'
 import { getKokoroModelId, setKokoroModelId } from '@/platform/kokoro-tts'
 
 /* ── 类型 & 常量 ── */
@@ -645,86 +644,262 @@ function KokoroConfigCard() {
 
 /* ── SoeConfigCard — 语音评测（跟读评分）配置 ── */
 
-function SoeConfigCard() {
-  const [provider, setProvider] = useState<PrefSoeProvider>('mock')
-  const [proxyUrl, setProxyUrl] = useState('')
-  const [health, setHealth] = useState<{ status: 'unknown' | 'ok' | 'down'; providers: string[] }>({ status: 'unknown', providers: [] })
+/** SOE 配置形态（settings.json 的 soe section；与 lib/server-settings.ts 保持一致） */
+interface SoeConfig {
+  provider: 'mock' | 'azure' | 'tencent' | 'iflytek'
+  proxyUrl: string
+  azure?: { key?: string; region?: string; host?: string }
+  tencent?: { secretId?: string; secretKey?: string }
+  iflytek?: { appId?: string; apiKey?: string; apiSecret?: string }
+}
 
-  // /healthz 连通检测：ok 且 data.ok → 已连接（附可用 provider 列表）；任何失败静默置为未连接
-  const checkHealth = useCallback(async (base: string) => {
-    setHealth({ status: 'unknown', providers: [] })
+const soeProviderLabel = (v: SoeConfig['provider']) => SOE_PROVIDERS.find(p => p.value === v)?.label || v
+
+/** 凭据齐备判定（与服务端 providerCredsOk 同口径：azure 密钥+端点、tencent 两件、iflytek 三件） */
+function soeCredsOk(c: SoeConfig, name: 'azure' | 'tencent' | 'iflytek'): boolean {
+  if (name === 'azure') return Boolean(c.azure?.key && (c.azure?.host || c.azure?.region))
+  if (name === 'tencent') return Boolean(c.tencent?.secretId && c.tencent?.secretKey)
+  return Boolean(c.iflytek?.appId && c.iflytek?.apiKey && c.iflytek?.apiSecret)
+}
+
+function SoeConfigCard() {
+  const [config, setConfig] = useState<SoeConfig | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [editProvider, setEditProvider] = useState<SoeConfig['provider']>('mock')
+  const [editProxyUrl, setEditProxyUrl] = useState('')
+  const [editAzure, setEditAzure] = useState({ key: '', region: '', host: '' })
+  const [editTencent, setEditTencent] = useState({ secretId: '', secretKey: '' })
+  const [editIflytek, setEditIflytek] = useState({ appId: '', apiKey: '', apiSecret: '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [health, setHealth] = useState<'unknown' | 'ok' | 'down'>('unknown')
+
+  // 连接徽标走同源 BFF（内部探测 {proxyUrl}/healthz，无 CORS）；任何失败静默置为未连接
+  const checkHealth = useCallback(async () => {
+    setHealth('unknown')
     try {
-      const res = await fetch(buildServiceUrl(base, '/healthz'), { signal: AbortSignal.timeout(3000) })
+      const res = await fetch('/api/soe/health', { signal: AbortSignal.timeout(4000) })
       const data = res.ok ? await res.json().catch(() => null) : null
-      setHealth(res.ok && data?.ok ? { status: 'ok', providers: data.soeProviders ?? [] } : { status: 'down', providers: [] })
+      setHealth(data?.ok ? 'ok' : 'down')
     } catch {
-      setHealth({ status: 'down', providers: [] })
+      setHealth('down')
     }
   }, [])
 
-  // localStorage 读取放 effect 内（SSR/水合安全，不在 useState 初始化器中直接读），挂载即检测一次
+  // 挂载加载配置（失败回落默认：mock + 默认代理地址）并检测一次连通性
   useEffect(() => {
-    const p = getSoeProvider()
-    const url = getSoeProxyUrl()
-    setProvider(p)
-    setProxyUrl(url)
-    void checkHealth(url)
+    const fallback: SoeConfig = { provider: 'mock', proxyUrl: DEFAULT_SOE_PROXY_URL }
+    fetch('/api/settings/soe')
+      .then(res => res.ok ? res.json() : null)
+      .then((data: SoeConfig | null) => setConfig(data ?? fallback))
+      .catch(() => setConfig(fallback))
+    void checkHealth()
   }, [checkHealth])
 
-  const handleProviderChange = (v: PrefSoeProvider) => {
-    setProvider(v)
-    setSoeProvider(v) // 立即持久化，无保存按钮
+  const handleEdit = () => {
+    const c = config ?? { provider: 'mock' as const, proxyUrl: DEFAULT_SOE_PROXY_URL }
+    setEditProvider(c.provider)
+    setEditProxyUrl(c.proxyUrl)
+    setEditAzure({ key: c.azure?.key ?? '', region: c.azure?.region ?? '', host: c.azure?.host ?? '' })
+    setEditTencent({ secretId: c.tencent?.secretId ?? '', secretKey: c.tencent?.secretKey ?? '' })
+    setEditIflytek({ appId: c.iflytek?.appId ?? '', apiKey: c.iflytek?.apiKey ?? '', apiSecret: c.iflytek?.apiSecret ?? '' })
+    setEditing(true)
+    setError('')
   }
 
-  // 地址失焦或回车提交：写 pref 并重新检测连通性（空值回落默认地址）
-  const commitProxyUrl = () => {
-    const base = proxyUrl.trim() || DEFAULT_SOE_PROXY_URL
-    setSoeProxyUrl(proxyUrl)
-    void checkHealth(base)
+  const handleCancel = () => {
+    setEditing(false)
+    setError('')
+  }
+
+  const handleSave = async () => {
+    if (editProvider !== 'mock' && !editProxyUrl.trim()) { setError('代理服务地址不能为空'); return }
+    setSaving(true)
+    setError('')
+    try {
+      // 未选中的 provider 保留已存密钥；选中者以编辑值整体覆盖（空串由服务端归一丢弃）
+      const body: SoeConfig = {
+        provider: editProvider,
+        proxyUrl: editProxyUrl.trim() || DEFAULT_SOE_PROXY_URL,
+        azure: editProvider === 'azure' ? editAzure : config?.azure,
+        tencent: editProvider === 'tencent' ? editTencent : config?.tencent,
+        iflytek: editProvider === 'iflytek' ? editIflytek : config?.iflytek,
+      }
+      const res = await fetch('/api/settings/soe', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error('保存失败')
+      setConfig(await res.json())
+      setEditing(false)
+      void checkHealth()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
     <Card>
       <CardContent className="flex flex-col gap-4 p-5">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base"><Mic data-icon="inline-start" />语音评测（跟读评分）</CardTitle>
-          {health.status === 'ok' ? (
-            <Badge variant="secondary">已连接</Badge>
-          ) : health.status === 'down' ? (
-            <Badge variant="destructive">未连接</Badge>
-          ) : (
-            <span className="text-xs text-muted-foreground">检测中…</span>
+          <CardTitle className="text-base"><Mic data-icon="inline-start" />语音评测</CardTitle>
+          {!editing && (
+            <div className="flex items-center gap-2">
+              {config?.provider === 'mock' ? (
+                <span className="text-xs text-muted-foreground">演示模式·无需代理</span>
+              ) : health === 'ok' ? (
+                <Badge variant="secondary">已连接</Badge>
+              ) : health === 'down' ? (
+                <Badge variant="destructive">未连接</Badge>
+              ) : (
+                <span className="text-xs text-muted-foreground">检测中…</span>
+              )}
+              <Button size="sm" variant="outline" onClick={handleEdit}>
+                <Pencil className="mr-1 size-3" />编辑
+              </Button>
+            </div>
           )}
         </div>
 
         <div className="rounded-xl border px-4 py-3">
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium">评分服务</label>
-            <select
-              value={provider}
-              onChange={(e) => handleProviderChange(e.target.value as PrefSoeProvider)}
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-            >
-              {SOE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-          </div>
+          <p className="text-xs font-medium text-muted-foreground">跟读发音评分（provider 与密钥存本机 settings.json，经同源服务转发）</p>
+          {editing ? (
+            <div className="mt-2 flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">评分服务</label>
+                <select
+                  value={editProvider}
+                  onChange={(e) => setEditProvider(e.target.value as SoeConfig['provider'])}
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  {SOE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">代理服务地址</label>
+                <Input
+                  value={editProxyUrl}
+                  onChange={(e) => setEditProxyUrl(e.target.value)}
+                  placeholder={DEFAULT_SOE_PROXY_URL}
+                />
+              </div>
 
-          {provider !== 'mock' && (
-            <div className="mt-3 flex flex-col gap-1.5">
-              <label className="text-sm font-medium">代理服务地址</label>
-              <Input
-                value={proxyUrl}
-                placeholder={DEFAULT_SOE_PROXY_URL}
-                onChange={(e) => setProxyUrl(e.target.value)}
-                onBlur={commitProxyUrl}
-                onKeyDown={(e) => { if (e.key === 'Enter') commitProxyUrl() }}
-              />
-              {health.status === 'ok' && !health.providers.includes(provider) && (
-                <p className="text-xs text-destructive">该评分服务在代理端未配置（可用：{health.providers.join('/')}）</p>
+              {editProvider === 'azure' && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">Speech Key</label>
+                    <Input
+                      type="password"
+                      value={editAzure.key}
+                      onChange={(e) => setEditAzure({ ...editAzure, key: e.target.value })}
+                      placeholder="Azure 资源密钥（Ocp-Apim-Subscription-Key）"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">Region</label>
+                    <Input
+                      value={editAzure.region}
+                      onChange={(e) => setEditAzure({ ...editAzure, region: e.target.value })}
+                      placeholder="eastasia"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">Host（可选）</label>
+                    <Input
+                      value={editAzure.host}
+                      onChange={(e) => setEditAzure({ ...editAzure, host: e.target.value })}
+                      placeholder="自定义域名资源（设置后优先于 Region）"
+                    />
+                  </div>
+                </div>
               )}
+
+              {editProvider === 'tencent' && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">SecretId</label>
+                    <Input
+                      value={editTencent.secretId}
+                      onChange={(e) => setEditTencent({ ...editTencent, secretId: e.target.value })}
+                      placeholder="腾讯云 CAM API 密钥 SecretId"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">SecretKey</label>
+                    <Input
+                      type="password"
+                      value={editTencent.secretKey}
+                      onChange={(e) => setEditTencent({ ...editTencent, secretKey: e.target.value })}
+                      placeholder="腾讯云 CAM API 密钥 SecretKey"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {editProvider === 'iflytek' && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">AppId</label>
+                    <Input
+                      value={editIflytek.appId}
+                      onChange={(e) => setEditIflytek({ ...editIflytek, appId: e.target.value })}
+                      placeholder="讯飞控制台「语音评测」应用 AppId"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">APIKey</label>
+                    <Input
+                      type="password"
+                      value={editIflytek.apiKey}
+                      onChange={(e) => setEditIflytek({ ...editIflytek, apiKey: e.target.value })}
+                      placeholder="讯飞 API Key"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium">APISecret</label>
+                    <Input
+                      type="password"
+                      value={editIflytek.apiSecret}
+                      onChange={(e) => setEditIflytek({ ...editIflytek, apiSecret: e.target.value })}
+                      placeholder="讯飞 API Secret"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                {editProvider === 'mock'
+                  ? '演示模式使用本地伪评分，无需代理与密钥'
+                  : '密钥保存在本机 ~/.ping-eng/settings.json，由本地服务转发至评分代理，不会进入浏览器评分请求'}
+              </p>
+              {error && <p className="text-xs text-destructive">{error}</p>}
+              <div className="flex gap-2">
+                <Button size="sm" onClick={() => void handleSave()} disabled={saving}>
+                  {saving ? '保存中...' : '保存'}
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleCancel}>取消</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-2 flex flex-col gap-1.5">
+              <div>
+                <p className="text-xs text-muted-foreground">评分服务</p>
+                <p className="text-sm font-medium">{config ? soeProviderLabel(config.provider) : '加载中...'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">代理服务地址</p>
+                <p className="truncate font-mono text-xs font-medium">{config?.proxyUrl || DEFAULT_SOE_PROXY_URL}</p>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                <span>Azure：{config && soeCredsOk(config, 'azure') ? '已配置' : '未配置'}</span>
+                <span>科大讯飞：{config && soeCredsOk(config, 'iflytek') ? '已配置' : '未配置'}</span>
+                <span>腾讯云：{config && soeCredsOk(config, 'tencent') ? '已配置' : '未配置'}</span>
+              </div>
             </div>
           )}
-          <p className="mt-2 text-xs text-muted-foreground">演示模式无需代理；真实服务需先在 server/.env 配置对应密钥并重启代理</p>
         </div>
       </CardContent>
     </Card>

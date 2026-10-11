@@ -11,7 +11,7 @@
  */
 
 import type { AppServices, SoeService } from './contracts'
-import { getSoeProvider, getSoeProxyUrl } from '@/lib/pref-keys'
+import type { SoeSettingsConfig } from '@/lib/server-settings'
 import { MockAsrService, type MockAsrOptions } from './mock/asr'
 import { ApiSoeService } from './api/soe'
 import { MockSoeService, type MockSoeOptions } from './mock/soe'
@@ -55,11 +55,13 @@ export function getServices(_mode: ServiceMode = 'mock'): AppServices {
   return getMockServices()
 }
 
-/** 跟读评分服务解析：设置页 provider pref → mock（本地伪评分）或真实代理（契约②） */
-export function getSoeService(): SoeService {
-  const provider = getSoeProvider()
-  if (provider === 'mock') return getMockServices().soe
-  return new ApiSoeService({ baseUrl: getSoeProxyUrl(), provider })
+/** 跟读评分服务解析：模型设置的 soe 配置（settings.json）→ mock（本地伪评分）或 BFF 中转真实代理 */
+export async function getSoeService(): Promise<SoeService> {
+  const cfg = await fetch('/api/settings/soe')
+    .then((r) => (r.ok ? (r.json() as Promise<SoeSettingsConfig>) : null))
+    .catch(() => null)
+  if (!cfg || cfg.provider === 'mock') return getMockServices().soe
+  return new ApiSoeService()
 }
 
 /** 契约类型再导出，供上层（stores/页面）统一从 services 入口引用 */

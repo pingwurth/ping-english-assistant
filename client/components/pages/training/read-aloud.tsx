@@ -176,7 +176,7 @@ function ReadAloud() {
     try {
       const audio = await rec.stop()
       setRecordingUrlFromBlob(audio.blob) // 留存本句录音供评分后回听
-      const soe = getSoeService() // 每次评分时按设置页 pref 解析，切换即时生效
+      const soe = await getSoeService() // 每次评分时按模型设置解析（settings.json）
       const res = await soe.evaluate(audio.blob, sentence.textEn, 'sentence', abortRef.current?.signal)
       setResult(res)
       setPhase('scored')
