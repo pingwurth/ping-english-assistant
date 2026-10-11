@@ -5,6 +5,9 @@
  *  - 有载荷：按 mode 调契约③（shadowing）/④（recitation）报告服务，SSE 流式渲染
  *    status 阶段提示 → token 纯文本分段追加（零新增依赖，不引 Markdown 库）
  *    → result 结构化评分卡（total/completeness/accuracy/fluency）→ done；
+ *  - 载荷携带 soeResult（影子跟读契约②真实评分）时：评分卡换用 ScorePanel
+ *    （综合分 + 三维条形 + 单词级标色），SSE 仅消费文本流（result 事件忽略），
+ *    成绩记录以真实评分为准（completeness 取 integrity）；
  *  - error 事件 / 异常：降级本地逐句 diff（core/training/dictation-diff，架构 §5.6）；
  *  - 无载荷（直达/刷新）：友好空态引导去训练，不崩溃；
  *  - 录音回听：recordingBlob → ObjectURL → audio 控件（effect 内创建，卸载 revoke）。
@@ -17,6 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Shell, PageIntro } from '@/components/shared/shell'
+import { ScorePanel } from '@/components/shared/score-panel'
 import { takeReportPayload, type ReportSessionPayload } from '@/lib/report-session'
 import { getServices } from '@/services'
 import { diffWords, sentenceAccuracy, toWords, type DiffToken } from '@/core/training/dictation-diff'
@@ -108,6 +112,35 @@ function Report() {
     const payload = payloadRef.current
     if (!payload) { setPhase('empty'); return }
 
+    /** 成绩持久化：写一条 train: 记录（批次 C key 约定 + ReportDetail 类型，口径同 read-aloud），
+     *  训练中心"上次成绩"与设置统计据此可见（mode/materialId 与载荷一致）；每会话只写一次 */
+    const persist = (data: { total: number; completeness: number; accuracy: number; fluency: number }) => {
+      if (recordWrittenRef.current) return
+      recordWrittenRef.current = true
+      const detail: ReportDetail = data
+      const tr: TrainingRecord = {
+        id: makeRecordId(),
+        materialId: payload.materialId,
+        mode: payload.mode,
+        scope: { type: 'all' },
+        score: data.total,
+        detail,
+        createdAt: Date.now(),
+      }
+      void recordsStore.put(RECORD_KEYS.training(tr.id), tr).catch(() => { /* 存储失败不影响报告展示 */ })
+    }
+
+    // 影子跟读携带契约②真实评分：立即持久化成绩（completeness 取 integrity），
+    // 评分展示走 ScorePanel（见渲染分支），下方 SSE 仅消费文本流
+    if (payload.soeResult) {
+      persist({
+        total: payload.soeResult.total,
+        completeness: payload.soeResult.integrity,
+        accuracy: payload.soeResult.accuracy,
+        fluency: payload.soeResult.fluency,
+      })
+    }
+
     let objectUrl: string | null = null
     if (payload.recordingBlob) {
       objectUrl = URL.createObjectURL(payload.recordingBlob)
@@ -142,23 +175,10 @@ function Report() {
           } else if (ev.event === 'token') {
             setText((prev) => prev + ev.data.text)
           } else if (ev.event === 'result') {
+            // 真实评分已有（soeResult）时忽略 mock 报告的 result 事件，仅消费文本流
+            if (payload.soeResult) continue
             setResult(ev.data)
-            // 成绩持久化：写一条 train: 记录（批次 C key 约定 + ReportDetail 类型），
-            // 训练中心"上次成绩"与设置统计据此可见（mode/materialId 与载荷一致）
-            if (!recordWrittenRef.current) {
-              recordWrittenRef.current = true
-              const detail: ReportDetail = { total: ev.data.total, completeness: ev.data.completeness, accuracy: ev.data.accuracy, fluency: ev.data.fluency }
-              const tr: TrainingRecord = {
-                id: makeRecordId(),
-                materialId: payload.materialId,
-                mode: payload.mode,
-                scope: { type: 'all' },
-                score: ev.data.total,
-                detail,
-                createdAt: Date.now(),
-              }
-              void recordsStore.put(RECORD_KEYS.training(tr.id), tr).catch(() => { /* 存储失败不影响报告展示 */ })
-            }
+            persist(ev.data)
           } else if (ev.event === 'error') {
             degrade(ev.data.message || '报告生成失败')
             return
@@ -216,8 +236,10 @@ function Report() {
         </PageIntro>
 
         <div className="flex flex-col gap-4">
-          {/* 结构化评分卡（result 事件） */}
-          {result && (
+          {/* 评分卡：载荷携带真实 soeResult（契约②）→ ScorePanel 词级标色；否则契约③④ result 事件四维卡 */}
+          {payload?.soeResult ? (
+            <ScorePanel result={payload.soeResult} />
+          ) : result && (
             <Card>
               <CardContent className="grid gap-6 p-8 text-center sm:grid-cols-4">
                 <div><p className="font-serif text-5xl font-semibold text-primary">{result.total}</p><p className="mt-2 text-muted-foreground">综合得分</p></div>

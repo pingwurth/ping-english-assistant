@@ -1,3 +1,5 @@
+import type { SoeEvaluateResponse } from '@/types/api'
+
 /**
  * 报告会话载荷缓存（模块级单例）—— P7/P8 训练页 → P9 分析报告页的跨页数据桥梁。
  *
@@ -11,7 +13,9 @@
  *    /training/report），P9 应降级展示（当前为静态演示数字）；
  *  - mode 决定调用契约③（shadowing）或契约④（recitation）报告服务；
  *  - transcript + sentences 即契约③④ TrainingReportRequest 的字段口径
- *    （transcript 为契约① ASR 转写结果；sentences 为原文句引用，textZh 可为空串）；
+ *    （transcript 为跟读发音识别结果的词级重组；sentences 为原文句引用，textZh 可为空串）；
+ *  - soeResult 为契约② SOE 真实评分结果（影子跟读在分析阶段评分后随载荷传入），
+ *    P9 有此字段时评分卡换用 ScorePanel（词级标色）且成绩记录以真实评分为准；
  *  - recordingBlob 为本次录音 WAV（16kHz mono），供"[▶ 回听我的录音]"使用，
  *    未录到音时为 undefined；startedAt 为训练开始时间戳（ms）。
  */
@@ -24,10 +28,12 @@ export interface ReportSessionPayload {
   materialId: string
   /** 材料标题（报告页页头展示） */
   materialTitle: string
-  /** 契约① ASR 转写文本（前端可编辑修正后再请求报告） */
+  /** 跟读发音识别结果的词级重组（漏读剔除、增读保留；P9 前端可编辑修正后再请求报告） */
   transcript: string
   /** 原文句引用（口径对齐 types/api.ts ReportSentenceRef；textZh 无中文字幕时为 ''） */
   sentences: { index: number; textEn: string; textZh: string }[]
+  /** 契约② SOE 真实评分结果（影子跟读传入；缺省时 P9 以契约③④ result 事件为准） */
+  soeResult?: SoeEvaluateResponse
   /** 本次录音 WAV Blob（16kHz mono）；无录音时缺省 */
   recordingBlob?: Blob
   /** 训练开始时间戳（ms） */

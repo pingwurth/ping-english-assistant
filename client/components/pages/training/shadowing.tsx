@@ -1,10 +1,13 @@
 /**
  * P7 影子跟读 —— 边播边录：耳机提示确认 → 全文连播 + 同步录音 → 结束后
- * 分步分析（上传→转写→分析）→ ASR mock 转写 → setReportPayload → 跳 P9 报告页。
+ * 分步分析（上传评分→生成转写→分析）→ SOE 评分（按模型设置走真实代理或 mock 回落，
+ * 与跟读评分同源 getSoeService）→ 词级结果重组转写 → setReportPayload（携带
+ * soeResult）→ 跳 P9 报告页。
  *
  * 说明（原型设计 §4.8）：
  *  - [暂停/继续] 同步暂停播放与录音（player.pause/play + recorder.pause/resume）；
- *    注意 recorder pause/resume 保留静音段（约定见 platform/recorder.ts），转写结果含暂停间隔；
+ *    注意 recorder pause/resume 保留静音段（约定见 platform/recorder.ts），
+ *    暂停间隔保留在录音中，可能拉低流利度评分；
  *  - 播放自然结束 / 录音到达 60s 上限 / 用户点击 [结束并分析] 三条路径统一走 finish()；
  *  - echoCancellation 已由 recorder 默认开启（getUserMedia 约束）；
  *  - 麦克风权限拒绝渲染引导浮层（§6.3，shared/score-panel.tsx MicPermissionOverlay）；
@@ -26,12 +29,13 @@ import { HtmlPlayerController } from '@/platform/html-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { getMediaBlob } from '@/stores/material-store'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
-import { abortableDelay, getMockServices, toApiError } from '@/services'
+import { abortableDelay, getSoeService, toApiError } from '@/services'
+import type { SoeEvaluateResponse } from '@/types/api'
 
 type Phase = 'intro' | 'recording' | 'analyzing' | 'report'
 
-/** 分析步骤（对应 mock 延迟阶段：上传→转写→分析） */
-const ANALYZE_STEPS = ['上传录音', '语音转写', 'AI 分析']
+/** 分析步骤（上传评分 → 生成转写 → AI 分析） */
+const ANALYZE_STEPS = ['上传并评分', '生成转写', 'AI 分析']
 
 /** 时钟文案：03:24（原型 §4.8 跟读中状态） */
 function formatClock(ms: number): string {
@@ -46,6 +50,7 @@ function Shadowing() {
 
   const [phase, setPhase] = useState<Phase>('intro')
   const [stage, setStage] = useState(0)
+  const [score, setScore] = useState<SoeEvaluateResponse | null>(null)
   const [transcript, setTranscript] = useState('')
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [playMs, setPlayMs] = useState(0)
@@ -138,6 +143,7 @@ function Shadowing() {
     startedAtRef.current = Date.now()
     setRecMs(0)
     setPlayMs(0)
+    setScore(null)
     setTranscript('')
     setPaused(false)
     clearTimer()
@@ -164,7 +170,7 @@ function Shadowing() {
     } catch { /* 状态不匹配（如已自动收尾）：忽略 */ }
   }
 
-  /** 结束录音并分步分析：上传（模拟延迟）→ 转写（ASR mock）→ 分析（移交 P9） */
+  /** 结束录音并分步分析：SOE 评分（契约②，按模型设置真实/mock）→ 词级重组转写 → 移交 P9 */
   const finish = async () => {
     const rec = recorderRef.current
     const recState = rec?.getState()
@@ -178,12 +184,14 @@ function Shadowing() {
     try {
       const audio = await rec.stop()
       const signal = abortRef.current?.signal
-      await abortableDelay(500, signal) // ① 上传录音（mock 延迟）
-      setStage(1)
       const fullEn = sentences.map((s) => s.textEn).join(' ')
-      const { asr } = getMockServices({ asr: { refText: fullEn } })
-      const res = await asr.transcribe(audio.blob, 'en', signal) // ② 语音转写（契约①）
-      setTranscript(res.text)
+      const soe = await getSoeService() // 每次评分时按模型设置解析（settings.json）
+      const res = await soe.evaluate(audio.blob, fullEn, 'sentence', signal) // ① 上传录音并评分（契约②）
+      setScore(res)
+      setStage(1)
+      // ② 生成转写：词级识别结果重组（漏读剔除、增读保留；mock 无 errorType → 原文即转写）
+      const spoken = res.words.filter((w) => w.errorType !== 'Omission').map((w) => w.text).join(' ')
+      setTranscript(spoken)
       setStage(2)
       await abortableDelay(700, signal) // ③ AI 分析（移交 P9 报告页生成）
       setStage(3)
@@ -192,8 +200,9 @@ function Shadowing() {
         mode: 'shadowing',
         materialId: record.material.id,
         materialTitle: record.material.name,
-        transcript: res.text,
+        transcript: spoken,
         sentences: sentences.map((s) => ({ index: s.index, textEn: s.textEn, textZh: s.textZh ?? '' })),
+        soeResult: res,
         recordingBlob: audio.blob,
         startedAt: startedAtRef.current,
       })
@@ -302,11 +311,18 @@ function Shadowing() {
                   </div>
                 )
               })}
+              {stage >= 1 && score && (
+                <div className="rounded-xl bg-primary/5 p-4 text-left">
+                  <p className="mb-1 text-xs text-muted-foreground">发音评分（词级详情见报告页）</p>
+                  <p className="font-serif text-2xl font-semibold text-primary">综合 {score.total} 分</p>
+                  <p className="mt-1 text-xs text-muted-foreground">准确度 {score.accuracy} · 流利度 {score.fluency} · 完整度 {score.integrity}</p>
+                </div>
+              )}
               {stage >= 2 && transcript && (
                 <div className="rounded-xl border p-4 text-left">
-                  <p className="mb-1 text-xs text-muted-foreground">已识别（ASR 转写）</p>
+                  <p className="mb-1 text-xs text-muted-foreground">已识别（按跟读发音词级重组）</p>
                   <p className="text-sm leading-relaxed">{transcript}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">录音中的暂停段以静音保留，转写结果可能包含相应间隔。</p>
+                  <p className="mt-2 text-xs text-muted-foreground">漏读词已剔除、增读词保留；录音中的暂停段以静音保留，可能拉低流利度评分。</p>
                 </div>
               )}
             </CardContent>
