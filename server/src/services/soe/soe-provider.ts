@@ -37,7 +37,10 @@ export interface SoeInput {
   evalMode: 'sentence'
 }
 
+/** 全部 provider 名（env.SOE_PROVIDER 枚举同源；请求 provider 字段可取同名值） */
+export type SoeProviderName = 'mock' | 'azure' | 'tencent' | 'iflytek'
+
 export interface SoeProvider {
-  readonly name: 'mock' | 'azure' | 'tencent'
+  readonly name: SoeProviderName
   evaluate(input: SoeInput, signal?: AbortSignal): Promise<SoeEvaluateResponse>
 }

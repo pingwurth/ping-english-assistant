@@ -2,18 +2,20 @@
  * 契约② POST /api/v1/soe/evaluate —— 真源：docs/系统架构设计.md §3.3。
  *
  * 请求 multipart/form-data：
- *   - refText  参考原文（必填，≤1000 字符）
- *   - evalMode 固定 'sentence'（缺省即 sentence）
- *   - audio    wav/pcm 16kHz mono 单文件（≤25MB，与契约①共用上限；multipart 插件超限返 413）
+ *   - refText   参考原文（必填，≤1000 字符）
+ *   - evalMode  固定 'sentence'（缺省即 sentence）
+ *   - provider  可选 mock/azure/tencent/iflytek，覆盖默认实现（仅限服务端已配置密钥的）
+ *   - audio     wav/pcm 16kHz mono 单文件（≤25MB，与契约①共用上限；multipart 插件超限返 413）
  * 响应 200：契约② SoeEvaluateResponse；错误 { code, message, detail? }。
  */
 
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify'
 import { apiError, ERR } from '../lib/api-error'
-import type { SoeProvider } from '../services/soe'
+import type { SoeProviderName, SoeProviderRegistry } from '../services/soe'
 
 const MAX_REF_TEXT = 1000
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024
+const PROVIDER_NAMES: ReadonlySet<string> = new Set(['mock', 'azure', 'tencent', 'iflytek'])
 
 /** 取 multipart 伴随文本字段的字符串值（字段可能是文件/值/数组，仅认字符串） */
 function textField(fields: Record<string, unknown>, name: string): string | undefined {
@@ -22,7 +24,7 @@ function textField(fields: Record<string, unknown>, name: string): string | unde
   return undefined
 }
 
-export function buildSoeRoute(provider: SoeProvider): FastifyPluginAsync {
+export function buildSoeRoute(registry: SoeProviderRegistry): FastifyPluginAsync {
   return async (app: FastifyInstance) => {
     app.post('/api/v1/soe/evaluate', async (req, reply) => {
       // 单文件端点：req.file() 拿文件与伴随字段
@@ -40,8 +42,29 @@ export function buildSoeRoute(provider: SoeProvider): FastifyPluginAsync {
       if (audio.length === 0) throw apiError(ERR.BAD_REQUEST, '音频内容为空')
       if (audio.length > MAX_AUDIO_BYTES) throw apiError(ERR.PAYLOAD_TOO_LARGE, '音频超过 25MB 上限')
 
-      req.log.info({ soe: provider.name, bytes: audio.length, refText: refText.slice(0, 60) }, 'soe evaluate')
-      const result = await provider.evaluate({ audio, refText, evalMode: 'sentence' })
+      // 可选 provider 覆盖：缺省用默认实现；未知名 400；未配置密钥 503
+      const providerField = textField(file.fields, 'provider')
+      let name: SoeProviderName
+      if (providerField === undefined || providerField === '') name = registry.defaultName
+      else if (!PROVIDER_NAMES.has(providerField)) {
+        throw apiError(ERR.BAD_REQUEST, `未知评分 provider：${providerField}（可选 mock/azure/tencent/iflytek）`)
+      } else name = providerField as SoeProviderName
+      const provider = registry.providers.get(name)
+      if (!provider) {
+        throw apiError(ERR.PROVIDER_UNAVAILABLE, `评分 provider「${name}」未在服务端配置（缺少对应密钥）`, {
+          provider: name,
+          available: [...registry.providers.keys()],
+        })
+      }
+
+      // 客户端断开 → 中止上游（socket close 才代表连接中断；req.raw 'close' 在 body 读完后也会触发，不可用）
+      const ac = new AbortController()
+      req.raw.socket.once('close', () => {
+        if (!reply.sent) ac.abort()
+      })
+
+      req.log.info({ soe: name, bytes: audio.length, refText: refText.slice(0, 60) }, 'soe evaluate')
+      const result = await provider.evaluate({ audio, refText, evalMode: 'sentence' }, ac.signal)
       return await reply.status(200).send(result)
     })
   }

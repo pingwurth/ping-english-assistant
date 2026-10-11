@@ -9,11 +9,11 @@ import multipart from '@fastify/multipart'
 import type { Env } from './config/env'
 import { ApiError, ERR } from './lib/api-error'
 import { buildSoeRoute } from './routes/soe.route'
-import { createSoeProvider } from './services/soe'
+import { createSoeProviderRegistry } from './services/soe'
 
-export async function buildApp(env: Env): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true, bodyLimit: 32 * 1024 * 1024 })
-  const soe = createSoeProvider(env)
+export async function buildApp(env: Env, opts?: { logger?: boolean }): Promise<FastifyInstance> {
+  const app = Fastify({ logger: opts?.logger ?? true, bodyLimit: 32 * 1024 * 1024 })
+  const soe = createSoeProviderRegistry(env)
 
   await app.register(cors, { origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()) })
   await app.register(multipart, {
@@ -34,7 +34,12 @@ export async function buildApp(env: Env): Promise<FastifyInstance> {
     return reply.status(500).send({ code: ERR.INTERNAL.code, message: '服务器内部错误' })
   })
 
-  app.get('/healthz', async () => ({ ok: true, soeProvider: soe.name }))
+  // soeProvider 保留旧探活兼容；soeProviders 为当前已配置凭据的全部实现
+  app.get('/healthz', async () => ({
+    ok: true,
+    soeProvider: soe.defaultName,
+    soeProviders: [...soe.providers.keys()],
+  }))
 
   await app.register(buildSoeRoute(soe))
   return app

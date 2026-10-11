@@ -1,6 +1,6 @@
 /**
  * 统一 API 错误 —— 与前端 services/contracts.ts 的 ApiError 及架构 §3.3 的错误格式对齐：
- * 响应体 { code, message, detail? }；HTTP 状态语义化（400 参数错 / 413 音频过大 / 429 限流 / 502 上游失败）。
+ * 响应体 { code, message, detail? }；HTTP 状态语义化（400 参数错 / 413 音频过大 / 429 限流 / 502 上游失败 / 503 provider 未配置）。
  */
 
 export class ApiError extends Error {
@@ -23,7 +23,8 @@ export const ERR = {
   UPSTREAM_RATE_LIMIT: { code: 'UPSTREAM_RATE_LIMIT', status: 429 },
   UPSTREAM_TIMEOUT: { code: 'UPSTREAM_TIMEOUT', status: 504 },
   SOE_UPSTREAM_ERROR: { code: 'SOE_UPSTREAM_ERROR', status: 502 },
-  PROVIDER_NOT_IMPLEMENTED: { code: 'PROVIDER_NOT_IMPLEMENTED', status: 501 },
+  /** 请求指定了服务端未配置密钥的 provider（注册表查不到） */
+  PROVIDER_UNAVAILABLE: { code: 'PROVIDER_UNAVAILABLE', status: 503 },
   INTERNAL: { code: 'INTERNAL', status: 500 },
 } as const
 
