@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { getDefaultEndpoint, DEFAULT_LOCAL_MODEL_URL } from '@/lib/service-endpoints'
+import { buildServiceUrl, DEFAULT_LOCAL_MODEL_URL, DEFAULT_SOE_PROXY_URL, getDefaultEndpoint } from '@/lib/service-endpoints'
+import { getSoeProvider, getSoeProxyUrl, setSoeProvider, setSoeProxyUrl, type PrefSoeProvider } from '@/lib/pref-keys'
 import { getKokoroModelId, setKokoroModelId } from '@/platform/kokoro-tts'
 
 /* ── 类型 & 常量 ── */
@@ -36,6 +37,14 @@ const PROVIDERS = [
   { value: 'mimo', label: 'MiMo' },
   { value: 'local', label: '本地模型' },
 ]
+
+/** 语音评测 provider（契约②；值 = 服务端 provider 注册名） */
+const SOE_PROVIDERS = [
+  { value: 'mock', label: '演示模式' },
+  { value: 'azure', label: 'Azure' },
+  { value: 'iflytek', label: '科大讯飞' },
+  { value: 'tencent', label: '腾讯云' },
+] as const
 
 const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label || v
 
@@ -634,6 +643,94 @@ function KokoroConfigCard() {
   )
 }
 
+/* ── SoeConfigCard — 语音评测（跟读评分）配置 ── */
+
+function SoeConfigCard() {
+  const [provider, setProvider] = useState<PrefSoeProvider>('mock')
+  const [proxyUrl, setProxyUrl] = useState('')
+  const [health, setHealth] = useState<{ status: 'unknown' | 'ok' | 'down'; providers: string[] }>({ status: 'unknown', providers: [] })
+
+  // /healthz 连通检测：ok 且 data.ok → 已连接（附可用 provider 列表）；任何失败静默置为未连接
+  const checkHealth = useCallback(async (base: string) => {
+    setHealth({ status: 'unknown', providers: [] })
+    try {
+      const res = await fetch(buildServiceUrl(base, '/healthz'), { signal: AbortSignal.timeout(3000) })
+      const data = res.ok ? await res.json().catch(() => null) : null
+      setHealth(res.ok && data?.ok ? { status: 'ok', providers: data.soeProviders ?? [] } : { status: 'down', providers: [] })
+    } catch {
+      setHealth({ status: 'down', providers: [] })
+    }
+  }, [])
+
+  // localStorage 读取放 effect 内（SSR/水合安全，不在 useState 初始化器中直接读），挂载即检测一次
+  useEffect(() => {
+    const p = getSoeProvider()
+    const url = getSoeProxyUrl()
+    setProvider(p)
+    setProxyUrl(url)
+    void checkHealth(url)
+  }, [checkHealth])
+
+  const handleProviderChange = (v: PrefSoeProvider) => {
+    setProvider(v)
+    setSoeProvider(v) // 立即持久化，无保存按钮
+  }
+
+  // 地址失焦或回车提交：写 pref 并重新检测连通性（空值回落默认地址）
+  const commitProxyUrl = () => {
+    const base = proxyUrl.trim() || DEFAULT_SOE_PROXY_URL
+    setSoeProxyUrl(proxyUrl)
+    void checkHealth(base)
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-5">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base"><Mic data-icon="inline-start" />语音评测（跟读评分）</CardTitle>
+          {health.status === 'ok' ? (
+            <Badge variant="secondary">已连接</Badge>
+          ) : health.status === 'down' ? (
+            <Badge variant="destructive">未连接</Badge>
+          ) : (
+            <span className="text-xs text-muted-foreground">检测中…</span>
+          )}
+        </div>
+
+        <div className="rounded-xl border px-4 py-3">
+          <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">评分服务</label>
+            <select
+              value={provider}
+              onChange={(e) => handleProviderChange(e.target.value as PrefSoeProvider)}
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+            >
+              {SOE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </div>
+
+          {provider !== 'mock' && (
+            <div className="mt-3 flex flex-col gap-1.5">
+              <label className="text-sm font-medium">代理服务地址</label>
+              <Input
+                value={proxyUrl}
+                placeholder={DEFAULT_SOE_PROXY_URL}
+                onChange={(e) => setProxyUrl(e.target.value)}
+                onBlur={commitProxyUrl}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitProxyUrl() }}
+              />
+              {health.status === 'ok' && !health.providers.includes(provider) && (
+                <p className="text-xs text-destructive">该评分服务在代理端未配置（可用：{health.providers.join('/')}）</p>
+              )}
+            </div>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">演示模式无需代理；真实服务需先在 server/.env 配置对应密钥并重启代理</p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 /* ── ModelConfigListSection — 模型配置列表 ── */
 
 export function ModelConfigListSection({ highlightTtsModel, onHighlightDone, onConfigsChanged, onSaved }: {
@@ -775,6 +872,8 @@ export function ModelConfigListSection({ highlightTtsModel, onHighlightDone, onC
       </Card>
 
       <KokoroConfigCard />
+
+      <SoeConfigCard />
 
       <ModelConfigDialog
         open={dialogOpen}

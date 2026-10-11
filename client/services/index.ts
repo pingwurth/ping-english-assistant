@@ -10,8 +10,10 @@
  * getMockServices() / getServices() 均返回完整 AppServices（含 tts 字段）。
  */
 
-import type { AppServices } from './contracts'
+import type { AppServices, SoeService } from './contracts'
+import { getSoeProvider, getSoeProxyUrl } from '@/lib/pref-keys'
 import { MockAsrService, type MockAsrOptions } from './mock/asr'
+import { ApiSoeService } from './api/soe'
 import { MockSoeService, type MockSoeOptions } from './mock/soe'
 import { MockRecitationReportService, MockShadowingReportService, type MockReportOptions } from './mock/report'
 import { MockTtsService, type MockTtsOptions } from './mock/tts'
@@ -51,6 +53,13 @@ export type ServiceMode = 'mock' | 'api'
 export function getServices(_mode: ServiceMode = 'mock'): AppServices {
   // const mode = process.env.NEXT_PUBLIC_SERVICE_MODE === 'api' ? 'api' : 'mock'
   return getMockServices()
+}
+
+/** 跟读评分服务解析：设置页 provider pref → mock（本地伪评分）或真实代理（契约②） */
+export function getSoeService(): SoeService {
+  const provider = getSoeProvider()
+  if (provider === 'mock') return getMockServices().soe
+  return new ApiSoeService({ baseUrl: getSoeProxyUrl(), provider })
 }
 
 /** 契约类型再导出，供上层（stores/页面）统一从 services 入口引用 */

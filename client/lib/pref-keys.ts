@@ -4,6 +4,7 @@
  */
 
 import { getPref, setPref } from '@/platform/storage/prefs'
+import { DEFAULT_SOE_PROXY_URL } from '@/lib/service-endpoints'
 
 export type PrefRate = 0.75 | 1 | 1.25
 export type PrefLoop = 0 | 1 | 3 | 'inf'
@@ -44,3 +45,18 @@ export function getTranslateEnabled(): boolean {
   return getPref<boolean>('pref:translateEnabled', false)
 }
 export function setTranslateEnabled(v: boolean): void { setPref('pref:translateEnabled', v) }
+
+export type PrefSoeProvider = 'mock' | 'azure' | 'tencent' | 'iflytek'
+
+/** SOE 评分服务选择（默认 mock 演示模式；真实服务经代理 server 调用） */
+export function getSoeProvider(): PrefSoeProvider {
+  const v = getPref<string>('pref:soeProvider', 'mock')
+  return v === 'azure' || v === 'tencent' || v === 'iflytek' ? v : 'mock'
+}
+export function setSoeProvider(v: PrefSoeProvider): void { setPref('pref:soeProvider', v) }
+
+/** SOE 代理地址（Fastify server，默认本机 8788） */
+export function getSoeProxyUrl(): string {
+  return getPref<string>('pref:soeProxyUrl', '').trim() || DEFAULT_SOE_PROXY_URL
+}
+export function setSoeProxyUrl(v: string): void { setPref('pref:soeProxyUrl', v.trim() || DEFAULT_SOE_PROXY_URL) }

@@ -43,6 +43,14 @@ function ScorePanel({ result, className }: { result: SoeEvaluateResponse; classN
               {result.words.map((w, i) => (
                 <Badge key={`${w.text}-${i}`} variant={w.score < LOW_SCORE_THRESHOLD ? 'destructive' : 'secondary'}>
                   {w.text}
+                  {w.errorType && w.errorType !== 'None' && (
+                    <span
+                      className="ml-0.5 text-[10px] text-muted-foreground"
+                      title={w.errorType === 'Omission' ? '漏读' : w.errorType === 'Insertion' ? '增读' : '误读'}
+                    >
+                      {w.errorType === 'Omission' ? '漏' : w.errorType === 'Insertion' ? '增' : '误'}
+                    </span>
+                  )}
                   <span className="opacity-60">{w.score}</span>
                 </Badge>
               ))}

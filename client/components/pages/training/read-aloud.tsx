@@ -24,7 +24,7 @@ import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/pla
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS } from '@/platform/storage/schema'
 import { getMediaBlob } from '@/stores/material-store'
-import { ApiError, getMockServices } from '@/services'
+import { ApiError, getSoeService } from '@/services'
 import type { SoeEvaluateResponse } from '@/types/api'
 import type { ReadAloudDetail, TrainingRecord } from '@/types/training'
 
@@ -55,7 +55,6 @@ function WaveBars({ level, active }: { level: number; active: boolean }) {
 
 function ReadAloud() {
   const { record, loading, scope } = useTrainingMaterial()
-  const soe = useMemo(() => getMockServices().soe, [])
 
   const [cursor, setCursor] = useState(0)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -177,6 +176,7 @@ function ReadAloud() {
     try {
       const audio = await rec.stop()
       setRecordingUrlFromBlob(audio.blob) // 留存本句录音供评分后回听
+      const soe = getSoeService() // 每次评分时按设置页 pref 解析，切换即时生效
       const res = await soe.evaluate(audio.blob, sentence.textEn, 'sentence', abortRef.current?.signal)
       setResult(res)
       setPhase('scored')

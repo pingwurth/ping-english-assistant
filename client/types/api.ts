@@ -48,6 +48,8 @@ export interface SoeWordScore {
   text: string
   score: number
   phonemes: SoePhonemeScore[]
+  /** 词级错误类型（漏读/增读/误读），真实 provider 返回；mock 不填 */
+  errorType?: 'None' | 'Omission' | 'Insertion' | 'Mispronunciation'
 }
 
 export interface SoeEvaluateResponse {

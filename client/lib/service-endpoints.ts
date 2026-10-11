@@ -64,6 +64,8 @@ export const DEFAULT_WHISPER_ALIGN_URL = 'http://127.0.0.1:8765'
 export const DEFAULT_WHISPER_TRANSCRIBE_URL = 'http://127.0.0.1:8766'
 /** 本地模型（Ollama / vLLM 等）默认地址 */
 export const DEFAULT_LOCAL_MODEL_URL = 'http://127.0.0.1:11434'
+/** SOE 评分代理（Fastify server/，契约②）默认地址 */
+export const DEFAULT_SOE_PROXY_URL = 'http://127.0.0.1:8788'
 
 // ---------------------------------------------------------------------------
 // 默认模型
