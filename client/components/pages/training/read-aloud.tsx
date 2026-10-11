@@ -67,9 +67,11 @@ function ReadAloud() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
+  const [recordingUrl, setRecordingUrl] = useState<string | null>(null)
   const [totals, setTotals] = useState<number[]>([])
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const playbackAudioRef = useRef<HTMLAudioElement | null>(null)
   const playerRef = useRef<SentencePlayer | null>(null)
   const recorderRef = useRef<WebRecorder | null>(null)
   const timerRef = useRef<number | null>(null)
@@ -78,6 +80,16 @@ function ReadAloud() {
   const writtenRef = useRef<Set<number>>(new Set())
   /** maxreach/卸载场景调用最新 stopRecording 闭包 */
   const stopRef = useRef<() => Promise<void>>(async () => {})
+  /** 录音回听 ObjectURL：换新/清空时先 revoke 旧的（报告页同款回听，见 report.tsx） */
+  const recordingUrlRef = useRef<string | null>(null)
+  const setRecordingUrlFromBlob = (blob: Blob | null) => {
+    if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current)
+    recordingUrlRef.current = blob ? URL.createObjectURL(blob) : null
+    setRecordingUrl(recordingUrlRef.current)
+  }
+
+  // 卸载时回收录音回听 ObjectURL
+  useEffect(() => () => { if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current) }, [])
 
   // 题目范围：全文 / 收藏句（播放时间轴仍用完整句子列表，见下方播放引擎装配）
   const sentences = useMemo(() => sentencesInScope(record?.subtitleData?.sentences ?? [], scope), [record, scope])
@@ -129,11 +141,12 @@ function ReadAloud() {
 
   // 切换句子：重置本句阶段与展示
   useEffect(() => {
-    setPhase('idle'); setResult(null); setError(null); setElapsed(0); setLevel(0)
+    setPhase('idle'); setResult(null); setError(null); setElapsed(0); setLevel(0); setRecordingUrlFromBlob(null)
   }, [cursor])
 
   const playOriginal = () => {
     if (!sentence) return
+    playbackAudioRef.current?.pause() // 听原音前停回听，避免两个声音叠放
     playerRef.current?.playRange(sentence.startMs, sentence.endMs)
   }
 
@@ -150,6 +163,7 @@ function ReadAloud() {
       return
     }
     setResult(null)
+    setRecordingUrlFromBlob(null)
     setPhase('recording')
     setElapsed(0)
     timerRef.current = window.setInterval(() => setElapsed(rec.getElapsedMs()), 100)
@@ -162,6 +176,7 @@ function ReadAloud() {
     setPhase('scoring')
     try {
       const audio = await rec.stop()
+      setRecordingUrlFromBlob(audio.blob) // 留存本句录音供评分后回听
       const res = await soe.evaluate(audio.blob, sentence.textEn, 'sentence', abortRef.current?.signal)
       setResult(res)
       setPhase('scored')
@@ -195,6 +210,7 @@ function ReadAloud() {
   const restart = () => {
     writtenRef.current = new Set()
     setTotals([])
+    setRecordingUrlFromBlob(null) // 单句材料 restart 时 cursor 不变，效果不会重跑，这里补清
     setDone(false)
     setCursor(0)
   }
@@ -240,9 +256,17 @@ function ReadAloud() {
           {error && <p className="text-sm text-destructive">{error}</p>}
           {result && <ScorePanel result={result} />}
 
+          {/* 录音回听：出分后保留本句录音可回放（与报告页回听一致的交互） */}
+          {phase === 'scored' && recordingUrl && (
+            <div className="flex w-full flex-col items-start">
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary">▶ 回听我的录音</p>
+              <audio ref={playbackAudioRef} controls src={recordingUrl} preload="metadata" className="mt-2 w-full" />
+            </div>
+          )}
+
           {phase === 'scored' && (
             <div className="flex flex-wrap justify-center gap-2">
-              <Button variant="outline" onClick={() => { setResult(null); setPhase('idle') }}><RotateCcw data-icon="inline-start" />再读一次</Button>
+              <Button variant="outline" onClick={() => { setResult(null); setRecordingUrlFromBlob(null); setPhase('idle') }}><RotateCcw data-icon="inline-start" />再读一次</Button>
               <Button onClick={onNext}>{cursor === sentences.length - 1 ? '查看小结' : '下一句'}<ArrowRight data-icon="inline-end" /></Button>
             </div>
           )}

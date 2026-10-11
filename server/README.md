@@ -1,6 +1,6 @@
 # Server — 本地 AI 转写与对齐服务
 
-本目录包含两个独立的 Python 微服务，为 ping-english-assistant 前端提供本地语音转写和时间戳对齐能力。
+本目录包含两个独立的 Python 微服务，为 ping-english-assistant 前端提供本地语音转写和时间戳对齐能力；另含一个 Node.js Fastify SOE 代理（见文末「SOE 发音评分代理」）。
 
 ## 架构概览
 
@@ -337,3 +337,25 @@ server/
 ├── README.md            # 本文件
 └── .venv/               # Python 虚拟环境（自动创建，已 gitignore）
 ```
+
+---
+
+## SOE 发音评分代理（Fastify）
+
+无状态后端，实现契约② `POST /api/v1/soe/evaluate`（真源：`docs/系统架构设计.md` §3.3、`docs/发音评分技术选型报告.md`）。按 `SOE_PROVIDER` 切换评分实现：
+
+| 值 | 说明 |
+|----|------|
+| `mock`（默认） | 本地确定性伪评分（与前端 mock 同输出，无需密钥） |
+| `azure` | Azure Pronunciation Assessment（首发主方案；需 `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION/HOST`） |
+| `tencent` | 占位未实施（基础版已停止迭代，见选型报告 §5.2） |
+
+```bash
+# Node.js 20+；在 server/ 目录下
+pnpm install
+cp .env.example .env   # 按需改 SOE_PROVIDER 等
+pnpm start             # 默认 :8788；pnpm dev 为 watch 模式
+pnpm check             # tsc --noEmit
+```
+
+请求：multipart（`refText` + `audio` wav 16kHz mono ≤25MB）；响应：契约② JSON；错误统一 `{ code, message, detail? }`。密钥只存服务端 env，前端仅调用本代理。

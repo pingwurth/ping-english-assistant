@@ -24,6 +24,13 @@ Server (`server/`):
 ./start.sh --device cuda  # GPU mode
 ```
 
+SOE proxy (`server/`, Node.js 20+, Fastify 5):
+```bash
+pnpm install            # in server/
+pnpm start              # soe proxy on :8788 (SOE_PROVIDER=mock|azure|tencent, see server/.env.example)
+pnpm check              # tsc --noEmit
+```
+
 No ESLint/Prettier configured. No lint or format scripts exist.
 
 ## Architecture
