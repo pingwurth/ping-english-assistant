@@ -7,7 +7,6 @@ import { getPref, setPref } from '@/platform/storage/prefs'
 
 export type PrefRate = 0.75 | 1 | 1.25
 export type PrefLoop = 0 | 1 | 3 | 'inf'
-export type PrefRecordMode = 'hold' | 'tap'
 
 /** 默认倍速循环序列（与播放器倍速按钮同档位） */
 export const PREF_RATES: PrefRate[] = [0.75, 1, 1.25]
@@ -25,11 +24,6 @@ export function getDefaultLoop(): PrefLoop {
   return PREF_LOOPS.includes(v) ? v : 0
 }
 export function setDefaultLoop(v: PrefLoop): void { setPref('pref:loop', v) }
-
-export function getRecordMode(): PrefRecordMode {
-  return getPref<PrefRecordMode>('pref:recordMode', 'hold') === 'tap' ? 'tap' : 'hold'
-}
-export function setRecordMode(v: PrefRecordMode): void { setPref('pref:recordMode', v) }
 
 export type PrefTrainingScope = 'all' | 'favorites'
 

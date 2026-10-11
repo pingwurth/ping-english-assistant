@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, Gauge, Mic, Repeat, Trash2 } from 'lucide-react'
+import { Database, Gauge, Repeat, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -25,9 +25,9 @@ import { initMaterials, materialStore, removeMaterial } from '@/stores/material-
 import { useStore } from '@/stores/store'
 import { DEFAULT_WHISPER_ALIGN_URL, DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
 import {
-  getDefaultLoop, getDefaultRate, getRecordMode,
-  PREF_LOOPS, PREF_RATES, setDefaultLoop, setDefaultRate, setRecordMode,
-  type PrefLoop, type PrefRate, type PrefRecordMode,
+  getDefaultLoop, getDefaultRate,
+  PREF_LOOPS, PREF_RATES, setDefaultLoop, setDefaultRate,
+  type PrefLoop, type PrefRate,
 } from '@/lib/pref-keys'
 import type { TrainingRecord } from '@/types/training'
 
@@ -93,12 +93,10 @@ function LearningStatsSection() {
 function TrainingSettingsSection() {
   const [rate, setRate] = useState<PrefRate>(1)
   const [loop, setLoop] = useState<PrefLoop>(0)
-  const [recordMode, setRecordModeState] = useState<PrefRecordMode>('hold')
 
   useEffect(() => {
     setRate(getDefaultRate())
     setLoop(getDefaultLoop())
-    setRecordModeState(getRecordMode())
   }, [])
 
   const cycleRate = () => {
@@ -111,53 +109,29 @@ function TrainingSettingsSection() {
     setLoop(next)
     setDefaultLoop(next)
   }
-  const cycleRecordMode = () => {
-    const next: PrefRecordMode = recordMode === 'hold' ? 'tap' : 'hold'
-    setRecordModeState(next)
-    setRecordMode(next)
-  }
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* 播放设置 */}
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-5">
-          <CardTitle className="text-base"><Gauge data-icon="inline-start" />播放设置</CardTitle>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium">默认倍速</p>
-              <CardDescription>进入播放器时的初始播放速度</CardDescription>
-            </div>
-            <Button variant="outline" onClick={cycleRate} aria-label="切换默认倍速">{rate}x</Button>
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-5">
+        <CardTitle className="text-base"><Gauge data-icon="inline-start" />播放设置</CardTitle>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium">默认倍速</p>
+            <CardDescription>进入播放器时的初始播放速度</CardDescription>
           </div>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium">单句循环次数</p>
-              <CardDescription>播放器 A-B 循环的默认档位</CardDescription>
-            </div>
-            <Button variant="outline" onClick={cycleLoop} aria-label="切换默认循环次数">
-              <Repeat data-icon="inline-start" />{loopLabel(loop)}
-            </Button>
+          <Button variant="outline" onClick={cycleRate} aria-label="切换默认倍速">{rate}x</Button>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium">单句循环次数</p>
+            <CardDescription>播放器 A-B 循环的默认档位</CardDescription>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* 训练设置 */}
-      <Card>
-        <CardContent className="flex flex-col gap-4 p-5">
-          <CardTitle className="text-base"><Mic data-icon="inline-start" />训练设置</CardTitle>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium">录音交互方式</p>
-              <CardDescription>跟读/背诵页的录音按钮操作</CardDescription>
-            </div>
-            <Button variant="outline" onClick={cycleRecordMode} aria-label="切换录音交互方式">
-              {recordMode === 'hold' ? '按住录音' : '点击录音'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+          <Button variant="outline" onClick={cycleLoop} aria-label="切换默认循环次数">
+            <Repeat data-icon="inline-start" />{loopLabel(loop)}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -364,7 +338,7 @@ function SettingsPage() {
         <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="stats">学习统计</TabsTrigger>
-            <TabsTrigger value="training">播放/训练设置</TabsTrigger>
+            <TabsTrigger value="training">播放设置</TabsTrigger>
             <TabsTrigger value="model">模型配置</TabsTrigger>
             <TabsTrigger value="services">本地服务</TabsTrigger>
             <TabsTrigger value="storage">存储管理</TabsTrigger>

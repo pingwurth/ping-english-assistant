@@ -12,10 +12,8 @@
 
 import type { AppServices, SoeService } from './contracts'
 import type { SoeSettingsConfig } from '@/lib/server-settings'
-import { MockAsrService, type MockAsrOptions } from './mock/asr'
 import { ApiSoeService } from './api/soe'
 import { MockSoeService, type MockSoeOptions } from './mock/soe'
-import { MockRecitationReportService, MockShadowingReportService, type MockReportOptions } from './mock/report'
 import { MockTtsService, type MockTtsOptions } from './mock/tts'
 import { MockMnemonicService, type MockMnemonicOptions } from './mock/mnemonic'
 
@@ -23,10 +21,7 @@ import { MockMnemonicService, type MockMnemonicOptions } from './mock/mnemonic'
 export interface MockServices extends AppServices {}
 
 export interface MockServicesOptions {
-  asr?: MockAsrOptions
   soe?: MockSoeOptions
-  /** 影子跟读与背诵报告共用同一组配置 */
-  report?: MockReportOptions
   tts?: MockTtsOptions
   mnemonic?: MockMnemonicOptions
 }
@@ -34,10 +29,7 @@ export interface MockServicesOptions {
 /** 获取 mock 服务集（确定性、离线可用、零网络） */
 export function getMockServices(options: MockServicesOptions = {}): MockServices {
   return {
-    asr: new MockAsrService(options.asr),
     soe: new MockSoeService(options.soe),
-    shadowingReport: new MockShadowingReportService(options.report),
-    recitationReport: new MockRecitationReportService(options.report),
     tts: new MockTtsService(options.tts),
     mnemonic: new MockMnemonicService(options.mnemonic),
   }
@@ -67,10 +59,7 @@ export async function getSoeService(): Promise<SoeService> {
 /** 契约类型再导出，供上层（stores/页面）统一从 services 入口引用 */
 export type {
   AppServices,
-  AsrService,
   SoeService,
-  ShadowingReportService,
-  RecitationReportService,
   TtsService,
   MnemonicService,
 } from './contracts'

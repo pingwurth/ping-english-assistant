@@ -17,7 +17,7 @@ const MODES: Array<{ to: string; mode: TrainingMode; title: string; desc: string
   { to: '/training/dictation', mode: 'dictation', title: '单句听写', desc: '听音写句 · 提升听辨能力', icon: '✎' },
   { to: '/training/read-aloud', mode: 'read-aloud', title: '跟读评分', desc: '逐句跟读 · AI 发音评分', icon: '◉' },
   { to: '/training/shadowing', mode: 'shadowing', title: '影子跟读', desc: '全文同步跟读 · 转写对比', icon: '◌', fullTextOnly: true },
-  { to: '/training/recitation', mode: 'recitation', title: '全文背诵', desc: '背诵全文 · 获得评估建议', icon: '▤', fullTextOnly: true },
+  { to: '/training/recitation', mode: 'recitation', title: '全文背诵', desc: '背诵全文 · 转写对比', icon: '▤', fullTextOnly: true },
 ]
 
 /** 各模式"上次成绩"文案（读 records 中该材料最新一条 train: 记录） */

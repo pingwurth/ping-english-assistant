@@ -1,5 +1,6 @@
 /**
- * API 契约类型 —— 真源：docs/系统架构设计.md §3.3 API 契约（契约①-⑦）
+ * API 契约类型 —— 真源：docs/系统架构设计.md §3.3 API 契约（契约②⑤⑦⑧）
+ * （契约①③④服务类型已移除：转写/报告改走 BFF 直连或页内呈现，segments 类型保留）
  */
 
 /** 统一错误格式（§3.3 统一约定） */
@@ -9,26 +10,12 @@ export interface ApiError {
   detail?: unknown
 }
 
-/** 音频上传（multipart/form-data，wav/pcm 16kHz mono，单文件 ≤25MB） */
-export interface AudioUploadParams {
-  audio: File | Blob
-  lang: 'en'
-}
-
-/* ── 契约① POST /api/v1/asr/transcribe 录音转写 ── */
-
-export interface AsrTranscribeRequest extends AudioUploadParams {}
+/* ── 转写响应 segments（BFF /api/transcribe* 返回体；契约①服务接口已随 mock ASR 移除） ── */
 
 export interface AsrTranscribeSegment {
   startMs: number
   endMs: number
   text: string
-}
-
-export interface AsrTranscribeResponse {
-  text: string
-  durationMs: number
-  segments: AsrTranscribeSegment[]
 }
 
 /* ── 契约② POST /api/v1/soe/evaluate 发音评分代理 ── */
@@ -58,21 +45,6 @@ export interface SoeEvaluateResponse {
   fluency: number
   integrity: number
   words: SoeWordScore[]
-}
-
-/* ── 契约③④ POST /api/v1/reports/shadowing | /reports/recitation 报告（SSE） ── */
-
-export interface ReportSentenceRef {
-  index: number
-  textEn: string
-  textZh: string
-}
-
-export interface TrainingReportRequest {
-  /** 契约① 的转写结果（前端可编辑修正） */
-  transcript: string
-  sentences: ReportSentenceRef[]
-  materialTitle: string
 }
 
 /** SSE 事件：status（阶段进度） */

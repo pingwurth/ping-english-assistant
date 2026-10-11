@@ -2,8 +2,9 @@
  * P7 影子跟读 —— 边播边录：耳机提示确认 → 全文连播 + 同步录音 → 结束后
  * 本页直接呈现结果：录音回放 / 录音转文字（本机 faster-whisper 优先，
  * 云端大模型兜底）/ 与原文逐词对比（黑 = 原文基准，绿 = 读对，
- * 误读词后跟红色括号内为实际读出）。不做发音评分，也不跳 P9 报告页
- * （报告页仅剩全文背诵链路使用）。
+ * 误读词后跟红色括号内为实际读出）。不做发音评分；P9 报告页已随页内
+ * 转写对比方案移除（P8 全文背诵同此，报告/评分不再有独立页面）。
+ * 录音处理三件套（转写/回听 URL/结果三卡）与 P8 共用 recording-review.tsx。
  *
  * 说明（原型设计 §4.8）：
  *  - 跟读中全程展示原文供对照阅读：当前句高亮并自动滚动居中（仅容器内滚动）；
@@ -24,14 +25,15 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Shell } from '@/components/shared/shell'
 import { MicPermissionOverlay } from '@/components/shared/score-panel'
-import { diffWords, type DiffToken } from '@/core/training/dictation-diff'
+import { diffWords } from '@/core/training/dictation-diff'
 import { SentencePlayer } from '@/core/player/sentence-player'
 import { HtmlPlayerController } from '@/platform/html-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { getMediaBlob } from '@/stores/material-store'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
-import { ApiError, toApiError } from '@/services'
+import { toApiError } from '@/services'
 import type { SubtitleSentence } from '@/types/subtitle'
+import { RecordingReview, transcribeRecording, useRecordingReplayUrl } from './recording-review'
 
 type Phase = 'intro' | 'recording' | 'transcribing' | 'result'
 
@@ -44,41 +46,6 @@ function formatClock(ms: number): string {
   const m = Math.floor(t / 60000)
   const s = Math.floor((t % 60000) / 1000)
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
-
-/**
- * 录音转文字（契约①口径，走 BFF 转发）：本机 faster-whisper 优先
- * （/api/transcribe/local，未启动时返回 503），云端大模型兜底
- * （/api/transcribe，需在设置中配置转写模型）；两者均不可用时抛出
- * 带启动指引的错误。响应体一致：{ text, durationMs, segments }。
- */
-async function transcribeRecording(blob: Blob, signal?: AbortSignal): Promise<string> {
-  const attempt = async (url: string): Promise<string> => {
-    const form = new FormData()
-    form.append('audio', blob, 'shadowing.wav')
-    form.append('lang', 'en')
-    const res = await fetch(url, { method: 'POST', body: form, signal })
-    if (!res.ok) throw new Error(`${url} → ${res.status}`)
-    const data = (await res.json()) as { text?: string }
-    return data.text?.trim() ?? ''
-  }
-  /** 中止向上抛（供调用方静默处理）；其余失败（如服务未启动）不拦截，走兜底 */
-  const guardAbort = (err: unknown): void => {
-    if ((err instanceof DOMException && err.name === 'AbortError') || signal?.aborted) {
-      throw new ApiError('ABORTED', '操作已取消')
-    }
-  }
-  try {
-    return await attempt('/api/transcribe/local')
-  } catch (err) {
-    guardAbort(err)
-  }
-  try {
-    return await attempt('/api/transcribe')
-  } catch (err) {
-    guardAbort(err)
-    throw new Error('语音转写失败：请先启动本机转写服务（cd server && ./start.sh --server transcribe），或在设置中配置转写模型。')
-  }
 }
 
 /** 原文卡：供跟读时对照阅读；activeIdx ≥ 0 时高亮当前句并自动滚动居中（仅容器内滚动，不劫持页面） */
@@ -107,25 +74,6 @@ function OriginalTextCard({ sentences, activeIdx }: { sentences: SubtitleSentenc
   )
 }
 
-/** 逐词对比着色：绿 = 读对；黑 = 原文（未标绿即漏读）；红括号 = 实际读出（跟在误读原文词后，单独出现为多读） */
-function ShadowDiffTokens({ tokens }: { tokens: DiffToken[] }) {
-  return (
-    <p className="leading-loose">
-      {tokens.map((t, i) => {
-        if (t.type === 'correct') return <span key={i} className="font-medium text-green-600 dark:text-green-400">{t.text} </span>
-        if (t.type === 'missing') return <span key={i}>{t.text} </span>
-        if (t.type === 'wrong') return (
-          <span key={i}>
-            {t.text}
-            <span className="font-medium text-destructive">（{t.input}）</span>{' '}
-          </span>
-        )
-        return <span key={i} className="font-medium text-destructive">（{t.text}） </span>
-      })}
-    </p>
-  )
-}
-
 function Shadowing() {
   const { record, loading } = useTrainingMaterial()
 
@@ -140,7 +88,6 @@ function Shadowing() {
   const [permDenied, setPermDenied] = useState(false)
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
-  const [recordingUrl, setRecordingUrl] = useState<string | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null)
@@ -154,20 +101,11 @@ function Shadowing() {
   const endGraceTimerRef = useRef<number | null>(null)
   /** 最近一次录音：供"重新转写"重试（不重新录音） */
   const lastBlobRef = useRef<Blob | null>(null)
-  /** 录音回听 ObjectURL：换新/清空时先 revoke 旧的（与 read-aloud/report 同款回听） */
-  const recordingUrlRef = useRef<string | null>(null)
-  const setRecordingUrlFromBlob = (blob: Blob | null) => {
-    if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current)
-    recordingUrlRef.current = blob ? URL.createObjectURL(blob) : null
-    setRecordingUrl(recordingUrlRef.current)
-  }
+  const { recordingUrl, setRecordingUrlFromBlob } = useRecordingReplayUrl()
 
   const sentences = record?.subtitleData?.sentences ?? []
   const fullEn = useMemo(() => sentences.map((s) => s.textEn).join(' '), [sentences])
   const diffTokens = useMemo(() => diffWords(transcript, fullEn), [transcript, fullEn])
-
-  // 卸载时回收录音回听 ObjectURL
-  useEffect(() => () => { if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current) }, [])
 
   // 媒体 Blob → ObjectURL（SSR 安全：仅 effect 内；卸载时 revoke）
   useEffect(() => {
@@ -424,45 +362,14 @@ function Shadowing() {
 
         {phase === 'result' && (
           <div className="flex flex-col gap-4">
-            <Card>
-              <CardContent className="flex flex-col gap-3 p-6">
-                <p className="text-xs font-semibold uppercase tracking-wider text-primary">▶ 回放录音</p>
-                {recordingUrl
-                  ? <audio ref={playbackAudioRef} controls src={recordingUrl} preload="metadata" className="w-full" />
-                  : <p className="text-sm text-muted-foreground">未录到音频。</p>}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="flex flex-col gap-2 p-6">
-                <p className="text-xs font-semibold uppercase tracking-wider text-primary">录音转文字</p>
-                {error ? (
-                  <>
-                    <p className="text-sm text-destructive">{error}</p>
-                    {lastBlobRef.current && <Button variant="outline" size="sm" className="self-start" onClick={() => void runTranscribe(lastBlobRef.current!)}>重新转写</Button>}
-                  </>
-                ) : transcript ? (
-                  <p className="text-sm leading-relaxed">{transcript}</p>
-                ) : (
-                  <p className="text-sm text-muted-foreground">未识别到语音内容（可能录入了静音）。</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="flex flex-col gap-3 p-6">
-                <p className="text-xs font-semibold uppercase tracking-wider text-primary">与原文对比</p>
-                {diffTokens.length > 0 && <ShadowDiffTokens tokens={diffTokens} />}
-                {transcript && diffTokens.every((t) => t.type === 'correct') && (
-                  <p className="text-sm font-medium text-green-600 dark:text-green-400">太棒了——逐词全部读对！</p>
-                )}
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span><span className="font-medium text-green-600 dark:text-green-400">绿字</span> = 读对</span>
-                  <span>黑字 = 原文 · 漏读</span>
-                  <span><span className="font-medium text-destructive">红括号</span> = 实际读出（跟在误读原文词后；单独出现为多读）</span>
-                </div>
-              </CardContent>
-            </Card>
+            <RecordingReview
+              recordingUrl={recordingUrl}
+              transcript={transcript}
+              error={error}
+              diffTokens={diffTokens}
+              onRetry={() => { if (lastBlobRef.current) void runTranscribe(lastBlobRef.current) }}
+              playbackRef={playbackAudioRef}
+            />
 
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button variant="outline" className="sm:flex-1" onClick={restart}><RotateCcw data-icon="inline-start" />再读一次</Button>

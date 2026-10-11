@@ -16,7 +16,6 @@ import { Recitation } from '@/components/pages/training/recitation'
 import { TTS } from '@/components/pages/tts'
 import { TranscribePage } from '@/components/pages/transcribe'
 import { SettingsPage } from '@/components/pages/settings'
-import { Report } from '@/components/pages/report'
 import { Vocabulary } from '@/components/pages/vocabulary'
 import { MnemonicPage } from '@/components/pages/mnemonic'
 import { Placeholder } from '@/components/pages/placeholder'
@@ -51,7 +50,6 @@ export default function StudyApp() {
         <Route path="/training/read-aloud" element={<ReadAloud />} />
         <Route path="/training/shadowing" element={<Shadowing />} />
         <Route path="/training/recitation" element={<Recitation />} />
-        <Route path="/training/report" element={<Report />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/transcribe" element={<TranscribePage />} />
         <Route path="/tts" element={<TTS />} />

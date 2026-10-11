@@ -1,21 +1,23 @@
 /**
- * AI 服务契约 —— 真源：docs/系统架构设计.md §3.3 API 契约（契约①②③④⑥⑦）
+ * AI 服务契约 —— 真源：docs/系统架构设计.md §3.3 API 契约（契约②⑥⑦⑧）
  *
  * 字段严格对齐 types/api.ts（批次 A 已按架构 §3.3 落型的请求/响应/SSE 事件类型）。
  * 未来替换为真实 Fastify 客户端时只改实现（services/mock/* → services/api/*），
  * 本文件定义的接口签名与类型保持不变。
  *
  * 所有方法接受可选 AbortSignal；失败统一抛 ApiError（含中止：code === 'ABORTED'）。
- * SSE 流式报告以 AsyncGenerator<SseEvent> 表达（事件序 status → token → result → done，
+ * SSE 流式以 AsyncGenerator<SseEvent> 表达（事件序 status → token → result → done，
  * 错误走 error 事件后终止流）。
+ * 注：契约①③④已移除 —— ①ASR 与③④训练报告均改走 BFF 直连或页内呈现
+ * （录音转写见 pages/training/recording-review.tsx 的 transcribeRecording、
+ * 素材导入见 components/shared/transcribe-shared.tsx，服务端 lib/llm/asr-service.ts），
+ * SSE 事件类型保留（契约⑤ LLM 讲解、契约⑧ 生词助记仍在使用）。
  */
 
 import type {
   ApiError as ApiErrorShape,
-  AsrTranscribeResponse,
   SoeEvaluateResponse,
   SseEvent,
-  TrainingReportRequest,
   TtsGenerateRequest,
   TtsGenerateResponseMeta,
   TtsSubtitleResponse,
@@ -87,17 +89,6 @@ export function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> 
 /** SOE 评测模式（契约② evalMode；MVP 仅句子模式） */
 export type SoeEvalMode = 'sentence'
 
-/** 契约① POST /api/v1/asr/transcribe —— 录音转写 */
-export interface AsrService {
-  /**
-   * @param audio  wav/pcm 16kHz mono（multipart 单文件 ≤25MB）
-   * @param lang   固定 'en'
-   * @param signal 中止信号（抛 ApiError code 'ABORTED'）
-   * @returns { text, durationMs, segments[{startMs,endMs,text}] }
-   */
-  transcribe(audio: Blob, lang: 'en', signal?: AbortSignal): Promise<AsrTranscribeResponse>
-}
-
 /** 契约② POST /api/v1/soe/evaluate —— 发音评分代理 */
 export interface SoeService {
   /**
@@ -112,18 +103,6 @@ export interface SoeService {
     evalMode: SoeEvalMode,
     signal?: AbortSignal,
   ): Promise<SoeEvaluateResponse>
-}
-
-/** 契约③ POST /api/v1/reports/shadowing —— 影子跟读报告（SSE） */
-export interface ShadowingReportService {
-  /** 事件序：status → token → result → done；错误发 error 事件后终止 */
-  shadowing(payload: TrainingReportRequest, signal?: AbortSignal): AsyncGenerator<SseEvent>
-}
-
-/** 契约④ POST /api/v1/reports/recitation —— 背诵报告（SSE） */
-export interface RecitationReportService {
-  /** 事件序：status → token → result → done；错误发 error 事件后终止 */
-  recitation(payload: TrainingReportRequest, signal?: AbortSignal): AsyncGenerator<SseEvent>
 }
 
 /** 契约⑥ POST /api/v1/tts/generate —— 音频二进制 + 响应头元信息（X-Tts-*） */
@@ -158,10 +137,7 @@ export interface MnemonicService {
 
 /** 服务聚合（供工厂 services/index.ts 与上层 store/页面注入使用） */
 export interface AppServices {
-  asr: AsrService
   soe: SoeService
-  shadowingReport: ShadowingReportService
-  recitationReport: RecitationReportService
   tts: TtsService
   mnemonic: MnemonicService
 }

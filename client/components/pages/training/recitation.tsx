@@ -1,29 +1,31 @@
 /**
  * P8 全文背诵 —— 不播原音，凭记忆背诵全文并录音：
  * 提示模式三态（显示中文 / 仅首词 / 无提示）→ 全文录音（60s 上限由 recorder 默认）
- * → 分步分析（上传→转写→分析）→ ASR mock 转写 → setReportPayload → 跳 P9 报告页。
+ * → 结束后本页直接呈现结果：录音回放 / 录音转文字 / 与原文逐词对比。
+ * 录音处理与 P7 影子跟读完全一致（共用 recording-review.tsx：本机 faster-whisper
+ * 优先、云端大模型兜底，转写失败可重试），不做评分，P9 报告页已移除。
  *
  * 说明（原型设计 §4.9）：
  *  - 无中文字幕时"显示中文"不可选；
- *  - 到达录音上限（maxreach）自动收尾进入分析；
- *  - 麦克风权限引导浮层与 P7 相同（§6.3）；
- *  - 会话载荷契约见 lib/report-session.ts（供批次 E 的 P9 报告页消费）。
+ *  - 到达录音上限（maxreach）自动收尾进入转写；
+ *  - 麦克风权限引导浮层与 P7 相同（§6.3）。
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { Navigate } from 'react-router-dom'
-import { Check, Loader2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Check, Loader2, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Shell } from '@/components/shared/shell'
 import { MicPermissionOverlay } from '@/components/shared/score-panel'
 import { RecordButton } from '@/components/shared/record-button'
-import { setReportPayload } from '@/lib/report-session'
+import { diffWords } from '@/core/training/dictation-diff'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
-import { abortableDelay, ApiError, getMockServices } from '@/services'
+import { toApiError } from '@/services'
+import { RecordingReview, transcribeRecording, useRecordingReplayUrl } from './recording-review'
 
-type Phase = 'idle' | 'recording' | 'analyzing' | 'report'
+type Phase = 'idle' | 'recording' | 'transcribing' | 'result'
 /** 提示模式：中文提示 / 首词提示 / 无提示（§4.9） */
 type HintMode = 'zh' | 'first' | 'none'
 
@@ -32,9 +34,6 @@ const HINT_MODES: { id: HintMode; label: string }[] = [
   { id: 'first', label: '仅首词' },
   { id: 'none', label: '无提示' },
 ]
-
-/** 分析步骤（同 P7：上传→转写→分析） */
-const ANALYZE_STEPS = ['上传录音', '语音转写', 'AI 分析']
 
 function formatClock(ms: number): string {
   const t = Math.max(0, ms)
@@ -70,7 +69,6 @@ function Recitation() {
   const [hintMode, setHintMode] = useState<HintMode>('zh')
   const [elapsed, setElapsed] = useState(0)
   const [level, setLevel] = useState(0)
-  const [stage, setStage] = useState(0)
   const [transcript, setTranscript] = useState('')
   const [permDenied, setPermDenied] = useState(false)
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
@@ -79,11 +77,15 @@ function Recitation() {
   const recorderRef = useRef<WebRecorder | null>(null)
   const timerRef = useRef<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const startedAtRef = useRef(0)
   const finishingRef = useRef(false)
   const finishRef = useRef<() => Promise<void>>(async () => {})
+  /** 最近一次录音：供"重新转写"重试（不重新录音） */
+  const lastBlobRef = useRef<Blob | null>(null)
+  const { recordingUrl, setRecordingUrlFromBlob } = useRecordingReplayUrl()
 
   const sentences = record?.subtitleData?.sentences ?? []
+  const fullEn = useMemo(() => sentences.map((s) => s.textEn).join(' '), [sentences])
+  const diffTokens = useMemo(() => diffWords(transcript, fullEn), [transcript, fullEn])
   const hasZh = sentences.some((s) => !!s.textZh && s.textZh.trim().length > 0)
 
   // 无中文字幕：中文提示不可选，回落首词提示
@@ -91,7 +93,7 @@ function Recitation() {
     if (record && !hasZh) setHintMode((m) => (m === 'zh' ? 'first' : m))
   }, [record, hasZh])
 
-  // 录音器生命周期：挂载创建 + volume 监听 + 60s 上限自动收尾；卸载 destroy + 中止请求
+  // 录音器生命周期：挂载创建 + volume 监听 + 60s 上限自动收尾；卸载 destroy + 中止转写请求
   useEffect(() => {
     const rec = createRecorder()
     recorderRef.current = rec
@@ -124,47 +126,46 @@ function Recitation() {
       else setError(err instanceof Error ? err.message : '录音启动失败')
       return
     }
-    startedAtRef.current = Date.now()
     setElapsed(0)
     setTranscript('')
+    setRecordingUrlFromBlob(null)
     clearTimer()
     timerRef.current = window.setInterval(() => setElapsed(rec.getElapsedMs()), 200)
     setPhase('recording')
   }
 
-  /** 完成背诵：停止录音并分步分析（上传→转写→分析） */
+  /** 转写录音（不重新录音）：成功进入结果页；失败也进入结果页（回放可用 + 可重试） */
+  const runTranscribe = async (blob: Blob) => {
+    setError(null)
+    setTranscript('')
+    setPhase('transcribing')
+    try {
+      const text = await transcribeRecording(blob, abortRef.current?.signal)
+      setTranscript(text)
+      setPhase('result')
+    } catch (err) {
+      if (toApiError(err).code === 'ABORTED' || abortRef.current?.signal.aborted) return
+      setError(err instanceof Error ? err.message : '转写失败，请重试')
+      setPhase('result')
+    }
+  }
+
+  /** 结束背诵并转写：停录音 → 保留回放 URL → ASR 转写 */
   const finish = async () => {
     const rec = recorderRef.current
     if (finishingRef.current || !rec || rec.getState() !== 'recording' || !record) return
     finishingRef.current = true
     clearTimer()
-    setPhase('analyzing')
-    setStage(0)
+    setPhase('transcribing')
     try {
       const audio = await rec.stop()
-      const signal = abortRef.current?.signal
-      await abortableDelay(500, signal) // ① 上传录音（mock 延迟）
-      setStage(1)
-      const fullEn = sentences.map((s) => s.textEn).join(' ')
-      const { asr } = getMockServices({ asr: { refText: fullEn } })
-      const res = await asr.transcribe(audio.blob, 'en', signal) // ② 语音转写（契约①）
-      setTranscript(res.text)
-      setStage(2)
-      await abortableDelay(700, signal) // ③ AI 分析（移交 P9 报告页生成）
-      setStage(3)
-      setReportPayload({
-        mode: 'recitation',
-        materialId: record.material.id,
-        materialTitle: record.material.name,
-        transcript: res.text,
-        sentences: sentences.map((s) => ({ index: s.index, textEn: s.textEn, textZh: s.textZh ?? '' })),
-        recordingBlob: audio.blob,
-        startedAt: startedAtRef.current,
-      })
-      setPhase('report')
+      setRecordingUrlFromBlob(audio.blob)
+      lastBlobRef.current = audio.blob
+      await runTranscribe(audio.blob) // 内部已兜错：失败进结果页（可重试），不向上抛
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'ABORTED') return // 卸载中止：静默
-      setError(err instanceof Error ? err.message : '分析失败，请重试')
+      // 仅 rec.stop() 失败会走到这里（runTranscribe 自吞错误）：回引导页重录
+      if (toApiError(err).code === 'ABORTED' || abortRef.current?.signal.aborted) return
+      setError(err instanceof Error ? err.message : '录音收尾失败，请重试')
       setPhase('idle')
     } finally {
       finishingRef.current = false
@@ -172,10 +173,19 @@ function Recitation() {
   }
   finishRef.current = finish
 
-  /** 放弃本次录音（不分析） */
+  /** 放弃本次录音（不转写） */
   const abandon = () => {
     clearTimer()
     recorderRef.current?.cancel()
+    setLevel(0)
+    setPhase('idle')
+  }
+
+  /** 回到引导页（清空上一轮结果） */
+  const restart = () => {
+    setRecordingUrlFromBlob(null)
+    setError(null)
+    setTranscript('')
     setLevel(0)
     setPhase('idle')
   }
@@ -184,8 +194,6 @@ function Recitation() {
   if (!record || sentences.length === 0) {
     return <Shell back><div className="mx-auto max-w-3xl px-4 py-8 md:px-8"><Card><CardContent className="flex min-h-40 flex-col items-center justify-center gap-3 p-6 text-center"><p className="text-sm text-muted-foreground">该材料暂无字幕，无法进行背诵训练。</p></CardContent></Card></div></Shell>
   }
-
-  if (phase === 'report') return <Navigate to="/training/report" replace />
 
   return (
     <Shell back>
@@ -240,30 +248,31 @@ function Recitation() {
           </div>
         )}
 
-        {phase === 'analyzing' && (
+        {phase === 'transcribing' && (
           <Card>
-            <CardContent className="flex flex-col gap-3 p-6 md:p-8">
-              <p className="mb-1 text-sm text-muted-foreground">正在分析你的背诵…</p>
-              {ANALYZE_STEPS.map((label, i) => {
-                const doneStep = i < stage
-                const activeStep = i === stage
-                return (
-                  <div key={label} className="flex items-center justify-between rounded-xl bg-muted px-4 py-3">
-                    <span className="text-sm">{['①', '②', '③'][i]} {label}</span>
-                    {doneStep ? <span className="flex items-center gap-1 text-sm text-primary"><Check className="size-4" />完成</span>
-                      : activeStep ? <span className="flex items-center gap-1 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />进行中…</span>
-                      : <span className="text-sm text-muted-foreground/60">等待</span>}
-                  </div>
-                )
-              })}
-              {stage >= 2 && transcript && (
-                <div className="rounded-xl border p-4 text-left">
-                  <p className="mb-1 text-xs text-muted-foreground">已识别（ASR 转写）</p>
-                  <p className="text-sm leading-relaxed">{transcript}</p>
-                </div>
-              )}
+            <CardContent className="flex min-h-60 flex-col items-center justify-center gap-4 p-6 text-center md:p-8">
+              <Loader2 className="size-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">正在转写你的背诵…</p>
             </CardContent>
           </Card>
+        )}
+
+        {phase === 'result' && (
+          <div className="flex flex-col gap-4">
+            <RecordingReview
+              recordingUrl={recordingUrl}
+              transcript={transcript}
+              error={error}
+              diffTokens={diffTokens}
+              onRetry={() => { if (lastBlobRef.current) void runTranscribe(lastBlobRef.current) }}
+            />
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button variant="outline" className="sm:flex-1" onClick={restart}><RotateCcw data-icon="inline-start" />再背一次</Button>
+              <Link to={`/training/${record.material.id}`} className="sm:flex-1">
+                <Button variant="outline" className="w-full">返回训练中心</Button>
+              </Link>
+            </div>
+          </div>
         )}
       </div>
 

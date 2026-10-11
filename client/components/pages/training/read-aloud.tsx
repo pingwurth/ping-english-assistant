@@ -27,6 +27,7 @@ import { getMediaBlob } from '@/stores/material-store'
 import { ApiError, getSoeService } from '@/services'
 import type { SoeEvaluateResponse } from '@/types/api'
 import type { ReadAloudDetail, TrainingRecord } from '@/types/training'
+import { useRecordingReplayUrl } from './recording-review'
 
 /** 单句阶段：空闲 → 录音中 → 评分中 → 已出分 */
 type Phase = 'idle' | 'recording' | 'scoring' | 'scored'
@@ -66,7 +67,6 @@ function ReadAloud() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
-  const [recordingUrl, setRecordingUrl] = useState<string | null>(null)
   const [totals, setTotals] = useState<number[]>([])
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
@@ -79,16 +79,8 @@ function ReadAloud() {
   const writtenRef = useRef<Set<number>>(new Set())
   /** maxreach/卸载场景调用最新 stopRecording 闭包 */
   const stopRef = useRef<() => Promise<void>>(async () => {})
-  /** 录音回听 ObjectURL：换新/清空时先 revoke 旧的（报告页同款回听，见 report.tsx） */
-  const recordingUrlRef = useRef<string | null>(null)
-  const setRecordingUrlFromBlob = (blob: Blob | null) => {
-    if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current)
-    recordingUrlRef.current = blob ? URL.createObjectURL(blob) : null
-    setRecordingUrl(recordingUrlRef.current)
-  }
-
-  // 卸载时回收录音回听 ObjectURL
-  useEffect(() => () => { if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current) }, [])
+  /** 录音回听 ObjectURL 生命周期（与 shadowing/recitation 共用 recording-review.tsx） */
+  const { recordingUrl, setRecordingUrlFromBlob } = useRecordingReplayUrl()
 
   // 题目范围：全文 / 收藏句（播放时间轴仍用完整句子列表，见下方播放引擎装配）
   const sentences = useMemo(() => sentencesInScope(record?.subtitleData?.sentences ?? [], scope), [record, scope])
