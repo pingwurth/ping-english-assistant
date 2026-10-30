@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { setKokoroModelId, preloadKokoroModel } from '@/platform/kokoro-tts'
 import { Library } from '@/components/pages/library'
+import { CollectionDetail } from '@/components/pages/collection'
 import { Favorites } from '@/components/pages/favorites'
 import { ImportPage } from '@/components/pages/import'
 import { Player } from '@/components/pages/player'
@@ -41,6 +42,7 @@ export default function StudyApp() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Library />} />
+        <Route path="/collection/:collectionId" element={<CollectionDetail />} />
         <Route path="/favorites" element={<Favorites />} />
         <Route path="/import" element={<ImportPage />} />
         <Route path="/player/:materialId" element={<Player />} />

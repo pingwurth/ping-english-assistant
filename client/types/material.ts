@@ -23,4 +23,13 @@ export interface Material {
   durationMs: number
   createdAt: number
   lastOpenedAt: number
+  /** 所属材料集 ID；null/undefined = 未分组（旧记录无此字段，同样视为未分组） */
+  collectionId?: string | null
+}
+
+/** 材料集（扁平不嵌套；存 records store，key = collection:{id}；成员关系在 material.collectionId 上） */
+export interface MaterialCollection {
+  id: string
+  name: string
+  createdAt: number
 }

@@ -9,7 +9,8 @@ import { Shell, PageIntro } from '@/components/shared/shell'
 import { formatDuration } from '@/components/shared/player-parts'
 import { parseSubtitle, SubtitleParseError } from '@/core/subtitle'
 import type { SubtitleData } from '@/types/subtitle'
-import { putMaterialRecord, putMediaBlob, deleteMediaBlob } from '@/stores/material-store'
+import { createCollection, initMaterials, materialStore, putMaterialRecord, putMediaBlob, deleteMediaBlob, removeCollection } from '@/stores/material-store'
+import { useStore } from '@/stores/store'
 import { updateFrequencies } from '@/stores/vocab-store'
 import type { MaterialRecord } from '@/platform/storage/schema'
 import { estimateUsage } from '@/platform/storage/idb'
@@ -31,6 +32,9 @@ function probeMediaDuration(file: File): Promise<number | null> {
 }
 function formatBytes(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB` }
 function baseName(fileName: string): string { return fileName.replace(/\.[^.]+$/, '').slice(0, 50) }
+
+/** 下拉/选择器中「＋ 新建材料集…」选项的哨兵值 */
+const NEW_COLLECTION = '__new__'
 
 /** 步骤状态 */
 type StepStatus = 'done' | 'current' | 'pending'
@@ -128,6 +132,10 @@ function ImportPage() {
   const [doneId, setDoneId] = useState<string | null>(null)
   const [fromTts, setFromTts] = useState(false)
   const [fromTranscribe, setFromTranscribe] = useState(false)
+  const [collectionChoice, setCollectionChoice] = useState('') // '' = 不归属 | 集合 id | NEW_COLLECTION
+  const [newCollectionName, setNewCollectionName] = useState('')
+  const [presetApplied, setPresetApplied] = useState(false)
+  const { ready, collections } = useStore(materialStore)
 
   /** 即时解析字幕文本：成功渲染摘要，失败红字 + 行号（文档 P1 校验规则） */
   const applySubtitle = (text: string, format?: 'srt' | 'lrc') => {
@@ -192,6 +200,15 @@ function ImportPage() {
     return () => { alive = false }
   }, [source, taskId])
 
+  // 材料集列表加载 + ?collection= 预选（集合就绪后校验一次；陈旧 ID 静默回落不归属）
+  const presetCollectionId = searchParams.get('collection')
+  useEffect(() => { void initMaterials().catch(() => {}) }, [])
+  useEffect(() => {
+    if (presetApplied || !ready) return
+    setPresetApplied(true)
+    if (presetCollectionId && collections.some((c) => c.id === presetCollectionId)) setCollectionChoice(presetCollectionId)
+  }, [presetApplied, ready, presetCollectionId, collections])
+
   // 时长偏差预警：未回填的 LRC（totalDurationMs=末句起点）必然偏差巨大 → 跳过警告避免误报
   const lastStartMs = subtitle ? (subtitle.data.sentences[subtitle.data.sentences.length - 1]?.startMs ?? 0) : 0
   const lrcUnfilled = !!subtitle && subtitle.data.format === 'lrc' && subtitle.data.totalDurationMs <= lastStartMs
@@ -203,6 +220,9 @@ function ImportPage() {
     setFinishError(null)
     setSaving(true)
     const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    // 归属材料集：__new__ 且有名称 → 先建集合（失败时回滚）；否则按选择（空 = 不归属）
+    let collectionId: string | null = null
+    let createdCollectionId: string | null = null
     try {
       // 写入前余量检查：quota-usage 不足文件大小×1.2 时中止；estimate 不可用（quota=0）时跳过
       const { usage, quota } = await estimateUsage()
@@ -210,6 +230,13 @@ function ImportPage() {
         setFinishError('存储空间不足，请释放本地空间后重试')
         setSaving(false)
         return
+      }
+      if (collectionChoice === NEW_COLLECTION && newCollectionName.trim()) {
+        const created = await createCollection(newCollectionName.trim())
+        collectionId = created.id
+        createdCollectionId = created.id
+      } else if (collectionChoice) {
+        collectionId = collectionChoice
       }
       await putMediaBlob(id, mediaFile) // 媒体 File → blobs store（key = materialId）
       const now = Date.now()
@@ -220,7 +247,7 @@ function ImportPage() {
           mediaRef: `idb://blobs/${id}`, mediaFileName: mediaFile.name, mediaSizeBytes: mediaFile.size,
           subtitle: subtitle ? { ref: `idb://materials/${id}`, format: subtitle.data.format, isBilingual: subtitle.data.isBilingual, sentenceCount: subtitle.data.sentences.length } : null,
           durationMs: mediaDurationMs ?? subtitle?.data.totalDurationMs ?? 0,
-          createdAt: now, lastOpenedAt: now,
+          createdAt: now, lastOpenedAt: now, collectionId,
         },
         subtitleData: subtitle?.data ?? null, // 解析结果随元数据同存，避免重复解析（架构 §4.2）
       }
@@ -235,8 +262,9 @@ function ImportPage() {
       setDone(true)
       setDoneId(id)
     } catch {
-      // 回滚已写入的 blob，避免孤儿数据
+      // 回滚已写入的 blob 与本次新建的空集合，避免孤儿数据
       await deleteMediaBlob(id).catch(() => {})
+      if (createdCollectionId) await removeCollection(createdCollectionId).catch(() => {})
       setFinishError('导入失败，请重试')
       setSaving(false)
     }
@@ -314,6 +342,19 @@ function ImportPage() {
             {/* ── 步骤 3：材料名称 ── */}
             <StepHeader step={3} status={step3Status} label="材料名称" />
             <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={50} placeholder="默认取文件名" />
+
+            {/* ── 所属材料集（可选） ── */}
+            <div className="flex flex-col gap-2">
+              <label htmlFor="import-collection" className="text-sm font-medium">所属材料集（可选）</label>
+              <select id="import-collection" value={collectionChoice} onChange={(e) => setCollectionChoice(e.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
+                <option value="">不归属任何材料集</option>
+                {collections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value={NEW_COLLECTION}>＋ 新建材料集…</option>
+              </select>
+              {collectionChoice === NEW_COLLECTION && (
+                <Input value={newCollectionName} onChange={(e) => setNewCollectionName(e.target.value)} maxLength={30} placeholder="材料集名称" />
+              )}
+            </div>
 
             {/* 提交区域 */}
             {finishError && <p className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{finishError}</p>}

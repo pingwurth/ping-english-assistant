@@ -1,12 +1,17 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, Download, FileText, Gauge, Languages, Pause, Pencil, Play, RotateCcw, SkipBack, SkipForward, Sparkles, Subtitles, Trash2, Upload, Volume2, VolumeX } from 'lucide-react'
+import { Check, ChevronRight, Download, FileText, Folder, FolderInput, Gauge, Languages, Pause, Pencil, Play, RotateCcw, SkipBack, SkipForward, Sparkles, Subtitles, Trash2, Upload, Volume2, VolumeX } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { seedSentences } from '@/data/seed'
-import type { Material } from '@/types/material'
+import { assignMaterialCollection, createCollection, getProgress, materialStore } from '@/stores/material-store'
+import { useStore } from '@/stores/store'
+import type { MaterialRecord } from '@/platform/storage/schema'
+import type { Material, MaterialCollection } from '@/types/material'
 import type { SubtitleMode, SubtitleSentence } from '@/types/subtitle'
 
 const sentences = seedSentences
@@ -21,11 +26,89 @@ const materialDisplayById: Record<string, { color: string; progress: number; las
 function getMaterialDisplay(id: string) { return materialDisplayById[id] ?? { color: 'bg-muted', progress: 0, last: '尚未开始' } }
 function formatDuration(durationMs: number) { return `${String(Math.floor(durationMs / 60000)).padStart(2, '0')}:${String(Math.floor((durationMs % 60000) / 1000)).padStart(2, '0')}` }
 
+/** "最近学习"文案（材料库 / 材料集详情共用） */
+function lastLabel(lastOpenedAt: number): string {
+  if (!lastOpenedAt) return '从未学习'
+  const days = Math.floor((Date.now() - lastOpenedAt) / 86400000)
+  if (days <= 0) return '今天学过'
+  if (days === 1) return '昨天学过'
+  return `${days} 天前`
+}
+
+/** 进度百分比 = playedSentenceIndexes 去重数 / 总句数（真源：docs/原型设计.md P0 学习进度条） */
+async function loadProgressPercents(records: MaterialRecord[]): Promise<Record<string, number>> {
+  const entries = await Promise.all(records.map(async (r) => {
+    const total = r.material.subtitle?.sentenceCount ?? 0
+    const progress = await getProgress(r.material.id)
+    const played = progress ? new Set(progress.playedSentenceIndexes).size : 0
+    return [r.material.id, total > 0 ? Math.min(100, Math.round((played / total) * 100)) : 0] as const
+  }))
+  return Object.fromEntries(entries)
+}
+
 /**
  * 材料卡片。进度/最近学习为真实数据（props 传入，由播放过的句数派生）；
  * 未传时回落静态演示值（materialDisplayById）。hover 时可选显示删除按钮。
  */
-function MaterialCard({ item, progress, lastLabel, onDelete }: { item: Material; progress?: number; lastLabel?: string; onDelete?: () => void }) { const display = getMaterialDisplay(item.id); const pct = progress ?? display.progress; const last = lastLabel ?? display.last; return <Link to={`/player/${item.id}`} className="group relative block">{onDelete && <div className="absolute right-3 top-3 z-10 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"><Button variant="secondary" size="icon" aria-label={`删除材料 ${item.name}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete() }}><Trash2 /></Button></div>}<Card className="h-full overflow-hidden transition-all hover:-translate-y-1 hover:border-primary/50 hover:shadow-lg"><div className={`flex h-32 items-center justify-center ${display.color}`}><span className="text-5xl text-primary/70">{item.mediaType === 'video' ? '▣' : '◉'}</span></div><CardHeader className="gap-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-lg">{item.name}</CardTitle>{pct === 100 && <Badge variant="secondary"><Check data-icon="inline-start" />已完成</Badge>}</div><CardDescription>{item.mediaType === 'video' ? '视频' : '音频'} · {item.subtitle?.isBilingual ? '双语' : '仅英文'} · {formatDuration(item.durationMs)}</CardDescription></CardHeader><CardContent><Progress value={pct} /><div className="mt-3 flex justify-between text-xs text-muted-foreground"><span>{pct ? `${pct}% 已完成` : '尚未开始'}</span><span>{last}</span></div></CardContent></Card></Link> }
+function MaterialCard({ item, progress, lastLabel, onDelete, onMove }: { item: Material; progress?: number; lastLabel?: string; onDelete?: () => void; onMove?: () => void }) { const display = getMaterialDisplay(item.id); const pct = progress ?? display.progress; const last = lastLabel ?? display.last; return <Link to={`/player/${item.id}`} className="group relative block">{(onDelete || onMove) && <div className="absolute right-3 top-3 z-10 flex items-center gap-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">{onMove && <Button variant="secondary" size="icon" aria-label={`移动材料 ${item.name}`} title="移动到材料集" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMove() }}><FolderInput /></Button>}{onDelete && <Button variant="secondary" size="icon" aria-label={`删除材料 ${item.name}`} title="删除" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete() }}><Trash2 /></Button>}</div>}<Card className="h-full overflow-hidden transition-all hover:-translate-y-1 hover:border-primary/50 hover:shadow-lg"><div className={`flex h-32 items-center justify-center ${display.color}`}><span className="text-5xl text-primary/70">{item.mediaType === 'video' ? '▣' : '◉'}</span></div><CardHeader className="gap-2"><div className="flex items-start justify-between gap-2"><CardTitle className="text-lg">{item.name}</CardTitle>{pct === 100 && <Badge variant="secondary"><Check data-icon="inline-start" />已完成</Badge>}</div><CardDescription>{item.mediaType === 'video' ? '视频' : '音频'} · {item.subtitle?.isBilingual ? '双语' : '仅英文'} · {formatDuration(item.durationMs)}</CardDescription></CardHeader><CardContent><Progress value={pct} /><div className="mt-3 flex justify-between text-xs text-muted-foreground"><span>{pct ? `${pct}% 已完成` : '尚未开始'}</span><span>{last}</span></div></CardContent></Card></Link> }
+
+/**
+ * 材料集卡片。count/lastLabel 由调用方按成员派生（records 已按最近学习排序，取首个成员）。
+ */
+function CollectionCard({ collection, count, lastLabel }: { collection: MaterialCollection; count: number; lastLabel: string }) { return <Link to={`/collection/${collection.id}`} className="group block"><Card className="h-full overflow-hidden transition-all hover:-translate-y-1 hover:border-primary/50 hover:shadow-lg"><div className="flex h-32 items-center justify-center bg-accent"><Folder className="size-10 text-primary/70" /></div><CardHeader className="gap-2"><CardTitle className="text-lg">{collection.name}</CardTitle><CardDescription>{count} 个材料</CardDescription></CardHeader><CardContent><div className="mt-3 flex items-center justify-between text-xs text-muted-foreground"><span>{lastLabel}</span><ChevronRight className="size-4 opacity-0 transition-opacity group-hover:opacity-100" /></div></CardContent></Card></Link> }
+
+/** 选择器中「＋ 新建材料集…」选项的哨兵值 */
+const NEW_COLLECTION = '__new__'
+
+/**
+ * 移动材料弹窗（材料库未分组区/搜索结果、材料集详情共用）：
+ * 目标 = 其他集合 / 未分组（仅当材料已在集合内，显示"移出"）/ 现场新建集合。
+ * 未选目标时确定禁用；目标集合已被删（陈旧 ID）时 store 侧静默不写。
+ */
+function MaterialMoveDialog({ target, onClose }: { target: MaterialRecord | null; onClose: () => void }) {
+  const { collections } = useStore(materialStore)
+  const [choice, setChoice] = useState('')
+  const [newName, setNewName] = useState('')
+  useEffect(() => { setChoice(''); setNewName('') }, [target])
+  if (!target) return null
+  const currentId = target.material.collectionId ?? null
+  const confirmMove = async () => {
+    if (!choice || (choice === NEW_COLLECTION && !newName.trim())) return
+    const materialId = target.material.id
+    onClose()
+    if (choice === NEW_COLLECTION) {
+      const created = await createCollection(newName.trim())
+      await assignMaterialCollection(materialId, created.id)
+    } else {
+      await assignMaterialCollection(materialId, choice) // '' = 移出到未分组
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
+      <DialogHeader>
+        <DialogTitle>移动材料</DialogTitle>
+        <DialogDescription>「{target.material.name}」移动到…</DialogDescription>
+      </DialogHeader>
+      <DialogContent>
+        <div className="flex flex-col gap-3">
+          <select value={choice} onChange={(e) => setChoice(e.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
+            {currentId !== null && <option value="">未分组（移出材料集）</option>}
+            {collections.filter((c) => c.id !== currentId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <option value={NEW_COLLECTION}>＋ 新建材料集…</option>
+          </select>
+          {choice === NEW_COLLECTION && (
+            <Input value={newName} onChange={(e) => setNewName(e.target.value)} maxLength={30} placeholder="材料集名称" autoFocus
+              onKeyDown={(e) => { if (e.key === 'Enter' && newName.trim()) void confirmMove() }} />
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>取消</Button>
+            <Button onClick={() => void confirmMove()} disabled={!choice || (choice === NEW_COLLECTION && !newName.trim())}>确定</Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 /**
  * 播放控制条。布局与视觉冻结，数据增强：
@@ -142,4 +225,4 @@ function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndex
   )
 }
 
-export { MaterialCard, PlayerControlBar, SubtitleList, formatDuration }
+export { MaterialCard, CollectionCard, MaterialMoveDialog, PlayerControlBar, SubtitleList, formatDuration, lastLabel, loadProgressPercents }

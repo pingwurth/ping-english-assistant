@@ -226,7 +226,7 @@ function LocalServicesSection() {
 /* ── 存储管理 ─────────────────────────────────── */
 
 function StorageSection() {
-  const { records } = useStore(materialStore)
+  const { records, collections } = useStore(materialStore)
   const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null)
   const [clearing, setClearing] = useState(false)
 
@@ -267,6 +267,7 @@ function StorageSection() {
   }
 
   const usagePct = usage && usage.quota > 0 ? Math.min(100, Math.max(1, Math.round((usage.usage / usage.quota) * 100))) : 0
+  const collectionNameById = new Map(collections.map((c) => [c.id, c.name] as const))
 
   return (
     <Card>
@@ -291,7 +292,7 @@ function StorageSection() {
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium">{r.material.name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {r.material.mediaType === 'video' ? '视频' : '音频'} · {r.material.subtitle?.sentenceCount ?? 0} 句
+                  {r.material.mediaType === 'video' ? '视频' : '音频'} · {r.material.subtitle?.sentenceCount ?? 0} 句{r.material.collectionId && collectionNameById.get(r.material.collectionId) ? ` · ${collectionNameById.get(r.material.collectionId)}` : ''}
                 </p>
               </div>
               <Button variant="ghost" size="icon" aria-label={`删除材料 ${r.material.name}`} onClick={() => void handleRemove(r.material.id, r.material.name)}>
