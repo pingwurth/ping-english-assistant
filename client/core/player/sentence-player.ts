@@ -94,7 +94,10 @@ export class SentencePlayer {
   }
 
   next(): void {
-    this.playSentence(Math.min(this.sentences.length - 1, Math.max(0, this.lastIndex) + 1))
+    // 未播放（lastIndex=-1，如刚打开/setSentences 重置后）按 → 应从第 0 句开始，
+    // 而不是把 -1 折算成 0 再 +1 跳过第一句
+    const target = this.lastIndex < 0 ? 0 : this.lastIndex + 1
+    this.playSentence(Math.min(this.sentences.length - 1, target))
   }
 
   prev(): void {

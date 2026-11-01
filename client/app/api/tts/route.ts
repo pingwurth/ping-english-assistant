@@ -6,7 +6,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { readLlmSettings, readLlmConfigById } from '@/lib/server-settings'
+import { readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
 import { generateTts, LlmError } from '@/lib/llm'
 import type { TtsModelConfig } from '@/lib/llm'
 import {
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     // ── 读取配置 ────────────────────────────────────────────
     const settings = configId
       ? await readLlmConfigById(configId)
-      : await readLlmSettings()
+      : await readEffectiveLlmSettings()
     if (!settings?.baseUrl || !settings?.apiKey) {
       return NextResponse.json(
         { error: '请先在设置页配置 TTS 模型（Base URL 和 API Key）', code: 'SETTINGS_NOT_CONFIGURED' },

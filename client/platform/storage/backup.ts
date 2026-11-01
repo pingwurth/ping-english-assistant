@@ -120,15 +120,9 @@ export async function buildFullBackupZip(): Promise<{ filename: string; blob: Bl
   return { filename: fullBackupFilename(), blob: new Blob(chunks, { type: 'application/zip' }) }
 }
 
-/** 触发浏览器下载文件（仅用户操作回调内调用） */
-export function downloadBlob(filename: string, blob: Blob): void {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
+/** 触发浏览器下载文件 —— 统一实现见 lib/download.ts（历史四份拷贝收敛） */
+export { downloadBlob } from '@/lib/download'
+import { downloadBlob } from '@/lib/download'
 
 /** 触发浏览器下载 JSON 备份文件（轻量链路沿用） */
 export function downloadJsonBackup(filename: string, json: string): void {

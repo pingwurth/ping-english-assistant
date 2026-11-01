@@ -60,7 +60,9 @@ export async function generateTtsMimo(
     throw new LlmError('RESPONSE_EMPTY', 'TTS 响应中未返回音频数据')
   }
 
-  const audioBuffer = Buffer.from(base64, 'base64').buffer
+  // slice 出精确视图：小 payload（≤4KB）时 Node 从 8KB 池分配，直接取 .buffer 会带出池内垃圾
+  const buf = Buffer.from(base64, 'base64')
+  const audioBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
   const durationMs = parseWavDuration(audioBuffer)
 
   return { audioBuffer, durationMs }

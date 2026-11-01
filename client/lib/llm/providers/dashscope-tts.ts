@@ -71,7 +71,10 @@ export async function generateTtsDashScope(
   const audioBase64: string | undefined =
     result?.output?.choices?.[0]?.message?.audio?.data
   if (audioBase64) {
-    const audioBuffer = Buffer.from(audioBase64, 'base64').buffer
+    // slice 出精确视图：小 payload（≤4KB）时 Node 从 8KB 池分配，直接取 .buffer
+    // 会把池内垃圾一起带给上层编码成坏 WAV
+    const buf = Buffer.from(audioBase64, 'base64')
+    const audioBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
     const durationMs = parseWavDuration(audioBuffer)
     return { audioBuffer, durationMs }
   }

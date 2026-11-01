@@ -57,7 +57,7 @@ export function TranscribePage() {
     if (!srt) return
     const blob = new Blob([srt], { type: 'text/plain;charset=utf-8' })
     const name = file?.name.replace(/\.[^.]+$/, '') || 'subtitle'
-    downloadBlob(blob, `${name}.srt`)
+    downloadBlob(`${name}.srt`, blob)
   }, [srt, file])
 
   const handleImport = useCallback(async () => {
@@ -97,7 +97,10 @@ export function TranscribePage() {
                   type="file"
                   accept="audio/*,video/*"
                   className="sr-only"
-                  onChange={e => setFile(e.target.files?.[0] || null)}
+                  onChange={e => {
+                    setFile(e.target.files?.[0] || null)
+                    e.target.value = '' // 重置：同名文件在磁盘上被改过再重选也要触发 onChange
+                  }}
                 />
               </label>
 
