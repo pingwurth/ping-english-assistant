@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { selectServiceConfigs } from '@/lib/llm-configs'
 
 /** 翻译配置项（仅翻译相关字段） */
 export interface TranslateConfig {
@@ -40,14 +41,9 @@ export function useTranslateConfigs(enabled: boolean) {
           loadedRef.current = false
           return
         }
-        const list: TranslateConfig[] = (data.configs || [])
-          .filter((c: { translateModel?: string }) => c.translateModel)
-          .map((c: TranslateConfig) => ({ id: c.id, name: c.name, translateModel: c.translateModel }))
-        setConfigs(list)
-        if (list.length > 0) {
-          const defaultCfg = list.find((c) => c.id === data.defaultId) || list[0]
-          setConfigId(defaultCfg.id)
-        }
+        const { list, preferredId } = selectServiceConfigs<TranslateConfig>(data, 'translateModel')
+        setConfigs(list.map((c) => ({ id: c.id, name: c.name, translateModel: c.translateModel as string })))
+        if (preferredId) setConfigId(preferredId)
       } catch {
         // 读取失败：允许下次启用时重试
         loadedRef.current = false

@@ -5,9 +5,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 import { Shell, PageIntro } from '@/components/shared/shell'
-import { useTranscribe, MethodSelector, MethodHint, TranscribeResult, downloadBlob } from '@/components/shared/transcribe-shared'
+import { useTranscribe, TranscribeControls, TranscribeResult, downloadBlob } from '@/components/shared/transcribe-shared'
 import { ModelConfigListDialog } from '@/components/shared/model-config-list-dialog'
 import { writeTranscribeExport } from '@/lib/transcribe-export'
 import { getTranslateEnabled, setTranslateEnabled as persistTranslateEnabled } from '@/lib/pref-keys'
@@ -105,58 +104,24 @@ export function TranscribePage() {
               </label>
 
               <div className="flex flex-col gap-3">
-                <MethodSelector method={method} setMethod={setMethod} />
+                <TranscribeControls
+                  method={method}
+                  onMethodChange={setMethod}
+                  onConfigureLlm={() => setShowModelConfig(true)}
+                  asrConfigs={asrConfigs}
+                  selectedAsrConfigId={selectedAsrConfigId}
+                  onAsrConfigChange={setSelectedAsrConfigId}
+                  translateEnabled={translateEnabled}
+                  onTranslateEnabledChange={handleToggleTranslate}
+                  translateConfigs={translateConfigs}
+                  selectedTranslateConfigId={selectedTranslateConfigId}
+                  onTranslateConfigChange={setSelectedTranslateConfigId}
+                  status={status}
+                  canStart={!!file}
+                  onStart={() => start(file)}
+                  onCancel={cancel}
+                />
               </div>
-
-              <MethodHint
-                method={method}
-                onConfigureLlm={() => setShowModelConfig(true)}
-                asrConfigs={asrConfigs}
-                selectedAsrConfigId={selectedAsrConfigId}
-                onAsrConfigChange={setSelectedAsrConfigId}
-              />
-
-              {(method === 'model' || method === 'local') && (
-                <div className="flex flex-col gap-2 rounded-xl bg-muted p-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">翻译</span>
-                    <Switch
-                      checked={translateEnabled}
-                      onCheckedChange={handleToggleTranslate}
-                      aria-label="翻译开关"
-                    />
-                    {translateEnabled && (
-                      <select
-                        value={selectedTranslateConfigId || ''}
-                        onChange={e => setSelectedTranslateConfigId(e.target.value)}
-                        disabled={translateConfigs.length === 0}
-                        className="rounded-md border border-input bg-background px-2 py-1 text-xs disabled:opacity-50"
-                      >
-                        {translateConfigs.map(c => (
-                          <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                  {translateEnabled && translateConfigs.length === 0 && (
-                    <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置翻译模型</p>
-                  )}
-                </div>
-              )}
-
-              {status === 'running' ? (
-                <Button className="w-full" variant="destructive" onClick={cancel}>
-                  取消转换
-                </Button>
-              ) : (
-                <Button
-                  className="w-full"
-                  disabled={!file || method === 'third-party'}
-                  onClick={() => start(file)}
-                >
-                  {status === 'error' ? '重新转换' : '开始转换'}
-                </Button>
-              )}
             </CardContent>
           </Card>
 

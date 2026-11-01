@@ -4,25 +4,20 @@ import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError, toApiError } from '@/services'
-import { splitWords } from '@/core/subtitle'
+import { Switch } from '@/components/ui/switch'
+import { splitWords, exportSrtRows, formatSrtTimestamp } from '@/core/subtitle'
 import { detectDirection, translateTexts, mergeBilingualSrt, buildBilingualPreview } from '@/lib/translate'
+import { selectServiceConfigs } from '@/lib/llm-configs'
 import type { SubtitleSentence } from '@/types/subtitle'
 import type { AsrTranscribeSegment } from '@/types/api'
 
-/* ── SRT 工具 ── */
+/* ── SRT 工具（序列化统一走 core/subtitle 的 exportSrtRows，不再本地拷贝） ── */
 
-export function formatSrtTime(ms: number): string {
-  const h = Math.floor(ms / 3_600_000)
-  const m = Math.floor((ms % 3_600_000) / 60_000)
-  const s = Math.floor((ms % 60_000) / 1_000)
-  const msRemainder = ms % 1_000
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(msRemainder).padStart(3, '0')}`
-}
+/** 兼容别名：历史导出名，实现即 core/subtitle 的 formatSrtTimestamp */
+export const formatSrtTime = formatSrtTimestamp
 
 export function segmentsToSrt(segments: AsrTranscribeSegment[]): string {
-  return segments
-    .map((seg, i) => `${i + 1}\n${formatSrtTime(seg.startMs)} --> ${formatSrtTime(seg.endMs)}\n${seg.text}`)
-    .join('\n\n')
+  return exportSrtRows(segments.map((seg) => ({ startMs: seg.startMs, endMs: seg.endMs, lines: [seg.text] })))
 }
 
 /** 下载产物文件 —— 统一实现见 lib/download.ts（历史拷贝参数顺序相反，已对齐 (filename, blob)） */
@@ -124,19 +119,14 @@ export function useTranscribe() {
     try {
       const res = await fetch('/api/settings/llm-configs')
       const data = await res.json()
-      const configs = (data.configs || []).filter((c: { asrModel?: string }) => c.asrModel)
-      setAsrConfigs(configs)
-      if (configs.length > 0) {
-        const defaultCfg = configs.find((c: { id: string }) => c.id === data.defaultId) || configs[0]
-        setSelectedAsrConfigId(defaultCfg.id)
-      }
-      const tConfigs = (data.configs || []).filter((c: { translateModel?: string }) => c.translateModel)
-      setTranslateConfigs(tConfigs)
-      if (tConfigs.length > 0) {
-        const defaultTCfg = tConfigs.find((c: { id: string }) => c.id === data.defaultId) || tConfigs[0]
-        setSelectedTranslateConfigId(defaultTCfg.id)
-      }
-      return configs
+      // 过滤 + 默认选择统一走 selectServiceConfigs（三处调用方同一默认策略）
+      const asr = selectServiceConfigs<{ id: string; name: string; asrModel: string }>(data, 'asrModel')
+      setAsrConfigs(asr.list)
+      if (asr.preferredId) setSelectedAsrConfigId(asr.preferredId)
+      const tr = selectServiceConfigs<{ id: string; name: string; translateModel: string }>(data, 'translateModel')
+      setTranslateConfigs(tr.list)
+      if (tr.preferredId) setSelectedTranslateConfigId(tr.preferredId)
+      return asr.list
     } catch {
       return []
     }
@@ -351,6 +341,83 @@ export function useTranscribe() {
 }
 
 /* ── 共享 UI 组件 ── */
+
+/**
+ * 转写控制块（转写页与 AI 转写对话框共用）：方式选择 + 模型配置提示 + 翻译开关 + 开始/取消按钮。
+ * 原先两处近逐字拷贝且已漂移（同一翻译开关两种交互路径），收敛于此；
+ * 翻译开关的持久化与否由调用方传入的 onTranslateEnabledChange 决定。
+ */
+export function TranscribeControls({
+  method, onMethodChange,
+  onConfigureLlm,
+  asrConfigs, selectedAsrConfigId, onAsrConfigChange,
+  translateEnabled, onTranslateEnabledChange,
+  translateConfigs, selectedTranslateConfigId, onTranslateConfigChange,
+  status, canStart, onStart, onCancel,
+}: {
+  method: Method
+  onMethodChange: (m: Method) => void
+  onConfigureLlm: () => void
+  asrConfigs: Array<{ id: string; name: string; asrModel: string }>
+  selectedAsrConfigId: string
+  onAsrConfigChange: (id: string) => void
+  translateEnabled: boolean
+  onTranslateEnabledChange: (v: boolean) => void
+  translateConfigs: Array<{ id: string; name: string; translateModel: string }>
+  selectedTranslateConfigId: string
+  onTranslateConfigChange: (id: string) => void
+  status: Status
+  canStart: boolean
+  onStart: () => void
+  onCancel: () => void
+}) {
+  return (
+    <>
+      <MethodSelector method={method} setMethod={onMethodChange} />
+      <MethodHint
+        method={method}
+        onConfigureLlm={onConfigureLlm}
+        asrConfigs={asrConfigs}
+        selectedAsrConfigId={selectedAsrConfigId}
+        onAsrConfigChange={onAsrConfigChange}
+      />
+
+      {(method === 'model' || method === 'local') && (
+        <div className="flex flex-col gap-2 rounded-xl bg-muted p-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">翻译</span>
+            <Switch checked={translateEnabled} onCheckedChange={onTranslateEnabledChange} aria-label="翻译开关" />
+            {translateEnabled && (
+              <select
+                value={selectedTranslateConfigId || ''}
+                onChange={e => onTranslateConfigChange(e.target.value)}
+                disabled={translateConfigs.length === 0}
+                className="rounded-md border border-input bg-background px-2 py-1 text-xs disabled:opacity-50"
+              >
+                {translateConfigs.map(c => (
+                  <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+          {translateEnabled && translateConfigs.length === 0 && (
+            <p className="text-xs text-destructive">请先在「设置 → 模型配置」中配置翻译模型</p>
+          )}
+        </div>
+      )}
+
+      {status === 'running' ? (
+        <Button className="w-full" variant="destructive" onClick={onCancel}>
+          取消转换
+        </Button>
+      ) : (
+        <Button className="w-full" disabled={!canStart || method === 'third-party'} onClick={onStart}>
+          {status === 'error' ? '重新转换' : '开始转换'}
+        </Button>
+      )}
+    </>
+  )
+}
 
 export function MethodSelector({ method, setMethod }: { method: Method; setMethod: (m: Method) => void }) {
   return (

@@ -25,10 +25,19 @@ import { TTS_MAX_TEXT_LENGTH } from '@/services/mock/tts'
 import { writeTtsExport } from '@/lib/tts-export'
 import { translateTexts, detectDirection, mergeBilingualSrt } from '@/lib/translate'
 import { getTranslateEnabled, setTranslateEnabled } from '@/lib/pref-keys'
+import { selectServiceConfigs } from '@/lib/llm-configs'
 import { parseSubtitle } from '@/core/subtitle'
 import { generateKokoroTts, KOKORO_VOICES, type KokoroLoadState } from '@/platform/kokoro-tts'
 
 /** 云端 TTS 默认音色（settings 加载前的 fallback） */
+/** 云端 TTS 模型配置项（llm-configs 的 ttsModel 条目） */
+interface TtsConfigItem {
+  id: string
+  name: string
+  ttsModel: string
+  ttsVoices?: ReadonlyArray<{ id: string; label: string }>
+}
+
 const DEFAULT_CLOUD_VOICES = [
   { id: 'longanlingxin', label: 'Lingxin · Female (双语)' },
   { id: 'longanlufeng', label: 'Lufeng · Male (双语)' },
@@ -69,7 +78,7 @@ function TTS() {
   const [engine, setEngine] = useState<TtsEngine>('cloud')
   const [voiceIdx, setVoiceIdx] = useState(0)
   const [speedIdx, setSpeedIdx] = useState(2)
-  const [ttsConfigs, setTtsConfigs] = useState<Array<{ id: string; name: string; ttsModel: string; ttsVoices: ReadonlyArray<{ id: string; label: string }> }>>([])
+  const [ttsConfigs, setTtsConfigs] = useState<TtsConfigItem[]>([])
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
   const [cloudVoices, setCloudVoices] = useState<ReadonlyArray<{ id: string; label: string }>>(DEFAULT_CLOUD_VOICES)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
@@ -128,17 +137,15 @@ function TTS() {
     fetch('/api/settings/llm-configs')
       .then(res => res.json())
       .then(data => {
-        const configs = (data.configs || []).filter((c: { ttsModel?: string }) => c.ttsModel)
-        setTtsConfigs(configs)
+        // 过滤 + 默认选择统一走 selectServiceConfigs（三处调用方同一默认策略）
+        const tts = selectServiceConfigs<TtsConfigItem>(data, 'ttsModel')
+        setTtsConfigs(tts.list)
         // 同一响应中顺带提取已配置翻译模型的配置（不发第二次请求）
-        const translateCfgs = (data.configs || []).filter((c: { translateModel?: string }) => c.translateModel)
-        setTranslateConfigs(translateCfgs)
-        if (translateCfgs.length > 0) {
-          const defaultTranslateCfg = translateCfgs.find((c: { id: string }) => c.id === data.defaultId) || translateCfgs[0]
-          setSelectedTranslateConfigId(defaultTranslateCfg.id)
-        }
-        if (configs.length > 0) {
-          const defaultConfig = configs.find((c: { id: string }) => c.id === data.defaultId) || configs[0]
+        const tr = selectServiceConfigs<{ id: string; name: string; translateModel: string }>(data, 'translateModel')
+        setTranslateConfigs(tr.list)
+        if (tr.preferredId) setSelectedTranslateConfigId(tr.preferredId)
+        const defaultConfig = tts.preferredId ? tts.list.find((c) => c.id === tts.preferredId) : undefined
+        if (defaultConfig) {
           setSelectedConfigId(defaultConfig.id)
           if (defaultConfig.ttsVoices?.length) setCloudVoices(defaultConfig.ttsVoices)
           setEngine('cloud')

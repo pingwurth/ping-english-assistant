@@ -8,6 +8,7 @@ import { ChatOpenAI } from '@langchain/openai'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { createChatModel } from './factory'
 import { LlmError, toLlmError } from './errors'
+import { stripJsonFence, sliceJsonBlock, sanitizeJsonString, tryFixMalformedJson } from './json-extract'
 import type { ChatModelConfig, TranslateConfig } from './types'
 import type { TranslateDirection } from '@/types/api'
 
@@ -60,14 +61,40 @@ export async function translateTexts(
 
   const model = createChatModel(config)
 
-  // 分块串行调用，避免本地小模型因输出 token 不足导致丢句
-  const results: string[] = []
+  // 分块调用。块大小关乎模型输出 token 上限（串行/并发共用该值）；
+  // 云端 provider 块间并发 3（500 句 = 34 块 ≈ 12 轮往返，整篇翻译耗时约缩至 1/3），
+  // 本地 baseUrl 保持串行 —— 小模型吞吐有限，并发只会互相挤压且更易丢句。
+  const chunks: string[][] = []
   for (let start = 0; start < texts.length; start += LLM_CHUNK_SIZE) {
-    signal?.throwIfAborted()
-    const chunk = texts.slice(start, start + LLM_CHUNK_SIZE)
-    const chunkResult = await translateSingleChunk(chunk, targetLang, model, signal)
-    results.push(...chunkResult)
+    chunks.push(texts.slice(start, start + LLM_CHUNK_SIZE))
   }
+
+  const isLocalBaseUrl = /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\])(:\d+)?([/?#]|$)/i.test(config.baseUrl)
+  const CONCURRENCY = 3
+  const results: string[] = new Array(texts.length)
+
+  if (isLocalBaseUrl || chunks.length === 1) {
+    let idx = 0
+    for (const chunk of chunks) {
+      signal?.throwIfAborted()
+      const chunkResult = await translateSingleChunk(chunk, targetLang, model, signal)
+      for (const t of chunkResult) results[idx++] = t
+    }
+    return results
+  }
+
+  // 简单工作池：固定并发数消费块队列，结果按原顺序归位（进度语义与串行一致）
+  let nextChunk = 0
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const i = nextChunk++
+      if (i >= chunks.length) return
+      signal?.throwIfAborted()
+      const chunkResult = await translateSingleChunk(chunks[i]!, targetLang, model, signal)
+      for (let k = 0; k < chunkResult.length; k++) results[i * LLM_CHUNK_SIZE + k] = chunkResult[k]!
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, chunks.length) }, () => worker()))
   return results
 }
 
@@ -198,17 +225,9 @@ async function translateSingleChunk(
  * 校验：长度与输入一致且每项为非空字符串；不通过返回 null
  */
 function extractTranslations(content: string, expectedLength: number): string[] | null {
-  let text = content.trim()
-  // 1. 剥离 markdown 代码块
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fence?.[1]) text = fence[1].trim()
-
-  // 2. 截取首个 `[` 至末个 `]`
-  const start = text.indexOf('[')
-  const end = text.lastIndexOf(']')
-  if (start === -1 || end <= start) return null
-
-  const raw = text.slice(start, end + 1)
+  // 1+2. 剥离 markdown 代码块，截取首个 `[` 至末个 `]`（共享件，见 json-extract.ts）
+  const raw = sliceJsonBlock(stripJsonFence(content), '[', ']')
+  if (raw === null) return null
 
   // 3. 尝试标准 JSON.parse（不触碰 CJK 引号，避免破坏内容中的「」）
   try {
@@ -313,59 +332,6 @@ function parseCjkArray(raw: string, expectedLength: number): string[] | null {
   if (items.length !== expectedLength) return null
   if (!items.every((s) => s.trim().length > 0)) return null
   return items.map((s) => s.trim())
-}
-
-// CJK 引号和智能引号的正则（使用 Unicode 转义避免编码问题）
-const CJK_QUOTE_RE = /[「」””’’]/g
-const CJK_QUOTE_TEST_RE = /[「」””’’]/
-
-
-/**
- * 清洗模型返回中常见的 JSON 格式问题
- *
- * 本地小模型（7B 等）常犯的错误：
- * - 使用「」"" '' 替代标准双引号
- * - 使用 CJK 右引号 」 替代 "," 分隔符
- * - 字符串内含有未转义的换行符
- */
-function sanitizeJsonString(raw: string): string {
-  let s = raw
-
-  // 仅在检测到 CJK/智能引号时执行替换，避免破坏已合法的 JSON
-  const hadCjkQuotes = CJK_QUOTE_TEST_RE.test(s)
-
-  // 将 CJK 引号和智能引号统一替换为标准双引号
-  s = s.replace(CJK_QUOTE_RE, '"')
-
-  // 仅当原始内容包含 CJK/智能引号时，才修复连续引号问题
-  // 避免误伤包含转义引号的合法 JSON（如 \" 变成 "" 后被替换为 ","）
-  if (hadCjkQuotes) {
-    s = s.replace(/"{2,}/g, '","')
-    // 修复开头多余的逗号或引号
-    s = s.replace(/^\[\s*,/, '[')
-    s = s.replace(/,\s*$/, ']')
-  }
-
-  return s
-}
-
-/**
- * 尝试修复格式严重损坏的 JSON
- *
- * 当标准清洗仍无法解析时，逐行提取看起来像翻译结果的字符串。
- * 这是最后的兜底手段，只有在模型输出完全无法解析时才使用。
- */
-function tryFixMalformedJson(raw: string): unknown {
-  // 尝试用正则提取所有被引号包裹的字符串
-  const matches = raw.match(/"([^"\\]|\\.)*"/g)
-  if (!matches) return null
-
-  try {
-    // 将提取的字符串重新组装为合法 JSON 数组
-    return JSON.parse('[' + matches.join(',') + ']')
-  } catch {
-    return null
-  }
 }
 
 /**

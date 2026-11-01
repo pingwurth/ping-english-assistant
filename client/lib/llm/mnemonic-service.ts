@@ -7,6 +7,7 @@
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 import { createChatModel } from './factory'
 import { LlmError, toLlmError } from './errors'
+import { stripJsonFence, sliceJsonBlock, sanitizeJsonString } from './json-extract'
 import type { ChatModelConfig } from './types'
 import type { MnemonicCard, Association, Exercises, SentenceEvaluation, MnemonicSseEvent } from '@/types/mnemonic'
 
@@ -121,7 +122,7 @@ const EVALUATION_SYSTEM_PROMPT = `You are a supportive IELTS writing examiner.
 - Return ONLY valid JSON.`
 
 // ---------------------------------------------------------------------------
-// JSON 解析（复用 chat-service.ts 的容错策略）
+// JSON 解析（容错栈与 chat-service 共享，见 json-extract.ts；此前的本地拷贝缺「」引号处理）
 // ---------------------------------------------------------------------------
 
 /**
@@ -131,34 +132,20 @@ const EVALUATION_SYSTEM_PROMPT = `You are a supportive IELTS writing examiner.
  * 1. 剥离 ```json fences
  * 2. 截取首个 { 至末个 }
  * 3. JSON.parse
- * 4. 兜底：sanitizeJsonString
+ * 4. 兜底：sanitizeJsonString（CJK/智能引号归一）后重试
+ *    注：不做全局 \n → \\n 转义（字符串外换行是合法空白，全局替换会弄坏合法 JSON）
  */
 function extractJsonObject<T>(content: string): T {
-  let text = content.trim()
-
-  // 剥离 markdown 代码块
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fence?.[1]) text = fence[1].trim()
-
-  // 截取首个 { 至末个 }
-  const start = text.indexOf('{')
-  const end = text.lastIndexOf('}')
-  if (start === -1 || end <= start) {
+  const raw = sliceJsonBlock(stripJsonFence(content), '{', '}')
+  if (raw === null) {
     throw new LlmError('RESPONSE_FORMAT_ERROR', 'LLM 返回内容中未找到 JSON 对象')
   }
-
-  const raw = text.slice(start, end + 1)
 
   try {
     return JSON.parse(raw) as T
   } catch {
-    // 兜底：替换常见问题后重试
-    const sanitized = raw
-      .replace(/[“”]/g, '"')  // 中文双引号
-      .replace(/[‘’]/g, "'")  // 中文单引号
-      .replace(/\n/g, '\\n')            // 未转义换行
     try {
-      return JSON.parse(sanitized) as T
+      return JSON.parse(sanitizeJsonString(raw)) as T
     } catch {
       throw new LlmError('RESPONSE_FORMAT_ERROR', 'LLM 返回的 JSON 格式无法解析')
     }
