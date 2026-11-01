@@ -229,6 +229,13 @@ function Player() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [materialId, playable, mediaUrl])
 
+  // 字幕数据变化（AI 转字幕/文件导入、纠错、删句、整篇翻译）时同步句列表到已装配引擎：
+  // 装配 effect 依赖 [materialId, playable, mediaUrl]，字幕更新不会重建引擎，
+  // 不同步则引擎持有旧句列表（首次导入前为空），循环/切句等句子级控件全部静默失效。
+  useEffect(() => {
+    playerRef.current?.setSentences(record?.subtitleData?.sentences ?? [])
+  }, [record?.subtitleData])
+
   /** 播放进度落盘（progress: 前缀）：合并历史 playedSentenceIndexes + 最新位置 */
   async function flushProgress(lastMs?: number) {
     const p = playedRef.current
