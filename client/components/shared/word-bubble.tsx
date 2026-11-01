@@ -147,6 +147,10 @@ export function WordBubble({ items, materialId, selectionContainerRef }: WordBub
     }
   }, [bubble, clearBubble])
 
+  // 卸载收口，防泄漏（必须在下方提前 return 之前 —— Hooks 不允许条件调用：
+  // 气泡出现前后 hook 数量会变化，触发 React 顺序检测报错）
+  useEffect(() => () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current) }, [])
+
   if (!bubble || !initialized) return null
 
   const bubbleStyle: React.CSSProperties = {
@@ -166,9 +170,6 @@ export function WordBubble({ items, materialId, selectionContainerRef }: WordBub
       clearBubble()
     }, 2000)
   }
-
-  // 卸载收口，防泄漏
-  useEffect(() => () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current) }, [])
 
   const bubbleContent = (
     <>
