@@ -147,7 +147,10 @@ e2e-fixtures/
 
 # python
 .venv/
+__pycache__/
 
 # Other
 .codegraph
 .repowise
+# code-review-p 审查台账（本地生成，不入库）
+ledger.json

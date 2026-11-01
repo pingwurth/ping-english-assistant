@@ -348,7 +348,10 @@ server/
 |----|------|
 | `mock`（默认） | 本地确定性伪评分（与前端 mock 同输出，无需密钥） |
 | `azure` | Azure Pronunciation Assessment（首发主方案；需 `AZURE_SPEECH_KEY` + `AZURE_SPEECH_REGION/HOST`） |
-| `tencent` | 占位未实施（基础版已停止迭代，见选型报告 §5.2） |
+| `tencent` | 腾讯云口语评测**新版 OEN**，WebSocket `wss://soe.cloud.tencent.com`（需 `TENCENT_APP_ID` + `TENCENT_SECRET_ID` + `TENCENT_SECRET_KEY`）。基础版已停止迭代，选型报告 §5.2 指的基础版不再实现 |
+| `iflytek` | 科大讯飞 ISE 流式版，WebSocket `wss://ise-api.xfyun.cn/v2/open-ise`（需 `IFLYTEK_APP_ID` + `IFLYTEK_API_KEY` + `IFLYTEK_API_SECRET`；`IFLYTEK_FRAME_INTERVAL_MS` 控制分帧发送，默认 40ms） |
+
+Provider 注册规则（`src/services/soe/index.ts`）：`mock` 恒在，其余**仅在凭据齐全时注册**；默认取 `SOE_PROVIDER`，请求可用 multipart 字段 `provider` 覆盖已注册的实现，还可带 `creds`（JSON）**请求级密钥**——与 env 合并时请求密钥胜出（空串视为未提供），合并后凭据不齐则回落注册表（未注册由路由返回 503）。前端 BFF 正是通过 `creds` 通道注入密钥，因此密钥既不进浏览器也不强制写进 env。
 
 ```bash
 # Node.js 20+；在 server/ 目录下
@@ -356,6 +359,9 @@ pnpm install
 cp .env.example .env   # 按需改 SOE_PROVIDER 等
 pnpm start             # 默认 :8788；pnpm dev 为 watch 模式
 pnpm check             # tsc --noEmit
+pnpm test              # provider 鉴权/报文/映射单测（vitest）
 ```
 
-请求：multipart（`refText` + `audio` wav 16kHz mono ≤25MB）；响应：契约② JSON；错误统一 `{ code, message, detail? }`。密钥只存服务端 env，前端仅调用本代理。
+请求：multipart（`refText` + `audio` wav 16kHz mono ≤25MB）；响应：契约② JSON；错误统一 `{ code, message, detail? }`。探活 `GET /healthz` 返回默认实现与全部已注册实现。
+
+⚠️ 客户端拼装 multipart 时**文本字段（`refText`/`evalMode`/`provider`/`creds`）必须排在 `audio` 之前**：`@fastify/multipart` 的 `req.file()` 只保证文件之前的字段可见，顺序颠倒会读到空 `refText`。
