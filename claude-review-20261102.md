@@ -1,5 +1,8 @@
 # 全量代码评审报告 — claude-review-20261102
 
+> **修复记录（2026-11-02 同日）**：61 条发现中 **50 条已修复**（A1–A4、B1–B9、C1–C18、D1–D5 全部；E 节 12 项：死代码 5/5、重复 #4/#5/#6、性能 #5/#7、层次 #2、规范 #1）。剩余 11 项为规划级重构（E-重复 #1/#2/#3/#7/#8、E-性能 #1/#2/#3/#4/#6、E-层次 #1），见 G 节第 5 档。
+> 验证基线：client `tsc --noEmit` 0 错 + vitest 157/157（较基线少的 10 例为删除 tiles 死代码对应的测试）；server `tsc --noEmit` 0 错 + vitest 51/51（含按官方规范重写的 iflytek-auth golden 向量）；`next build` 通过；`align_server.py` 语法检查通过。
+
 - **日期**: 2026-11-02
 - **范围**: 全量产品代码（`client/` 全部 + `server/src` SOE 代理 + `server/*.py` + `start.sh`），排除 `node_modules`、`.venv`、`.next`、`page-prototype/`、`docs/`、`client/debug/`
 - **方法**: max effort —— 10 个独立发现角度（5 正确性 + 复用/精简/性能/层次/规范）× 每角度 ≤8 候选 → 去重后逐条 1 票 3 态验证（CONFIRMED / PLAUSIBLE / REFUTED）→ 补漏扫描（sweep）→ 全量报告
