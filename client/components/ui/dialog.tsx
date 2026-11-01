@@ -7,10 +7,20 @@ interface DialogProps {
   children: React.ReactNode
 }
 
+/**
+ * 打开后该时长内的 overlay 点击不触发关闭：
+ * 双击"打开按钮"时，第二次点击会落在 overlay 上按钮原位置（弹窗卡片居中，按钮多在其外），
+ * 瞬间关掉刚打开的弹窗，表现为"点击没反应"。
+ */
+const OUTSIDE_CLICK_GRACE_MS = 300
+
 function Dialog({ open, onOpenChange, children }: DialogProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
+  const openedAtRef = useRef(0)
 
   useEffect(() => {
+    if (!open) return
+    openedAtRef.current = Date.now()
     if (!open) return
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onOpenChange(false)
@@ -30,7 +40,10 @@ function Dialog({ open, onOpenChange, children }: DialogProps) {
       ref={overlayRef}
       data-dialog
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === overlayRef.current) onOpenChange(false) }}
+      onClick={(e) => {
+        if (Date.now() - openedAtRef.current < OUTSIDE_CLICK_GRACE_MS) return
+        if (e.target === overlayRef.current) onOpenChange(false)
+      }}
     >
       <div className="relative max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl bg-card shadow-xl">
         <button
