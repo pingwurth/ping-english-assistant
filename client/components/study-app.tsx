@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { setKokoroModelId, preloadKokoroModel } from '@/platform/kokoro-tts'
+import { sweepTrainingRetention } from '@/stores/training-record-store'
 import { Library } from '@/components/pages/library'
 import { CollectionDetail } from '@/components/pages/collection'
 import { Favorites } from '@/components/pages/favorites'
@@ -27,6 +28,8 @@ export default function StudyApp() {
   useEffect(() => {
     setReady(true)
     // 启动时加载 Kokoro 配置并预加载模型
+    // 后台清扫训练记录保留策略（只读 train: 前缀；兜住升级前/导入的历史积压，失败静默）
+    void sweepTrainingRetention().catch(() => {})
     fetch('/api/settings/kokoro')
       .then(res => res.ok ? res.json() : null)
       .then(data => {

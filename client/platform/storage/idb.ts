@@ -16,8 +16,10 @@
 
 export type StoreName = 'materials' | 'blobs' | 'records'
 const DB_NAME = 'ping-english-assistant'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORES: StoreName[] = ['materials', 'blobs', 'records']
+/** v3：records 按值上 materialId 建的索引名（train: 记录键不含 materialId） */
+const RECORDS_MATERIAL_INDEX = 'material'
 
 /** onblocked 后等待旧版本连接释放的上限，超时才降级内存 */
 const BLOCKED_TIMEOUT_MS = 10_000
@@ -48,6 +50,14 @@ function openDb(): Promise<IDBDatabase | null> {
       req.onupgradeneeded = () => {
         const db = req.result
         for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s)
+        // v3：records 建 materialId 索引 —— train: 记录键形如 train:{recordId} 不含
+        // materialId，按材料查训练记录原先只能全库物化；索引后 getEntriesByMaterial
+        // 按材料点查。升级事务内浏览器自动为存量记录回填索引（无 materialId 字段的
+        // 记录不进索引，读取行为不变）。
+        const records = req.transaction!.objectStore('records')
+        if (!records.indexNames.contains(RECORDS_MATERIAL_INDEX)) {
+          records.createIndex(RECORDS_MATERIAL_INDEX, 'materialId', { unique: false })
+        }
       }
       req.onsuccess = () => { settled = true; resolve(req.result) }
       req.onerror = () => fallbackToMemory('open failed', req.error)
@@ -90,6 +100,37 @@ function tx<T>(store: StoreName, mode: IDBTransactionMode, fn: (os: IDBObjectSto
   }))
 }
 
+/**
+ * 同一 readonly 事务发 getAllKeys + getAll（可带 IDBKeyRange），按主键序 zip 成
+ * [key, value] 对；成败以事务生命周期收口（见 tx() 注释）。getAllEntries 与
+ * getAllEntriesByPrefix 共用。
+ */
+function entriesSnapshot(store: StoreName, range?: IDBKeyRange): Promise<Array<[string, unknown]>> {
+  return openDb().then(
+    (db) =>
+      new Promise<Array<[string, unknown]>>((resolve, reject) => {
+        if (!db) return resolve([])
+        try {
+          const t = db.transaction(store, 'readonly')
+          const os = t.objectStore(store)
+          const keysReq = range ? os.getAllKeys(range) : os.getAllKeys()
+          const valuesReq = range ? os.getAll(range) : os.getAll()
+          let keys: IDBValidKey[] = []
+          let values: unknown[] = []
+          let reqError: unknown
+          keysReq.onsuccess = () => { keys = keysReq.result }
+          valuesReq.onsuccess = () => { values = valuesReq.result }
+          keysReq.onerror = () => { reqError = keysReq.error ?? new Error('idb') }
+          valuesReq.onerror = () => { reqError = valuesReq.error ?? new Error('idb') }
+          t.oncomplete = () => resolve(keys.map((k, i) => [String(k), values[i]] as [string, unknown]))
+          t.onabort = () => reject(t.error ?? reqError ?? new Error('idb transaction aborted'))
+        } catch (e) {
+          reject(e)
+        }
+      }),
+  )
+}
+
 /** 单个 object store 的最小 KV API */
 export interface KvStore {
   get<T>(key: string): Promise<T | undefined>
@@ -102,6 +143,13 @@ export interface KvStore {
    * 独立事务」的 N+1（打开播放器页要为一份笔记开几十次事务的问题由此消除）。
    */
   getAllEntries(): Promise<Array<[string, unknown]>>
+  /**
+   * 主键前缀区间读取（string 键按 UTF-16 字典序取 [prefix, prefix+'￿']）：
+   * note:{materialId}: / fav:{materialId}: / collection: 等按材料或类型的局部读取，
+   * 不再为一份笔记/一个集合物化整个 store。注意 materialId 互为前缀时（m-1 / m-10）
+   * 前缀必须带尾部分隔符（`fav:m-1:`），字典序天然排除 m-10 的键。
+   */
+  getAllEntriesByPrefix(prefix: string): Promise<Array<[string, unknown]>>
 }
 
 function makeStore(store: StoreName): KvStore {
@@ -137,41 +185,72 @@ function makeStore(store: StoreName): KvStore {
     getAllEntries: () =>
       useMemory
         ? Promise.resolve([...mem(store).entries()])
-        : wrapRead(
-            openDb().then(
-              (db) =>
-                new Promise<Array<[string, unknown]>>((resolve, reject) => {
-                  if (!db) return resolve([])
-                  try {
-                    // 同一 readonly 事务发 getAllKeys + getAll：快照一致，且均按主键序返回，可直接 zip。
-                    // 成败同样以事务生命周期收口（见 tx() 注释）
-                    const t = db.transaction(store, 'readonly')
-                    const os = t.objectStore(store)
-                    const keysReq = os.getAllKeys()
-                    const valuesReq = os.getAll()
-                    let keys: IDBValidKey[] = []
-                    let values: unknown[] = []
-                    let reqError: unknown
-                    keysReq.onsuccess = () => { keys = keysReq.result }
-                    valuesReq.onsuccess = () => { values = valuesReq.result }
-                    keysReq.onerror = () => { reqError = keysReq.error ?? new Error('idb') }
-                    valuesReq.onerror = () => { reqError = valuesReq.error ?? new Error('idb') }
-                    t.oncomplete = () => resolve(keys.map((k, i) => [String(k), values[i]] as [string, unknown]))
-                    t.onabort = () => reject(t.error ?? reqError ?? new Error('idb transaction aborted'))
-                  } catch (e) {
-                    reject(e)
-                  }
-                }),
-            ),
-            [] as Array<[string, unknown]>,
-          ),
+        : wrapRead(entriesSnapshot(store), [] as Array<[string, unknown]>),
+    getAllEntriesByPrefix: (prefix) =>
+      useMemory
+        ? Promise.resolve([...mem(store).entries()].filter(([k]) => k.startsWith(prefix)))
+        : wrapRead(entriesSnapshot(store, IDBKeyRange.bound(prefix, prefix + '\uffff')), [] as Array<[string, unknown]>),
   }
 }
 
 /** 三个 store 的单例入口 */
 export const materialsStore = makeStore('materials')
 export const blobsStore = makeStore('blobs')
-export const recordsStore = makeStore('records')
+
+/** records store 在通用 KV 之上多一个按值 materialId 的索引查询 */
+export interface RecordsStore extends KvStore {
+  /**
+   * 按值上的 materialId 索引取该材料的全部 records —— 覆盖 train:（键不含
+   * materialId）以及 note:/fav:/progress:（键与值都带 materialId）。
+   * 无 materialId 字段的记录（vocabbook:/collection:/meta: 等）不在结果内。
+   */
+  getEntriesByMaterial(materialId: string): Promise<Array<[string, unknown]>>
+}
+
+const recordsBase = makeStore('records')
+async function recordsByMaterial(materialId: string): Promise<Array<[string, unknown]>> {
+  if (useMemory) {
+    return [...mem('records').entries()].filter(
+      ([, v]) => (v as { materialId?: unknown } | null)?.materialId === materialId,
+    )
+  }
+  try {
+    return await openDb().then(
+      (db) =>
+        new Promise<Array<[string, unknown]>>((resolve, reject) => {
+          if (!db) return resolve([])
+          try {
+            // 索引区间读：keys/values 同事务快照，事务生命周期收口（同 entriesSnapshot）
+            const t = db.transaction('records', 'readonly')
+            const idx = t.objectStore('records').index(RECORDS_MATERIAL_INDEX)
+            const range = IDBKeyRange.only(materialId)
+            const keysReq = idx.getAllKeys(range)
+            const valuesReq = idx.getAll(range)
+            let keys: IDBValidKey[] = []
+            let values: unknown[] = []
+            let reqError: unknown
+            keysReq.onsuccess = () => { keys = keysReq.result }
+            valuesReq.onsuccess = () => { values = valuesReq.result }
+            keysReq.onerror = () => { reqError = keysReq.error ?? new Error('idb') }
+            valuesReq.onerror = () => { reqError = valuesReq.error ?? new Error('idb') }
+            t.oncomplete = () => resolve(keys.map((k, i) => [String(k), values[i]] as [string, unknown]))
+            t.onabort = () => reject(t.error ?? reqError ?? new Error('idb transaction aborted'))
+          } catch (e) {
+            reject(e)
+          }
+        }),
+    )
+  } catch (e) {
+    // 读语义与 wrapRead 一致：失败回空集合，不影响其他操作
+    console.error(`[IDB] read failed on "records" (byMaterial):`, e)
+    return []
+  }
+}
+
+export const recordsStore: RecordsStore = {
+  ...recordsBase,
+  getEntriesByMaterial: recordsByMaterial,
+}
 
 /** 磁盘占用查询（不可用时返回 0，不崩溃） */
 export async function estimateUsage(): Promise<{ usage: number; quota: number }> {

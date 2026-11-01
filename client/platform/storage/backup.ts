@@ -52,8 +52,8 @@ async function collectBackupParts(): Promise<{ materials: MaterialRecord[]; reco
   const materialKeys = await materialsStore.allKeys()
   const materials = (await Promise.all(materialKeys.map((k) => materialsStore.get<MaterialRecord>(k))))
     .filter((m): m is MaterialRecord => !!m)
-  const recordKeys = await recordsStore.allKeys()
-  const recordEntries = await Promise.all(recordKeys.map(async (k) => [k, await recordsStore.get(k)] as const))
+  // 全量导出确实需要所有记录：单事务快照（原 allKeys 全扫 + 每键一个读事务的 N+1）
+  const recordEntries = await recordsStore.getAllEntries()
   const records = Object.fromEntries(recordEntries.filter(([, v]) => v !== undefined))
   return { materials, records, prefs: exportAllPrefs() }
 }

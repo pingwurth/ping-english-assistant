@@ -18,10 +18,9 @@ const FAV_PREFIX = RECORD_KEY_PREFIXES.favorite
  */
 export async function listFavorites(materialId?: string): Promise<Favorite[]> {
   const prefix = materialId ? `${FAV_PREFIX}${materialId}:` : FAV_PREFIX
-  // 单事务批量读取（原 allKeys 全扫 + 每条收藏一个事务的 N+1）
-  const entries = await recordsStore.getAllEntries()
+  // 主键前缀区间读：只物化收藏自身的值，不再为一份收藏扫整个 records store
+  const entries = await recordsStore.getAllEntriesByPrefix(prefix)
   return entries
-    .filter(([k]) => k.startsWith(prefix))
     .map(([, v]) => v as Favorite)
     .filter((f): f is Favorite => !!f && typeof f.createdAt === 'number')
     .sort((a, b) => b.createdAt - a.createdAt)

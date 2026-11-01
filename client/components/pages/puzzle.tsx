@@ -18,8 +18,7 @@ import {
 import { formatElapsed, summarize } from '@/core/training/scoring'
 import { attempt, createSession, currentSentence, hint, makeRecordId, next, submit, type SessionState } from '@/core/training/session'
 import { useSentencePlayer } from '@/lib/use-sentence-player'
-import { recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS } from '@/platform/storage/schema'
+import { appendTrainingRecord } from '@/stores/training-record-store'
 import type { PuzzleDetail, TrainingRecord } from '@/types/training'
 
 /** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
@@ -103,7 +102,7 @@ function Puzzle() {
       detail,
       createdAt: Date.now(),
     }
-    void recordsStore.put(RECORD_KEYS.training(entry.id), entry).catch(() => { /* 存储失败不影响训练流程 */ })
+    void appendTrainingRecord(entry).catch(() => { /* 存储失败不影响训练流程 */ })
   }, [session, record, totalHints])
 
   if (loading) return <TrainingSessionShell eyebrow="九宫格训练" title="拼出正确句子" current={0} total={0}><div className="flex min-h-40 items-center justify-center text-muted-foreground">正在加载材料…</div></TrainingSessionShell>

@@ -18,10 +18,9 @@ const NOTE_PREFIX = RECORD_KEY_PREFIXES.note
  */
 export async function listNotes(materialId?: string): Promise<SentenceNote[]> {
   const prefix = materialId ? `${NOTE_PREFIX}${materialId}:` : NOTE_PREFIX
-  // 单事务批量读取（原 allKeys 全扫 + 每条笔记一个事务的 N+1）
-  const entries = await recordsStore.getAllEntries()
+  // 主键前缀区间读：只物化笔记自身的值，不再为一份笔记扫整个 records store
+  const entries = await recordsStore.getAllEntriesByPrefix(prefix)
   return entries
-    .filter(([k]) => k.startsWith(prefix))
     .map(([, v]) => v as SentenceNote)
     .filter((n): n is SentenceNote => !!n && typeof n.sentenceIndex === 'number')
     .sort((a, b) => a.sentenceIndex - b.sentenceIndex)

@@ -60,6 +60,7 @@ Client-side routing via react-router-dom 7.x. Local-first: all user data in brow
 
 - **Service contracts**: Interfaces in `services/contracts.ts` (ASR, SOE, TTS, Reports). Mocks always returned now; future `NEXT_PUBLIC_SERVICE_MODE` env var switches to real API.
 - **Stores**: `createStore` + `useStore` (wraps React `useSyncExternalStore`). `material-store.ts` handles CRUD + seed data auto-injection on first load.
+- **Records store** (IDB v3): per-material reads go through the `materialId` value index (`recordsStore.getEntriesByMaterial`) or primary-key prefix ranges (`getAllEntriesByPrefix`) — never full-store materialization. `train:` records are written only via `appendTrainingRecord` (stores/training-record-store.ts): keeps the latest 100 per material×mode (prune-on-write + startup sweep).
 - **Player**: `SentencePlayer` abstraction in `core/player/`. Seek has drift compensation (`SEEK_DRIFT_THRESHOLD_MS = 300ms`).
 - **Audio**: 16kHz mono WAV recording target for ASR/SOE compatibility. WAV encoder in `core/audio/`.
 - **Subtitle parser**: SRT/LRC bilingual parser in `core/subtitle/`, zero deps, line-number-aware error reporting.

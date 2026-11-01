@@ -20,17 +20,18 @@ export interface VocabStoreState {
 export const vocabStore = createStore<VocabStoreState>({ ready: false, books: [], entries: [] })
 
 async function refresh(): Promise<void> {
-  // 单事务批量读取并按前缀分拣（原 allKeys 全扫 + 每条记录一个事务的 N+1）
-  const all = await recordsStore.getAllEntries()
-  const books: VocabBook[] = []
-  const entries: VocabEntry[] = []
-  for (const [k, v] of all) {
-    if (k.startsWith(RECORD_KEY_PREFIXES.vocabBook) && !!v && typeof (v as VocabBook).createdAt === 'number') {
-      books.push(v as VocabBook)
-    } else if (k.startsWith(RECORD_KEY_PREFIXES.vocabEntry) && !!v && typeof (v as VocabEntry).addedAt === 'number') {
-      entries.push(v as VocabEntry)
-    }
-  }
+  // 两段主键前缀区间读：只物化生词本/词条自身的值（原 allKeys 全扫 + 每条一个事务，
+  // 后又退化为单事务全库物化——fav:/note:/train: 的无关值不再参与反序列化）
+  const [bookEntries, entryEntries] = await Promise.all([
+    recordsStore.getAllEntriesByPrefix(RECORD_KEY_PREFIXES.vocabBook),
+    recordsStore.getAllEntriesByPrefix(RECORD_KEY_PREFIXES.vocabEntry),
+  ])
+  const books = bookEntries
+    .map(([, v]) => v as VocabBook)
+    .filter((b): b is VocabBook => !!b && typeof b.createdAt === 'number')
+  const entries = entryEntries
+    .map(([, v]) => v as VocabEntry)
+    .filter((e): e is VocabEntry => !!e && typeof e.addedAt === 'number')
 
   books.sort((a, b) => a.createdAt - b.createdAt)
   entries.sort((a, b) => b.addedAt - a.addedAt)
@@ -170,12 +171,14 @@ export function hasText(text: string, bookId?: string): boolean {
  */
 export async function shiftVocabEntriesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
   await initVocab()
-  const entries = await recordsStore.getAllEntries()
+  // materialId 索引点查：只物化该材料的记录（词条键 vocabentry:{entryId} 不含材料 id，
+  // 原先只能全库物化后逐条比对）
+  const entries = await recordsStore.getEntriesByMaterial(materialId)
   let changed = false
   for (const [key, value] of entries) {
     if (!key.startsWith(RECORD_KEY_PREFIXES.vocabEntry)) continue
     const entry = value as VocabEntry | undefined
-    if (entry?.materialId !== materialId || typeof entry.sentenceIndex !== 'number') continue
+    if (!entry || typeof entry.sentenceIndex !== 'number') continue
 
     if (entry.sentenceIndex === deletedIndex) {
       await recordsStore.put(key, { ...entry, sentenceIndex: -1 } satisfies VocabEntry)

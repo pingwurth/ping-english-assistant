@@ -11,8 +11,7 @@ import { createSession, currentSentence, makeRecordId, next, retryAt, submit, ty
 import type { SentenceRange } from '@/core/player/sentence-player'
 import type { SentencePlayer } from '@/core/player/sentence-player'
 import { useSentencePlayer } from '@/lib/use-sentence-player'
-import { recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS } from '@/platform/storage/schema'
+import { appendTrainingRecord } from '@/stores/training-record-store'
 import type { DictationDetail, TrainingRecord } from '@/types/training'
 
 /** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
@@ -91,7 +90,7 @@ function Dictation() {
         detail,
         createdAt: Date.now(),
       }
-      void recordsStore.put(RECORD_KEYS.training(rec.id), rec).catch(() => { /* 存储失败不影响训练 */ })
+      void appendTrainingRecord(rec).catch(() => { /* 存储失败不影响训练 */ })
     }
   }
   const onNext = () => { if (session) setSession(next(session)) }

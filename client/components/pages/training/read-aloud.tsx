@@ -23,8 +23,7 @@ import { makeRecordId, sentencesInScope } from '@/core/training/session'
 import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-player'
 import { useSentencePlayer } from '@/lib/use-sentence-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
-import { recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS } from '@/platform/storage/schema'
+import { appendTrainingRecord } from '@/stores/training-record-store'
 import { ApiError, getSoeService } from '@/services'
 
 /** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
@@ -155,7 +154,7 @@ function ReadAloud() {
           detail,
           createdAt: Date.now(),
         }
-        void recordsStore.put(RECORD_KEYS.training(tr.id), tr).catch(() => { /* 存储失败不影响训练 */ })
+        void appendTrainingRecord(tr).catch(() => { /* 存储失败不影响训练 */ })
       }
     } catch (err) {
       if (err instanceof ApiError && err.code === 'ABORTED') return // 卸载中止：静默
