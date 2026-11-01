@@ -85,7 +85,15 @@ export class HtmlPlayerController implements PlayerController {
   play(): Promise<void> {
     if (this.destroyed) return Promise.reject(new Error('destroyed'))
     const p = this.el.play()
-    return p ? p.catch((e: unknown) => { this.emitError('PLAY_BLOCKED', e instanceof Error ? e.message : '播放被拦截'); throw e }) : Promise.resolve()
+    if (!p) return Promise.resolve()
+    return p.catch((e: unknown) => {
+      // 良性竞态：play() promise 未决时被 pause()/load() 打断，浏览器以 AbortError reject
+      // （如训练页区间播放到 endMs 自动暂停、录音前停原音）。期望终态已达成，静默吞掉，
+      // 不上报 PLAY_BLOCKED 也不外抛——调用方多为 void play()，外抛会成为 unhandled rejection。
+      if (typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'AbortError') return
+      this.emitError('PLAY_BLOCKED', e instanceof Error ? e.message : '播放被拦截')
+      throw e
+    })
   }
 
   pause(): void {
