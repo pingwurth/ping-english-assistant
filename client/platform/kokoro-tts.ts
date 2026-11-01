@@ -123,14 +123,13 @@ function ensureWorker(): Worker {
       worker = null
       emitLoad(null)
     })
+    // 新 worker 必须先收到 init 才知道加载哪个模型。历史上 init 只由挂载时的
+    // preloadKokoroModel 发送一次：换模型 / worker 出错后重建的 worker 永远
+    // 收不到 init（modelId='' → 请求 /api/hf//resolve/... → 全部 400），
+    // 因此 init 内建在「创建 worker」这一刻，任何重建路径都自然带上。
+    worker.postMessage({ type: 'init', modelId: currentModelId } satisfies KokoroWorkerRequest)
   }
   return worker
-}
-
-/** 启动 worker 并让它加载模型；模型常驻 worker，避免每次生成都重新加载 */
-function ensureModelLoaded(): void {
-  const req: KokoroWorkerRequest = { type: 'init', modelId: currentModelId }
-  ensureWorker().postMessage(req)
 }
 
 /** 设置 Kokoro 模型来源 ID（需在首次加载前调用） */
@@ -153,7 +152,7 @@ export function getKokoroModelId(): string {
 /** 静默预加载模型（启动时调用，失败不抛异常） */
 export function preloadKokoroModel(): void {
   try {
-    ensureModelLoaded()
+    ensureWorker()
   } catch (err) {
     console.warn('[kokoro-tts] 预加载失败（不影响后续使用）:', err)
   }

@@ -16,6 +16,7 @@ import type { Env } from '../../config/env'
 import { mapIflytekToContract } from './soe-mapper'
 import { parseIflytekResultXml } from './iflytek-xml'
 import { buildIflytekWsUrl } from './iflytek-auth'
+import { isSoeRetryable } from './soe-retry'
 import { stripWavHeader } from './wav-pcm'
 import type { SoeEvaluateResponse, SoeInput, SoeProvider } from './soe-provider'
 
@@ -61,8 +62,8 @@ export function createIflytekSoeProvider(env: Env): SoeProvider {
         return await sessionOnce(input, signal)
       } catch (err) {
         lastErr = err
-        // 超时/客户端断开不重试；网络错与上游错误按配置重试
-        if (attempt === attempts || !isRetryable(err)) throw err
+        // 重试判定见 soe-retry.ts：429/5xx/连接层错误重试，鉴权等确定性失败与超时不重试
+        if (attempt === attempts || !isSoeRetryable(err)) throw err
       }
     }
     throw lastErr // 不可达（attempts≥1），取悦类型系统
@@ -82,7 +83,12 @@ export function createIflytekSoeProvider(env: Env): SoeProvider {
       date,
     })
 
-    const timeoutSignal = AbortSignal.timeout(env.SOE_TIMEOUT_MS)
+    // 超时预算 = SOE_TIMEOUT_MS（握手 + 等结果）+ 音频时长 + 余量。
+    // 发送按实时节奏发帧（默认 40ms/1280B ≈ 音频时长），若预算不含音频时长，
+    // >10s 的录音必然在上传途中就撞上总超时（默认 SOE_TIMEOUT_MS=10s）。
+    const pcm = stripWavHeader(input.audio)
+    const audioMs = Math.ceil((pcm.length / (16000 * 2)) * 1000)
+    const timeoutSignal = AbortSignal.timeout(env.SOE_TIMEOUT_MS + audioMs + 5_000)
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
 
     return await new Promise<SoeEvaluateResponse>((resolve, reject) => {
@@ -201,8 +207,7 @@ export function createIflytekSoeProvider(env: Env): SoeProvider {
           }),
         )
 
-        // 2) 音频帧：裸 PCM（aue=raw 需去 WAV 头）按 1280B 分片
-        const pcm = stripWavHeader(input.audio)
+        // 2) 音频帧：裸 PCM（aue=raw，WAV 头已在会话入口剥离）按 1280B 分片
         for (let off = 0; off < pcm.length; off += FRAME_BYTES) {
           if (off > 0 && env.IFLYTEK_FRAME_INTERVAL_MS > 0) {
             await abortableSleep(env.IFLYTEK_FRAME_INTERVAL_MS, combined)
@@ -224,11 +229,6 @@ export function createIflytekSoeProvider(env: Env): SoeProvider {
         sock.send(JSON.stringify({ data: { status: 2, data: '' } }))
       }
     })
-  }
-
-  const isRetryable = (err: unknown): boolean => {
-    if (!(err instanceof ApiError)) return false
-    return err.code === ERR.UPSTREAM_TIMEOUT.code || err.code === ERR.SOE_UPSTREAM_ERROR.code
   }
 
   return { name: 'iflytek', evaluate }

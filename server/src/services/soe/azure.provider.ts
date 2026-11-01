@@ -13,9 +13,10 @@
  * 超时 SOE_TIMEOUT_MS + 重试 SOE_RETRY 次（仅网络错/408/429/5xx 重试，报告 §6.1）。
  */
 
-import { ApiError, ERR, apiError } from '../../lib/api-error'
+import { ERR, apiError } from '../../lib/api-error'
 import type { Env } from '../../config/env'
 import { mapAzureToContract, type AzurePronResponse } from './soe-mapper'
+import { isSoeRetryable } from './soe-retry'
 import type { SoeEvaluateResponse, SoeInput, SoeProvider } from './soe-provider'
 
 /** 无语音/未识别的状态 → 4xx 语义（用户没说话，非上游故障） */
@@ -44,8 +45,8 @@ export function createAzureSoeProvider(env: Env): SoeProvider {
         return await callOnce(input, pronHeader, signal)
       } catch (err) {
         lastErr = err
-        // 超时/客户端断开不重试；网络错与 5xx/429 按配置重试
-        if (attempt === attempts || !isRetryable(err)) throw err
+        // 重试判定见 soe-retry.ts：429/5xx/连接层错误重试，401/403/400/超时不重试
+        if (attempt === attempts || !isSoeRetryable(err)) throw err
       }
     }
     throw lastErr // 不可达（attempts≥1），取悦类型系统
@@ -97,12 +98,7 @@ export function createAzureSoeProvider(env: Env): SoeProvider {
       // 通常为音频格式问题（非 RIFF/WAVE、非 16k mono PCM）
       throw apiError(ERR.SOE_UPSTREAM_ERROR, '评分上游拒绝了音频数据（格式不符）', { body: text.slice(0, 500) })
     }
-    throw apiError(ERR.SOE_UPSTREAM_ERROR, `评分上游错误（HTTP ${res.status}）`, { body: text.slice(0, 500) })
-  }
-
-  const isRetryable = (err: unknown): boolean => {
-    if (!(err instanceof ApiError)) return false
-    return err.code === ERR.UPSTREAM_TIMEOUT.code || err.code === ERR.SOE_UPSTREAM_ERROR.code
+    throw apiError(ERR.SOE_UPSTREAM_ERROR, `评分上游错误（HTTP ${res.status}）`, { status: res.status, body: text.slice(0, 500) })
   }
 
   return { name: 'azure', evaluate }

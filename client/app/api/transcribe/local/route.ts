@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { readLlmSettings } from '@/lib/server-settings'
+import { readLlmSettings, readLocalServices } from '@/lib/server-settings'
 import { DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
 
 /**
@@ -11,9 +11,15 @@ import { DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
 
 const TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes for long audio
 
-/** Read the transcription server URL from settings */
+/**
+ * Read the transcription server URL from settings.
+ * 设置页「本地服务配置」写入 localServices 段（唯一有效写入口），
+ * legacy llm.whisperTranscribeUrl 仅作历史数据 fallback。
+ */
 async function getTranscribeUrl(): Promise<string> {
   try {
+    const ls = await readLocalServices()
+    if (ls.whisperTranscribeUrl) return ls.whisperTranscribeUrl
     const settings = await readLlmSettings()
     return settings?.whisperTranscribeUrl || DEFAULT_WHISPER_TRANSCRIBE_URL
   } catch {

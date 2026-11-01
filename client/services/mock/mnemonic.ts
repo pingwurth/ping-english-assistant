@@ -7,24 +7,30 @@
  */
 
 import type { Association, Exercises, MnemonicCard, MnemonicSseEvent, SentenceEvaluation } from '../../types/mnemonic'
-import { throwIfAborted, type MnemonicService } from '../contracts'
+import { toApiError, throwIfAborted, type MnemonicService } from '../contracts'
 
 // ---------------------------------------------------------------------------
 // API 调用
 // ---------------------------------------------------------------------------
 
+/** 调 BFF 并归一错误（契约：失败统一抛 ApiError，含中止 code 'ABORTED'） */
 async function callApi<T>(action: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
-  const res = await fetch('/api/mnemonic', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, ...body }),
-    signal,
-  })
+  let res: Response
+  try {
+    res = await fetch('/api/mnemonic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...body }),
+      signal,
+    })
+  } catch (err) {
+    throw toApiError(err)
+  }
 
   const data = await res.json().catch(() => ({}))
 
   if (!res.ok) {
-    throw new Error(data.error || `助记请求失败 (${res.status})`)
+    throw toApiError(new Error(data.error || `助记请求失败 (${res.status})`))
   }
 
   return data as T
@@ -71,6 +77,9 @@ export class MockMnemonicService implements MnemonicService {
 
     const decoder = new TextDecoder()
     let buffer = ''
+    // 事件名必须跨网络块存活：'event:' 行与 'data:' 行可能被 TCP 分段切进
+    // 两次 reader.read()，若每个块重置会产出 event:'' 的事件被消费方丢弃。
+    let currentEvent = ''
 
     try {
       while (true) {
@@ -81,7 +90,6 @@ export class MockMnemonicService implements MnemonicService {
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
 
-        let currentEvent = ''
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             currentEvent = line.slice(7).trim()
@@ -93,6 +101,9 @@ export class MockMnemonicService implements MnemonicService {
             } catch {
               // 忽略无法解析的行
             }
+            currentEvent = '' // data 已消费该事件，防止后续无 event 行的数据误挂旧名
+          } else if (line.trim() === '') {
+            currentEvent = '' // 事件以空行分帧，帧结束即重置
           }
         }
       }

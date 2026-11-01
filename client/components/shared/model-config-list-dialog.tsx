@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, Eye, EyeOff, Headphones, Languages, Mic, Pencil, Plus, RefreshCw, Settings2, Sparkles, Star, Trash2 } from 'lucide-react'
+import { invalidateSoeServiceCache } from '@/services'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardTitle } from '@/components/ui/card'
@@ -227,12 +228,12 @@ function ModelConfigDialog({
     setError('')
     setModels([])
     try {
-      await fetch('/api/settings/llm', {
+      // POST /api/models：临时配置直接探测，不落盘（先写 /api/settings/llm 的历史实现会剥光 legacy llm 段）
+      const res = await fetch('/api/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, baseUrl: baseUrl.trim(), apiKey: apiKey.trim() }),
       })
-      const res = await fetch('/api/models')
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '获取模型列表失败')
       setModels(data.models || [])
@@ -733,6 +734,7 @@ function SoeConfigCard() {
       if (!res.ok) throw new Error('保存失败')
       setConfig(await res.json())
       setEditing(false)
+      invalidateSoeServiceCache() // 评分服务缓存写时失效
       void checkHealth()
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败')

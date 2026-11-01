@@ -47,13 +47,33 @@ export function getServices(_mode: ServiceMode = 'mock'): AppServices {
   return getMockServices()
 }
 
+/** 缓存的评分服务：read-aloud 每句评分都会解析，不必每次都 fetch + 服务端重读 settings.json */
+let soeServiceCache: SoeService | null = null
+
+/** SOE 设置已变更（设置页保存成功后调用）：使缓存的评分服务失效，下次解析重新拉取 */
+export function invalidateSoeServiceCache(): void {
+  soeServiceCache = null
+}
+
 /** 跟读评分服务解析：模型设置的 soe 配置（settings.json）→ mock（本地伪评分）或 BFF 中转真实代理 */
 export async function getSoeService(): Promise<SoeService> {
-  const cfg = await fetch('/api/settings/soe')
-    .then((r) => (r.ok ? (r.json() as Promise<SoeSettingsConfig>) : null))
-    .catch(() => null)
-  if (!cfg || cfg.provider === 'mock') return getMockServices().soe
-  return new ApiSoeService()
+  if (soeServiceCache) return soeServiceCache
+
+  let cfg: SoeSettingsConfig | null = null
+  try {
+    const r = await fetch('/api/settings/soe')
+    cfg = r.ok ? ((await r.json()) as SoeSettingsConfig) : null
+  } catch {
+    cfg = null
+  }
+  if (!cfg) {
+    // 拉取失败（settings.json 损坏、dev 抖动）≠ 未配置：回落 mock 伪评分必须大声警告，
+    // 否则与发音无关的伪分会静默写进训练记录，用户以为在真评分
+    console.warn('[services] SOE 设置读取失败，本次评分回落 mock 伪分（与发音无关，请检查设置）')
+    return getMockServices().soe
+  }
+  soeServiceCache = cfg.provider === 'mock' ? getMockServices().soe : new ApiSoeService()
+  return soeServiceCache
 }
 
 /** 契约类型再导出，供上层（stores/页面）统一从 services 入口引用 */

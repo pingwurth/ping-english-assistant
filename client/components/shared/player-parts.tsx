@@ -24,7 +24,11 @@ const materialDisplayById: Record<string, { color: string; progress: number; las
   'movie': { color: 'bg-muted', progress: 100, last: '已完成' },
 }
 function getMaterialDisplay(id: string) { return materialDisplayById[id] ?? { color: 'bg-muted', progress: 0, last: '尚未开始' } }
-function formatDuration(durationMs: number) { return `${String(Math.floor(durationMs / 60000)).padStart(2, '0')}:${String(Math.floor((durationMs % 60000) / 1000)).padStart(2, '0')}` }
+/** mm:ss 格式化（负数钳 0）—— 全应用唯一实现（原 7 份私有拷贝收敛于此，口径统一） */
+export function formatDuration(durationMs: number) {
+  const t = Math.max(0, durationMs)
+  return `${String(Math.floor(t / 60000)).padStart(2, '0')}:${String(Math.floor((t % 60000) / 1000)).padStart(2, '0')}`
+}
 
 /** "最近学习"文案（材料库 / 材料集详情共用） */
 function lastLabel(lastOpenedAt: number): string {
@@ -59,6 +63,8 @@ function CollectionCard({ collection, count, lastLabel }: { collection: Material
 
 /** 选择器中「＋ 新建材料集…」选项的哨兵值 */
 const NEW_COLLECTION = '__new__'
+/** 选择器中「未分组（移出材料集）」选项的哨兵值 —— 不能用 ''：'' 同时是"未选择"，会被守卫拦下 */
+const UNGROUPED = '__ungrouped__'
 
 /**
  * 移动材料弹窗（材料库未分组区/搜索结果、材料集详情共用）：
@@ -79,8 +85,10 @@ function MaterialMoveDialog({ target, onClose }: { target: MaterialRecord | null
     if (choice === NEW_COLLECTION) {
       const created = await createCollection(newName.trim())
       await assignMaterialCollection(materialId, created.id)
+    } else if (choice === UNGROUPED) {
+      await assignMaterialCollection(materialId, null) // 哨兵 → 移出到未分组（store 契约：null 才是移出）
     } else {
-      await assignMaterialCollection(materialId, choice) // '' = 移出到未分组
+      await assignMaterialCollection(materialId, choice)
     }
   }
   return (
@@ -92,7 +100,7 @@ function MaterialMoveDialog({ target, onClose }: { target: MaterialRecord | null
       <DialogContent>
         <div className="flex flex-col gap-3">
           <select value={choice} onChange={(e) => setChoice(e.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
-            {currentId !== null && <option value="">未分组（移出材料集）</option>}
+            {currentId !== null && <option value={UNGROUPED}>未分组（移出材料集）</option>}
             {collections.filter((c) => c.id !== currentId).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             <option value={NEW_COLLECTION}>＋ 新建材料集…</option>
           </select>
@@ -230,4 +238,4 @@ function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndex
   )
 }
 
-export { MaterialCard, CollectionCard, MaterialMoveDialog, PlayerControlBar, SubtitleList, formatDuration, lastLabel, loadProgressPercents }
+export { MaterialCard, CollectionCard, MaterialMoveDialog, PlayerControlBar, SubtitleList, lastLabel, loadProgressPercents }

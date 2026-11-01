@@ -6,7 +6,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { readLlmSettings, readLlmConfigById } from '@/lib/server-settings'
+import { readEffectiveLlmSettings, readLlmConfigById, readLocalServices } from '@/lib/server-settings'
 import { transcribe, getAsrProviderType, LlmError } from '@/lib/llm'
 import type { AsrModelConfig, AsrSegment } from '@/lib/llm'
 import {
@@ -189,7 +189,7 @@ export async function POST(request: Request) {
     const configId = formData.get('configId') as string | null
     const settings = configId
       ? await readLlmConfigById(configId)
-      : await readLlmSettings()
+      : await readEffectiveLlmSettings()
     if (!settings) {
       return NextResponse.json({ error: 'LLM settings not configured' }, { status: 400 })
     }
@@ -210,8 +210,9 @@ export async function POST(request: Request) {
 
     // ── 时间戳后处理（multimodal 模型且无时间戳时） ────────────
     if (providerType === 'multimodal' && result.segments.length === 0 && result.text.trim()) {
-      // 尝试 WhisperX 对齐
-      const alignUrl = settings.whisperAlignUrl || DEFAULT_WHISPER_ALIGN_URL
+      // 尝试 WhisperX 对齐（地址优先取设置页「本地服务配置」的 localServices 段）
+      const localServices = await readLocalServices()
+      const alignUrl = localServices.whisperAlignUrl || settings.whisperAlignUrl || DEFAULT_WHISPER_ALIGN_URL
       const words = await alignWithWhisperX(audioFile, result.text.trim(), alignUrl)
 
       if (words && words.length > 0) {
