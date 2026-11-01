@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: docs
+title: 英语学习助手项目文档与参考实现
+scope:
+    - docs/
+source_files: []
+depends_on: []
+related_to:
+    - path: client
+    - path: server

@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: client/stores_state
+title: 客户端状态存储层（stores）
+scope:
+    - client/stores/
+source_files: []
+depends_on: []
+related_to:
+    - path: client/platform_integrations

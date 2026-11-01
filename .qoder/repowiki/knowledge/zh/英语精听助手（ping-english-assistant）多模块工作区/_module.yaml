@@ -1,0 +1,15 @@
+schema_version: 1
+module_path: ""
+title: 英语精听助手（ping-english-assistant）多模块工作区
+scope:
+    - README.md
+    - AGENTS.md
+    - CLAUDE.md
+    - brainstorming.txt
+    - knowledge.prompt
+    - skills-lock.json
+    - .gitignore
+    - LICENSE
+source_files: []
+depends_on: []
+related_to: []

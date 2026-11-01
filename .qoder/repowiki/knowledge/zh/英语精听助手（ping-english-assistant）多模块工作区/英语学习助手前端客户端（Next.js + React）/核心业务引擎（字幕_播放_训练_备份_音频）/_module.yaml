@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: client/core_engines
+title: 核心业务引擎（字幕/播放/训练/备份/音频）
+scope:
+    - client/core/
+source_files: []
+depends_on: []
+related_to:
+    - path: client/platform_integrations

@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: client/services_layer
+title: 客户端 AI 服务层（SOE/TTS/助记契约与实现）
+scope:
+    - client/services/
+source_files: []
+depends_on: []
+related_to:
+    - path: server

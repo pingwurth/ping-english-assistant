@@ -1,0 +1,145 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+nodes_managed: true
+exported_at: "2026-11-01T18:43:11Z"
+modules:
+    "":
+        dir_name: 英语精听助手（ping-english-assistant）多模块工作区
+        title: 英语精听助手（ping-english-assistant）多模块工作区
+        scope:
+            - README.md
+            - AGENTS.md
+            - CLAUDE.md
+            - brainstorming.txt
+            - knowledge.prompt
+            - skills-lock.json
+            - .gitignore
+            - LICENSE
+        source_files: []
+        children:
+            - client
+            - docs
+            - page_prototype
+            - server
+        depends_on: []
+        related_to: []
+    client:
+        dir_name: 英语学习助手前端客户端（Next.js + React）
+        title: 英语学习助手前端客户端（Next.js + React）
+        scope:
+            - client/
+        source_files: []
+        children:
+            - client/app_routes
+            - client/core_engines
+            - client/platform_integrations
+            - client/services_layer
+            - client/stores_state
+            - client/types_models
+            - client/ui_components
+        depends_on: []
+        related_to:
+            - path: docs
+    client/app_routes:
+        dir_name: Next.js App Router 入口与 BFF API
+        title: Next.js App Router 入口与 BFF API
+        scope:
+            - client/app/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: client/ui_components
+    client/core_engines:
+        dir_name: 核心业务引擎（字幕_播放_训练_备份_音频）
+        title: 核心业务引擎（字幕/播放/训练/备份/音频）
+        scope:
+            - client/core/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: client/platform_integrations
+    client/platform_integrations:
+        dir_name: 浏览器平台能力适配层（录音_播放_TTS_存储）
+        title: 浏览器平台能力适配层（录音/播放/TTS/存储）
+        scope:
+            - client/platform/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: client/core_engines
+            - path: client/stores_state
+    client/services_layer:
+        dir_name: 客户端 AI 服务层（SOE_TTS_助记契约与实现）
+        title: 客户端 AI 服务层（SOE/TTS/助记契约与实现）
+        scope:
+            - client/services/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: server
+    client/stores_state:
+        dir_name: 客户端状态存储层（stores）
+        title: 客户端状态存储层（stores）
+        scope:
+            - client/stores/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: client/platform_integrations
+    client/types_models:
+        dir_name: 客户端领域类型与 API 契约定义
+        title: 客户端领域类型与 API 契约定义
+        scope:
+            - client/types/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    client/ui_components:
+        dir_name: 英语学习应用 UI 组件层
+        title: 英语学习应用 UI 组件层
+        scope:
+            - client/components/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: client/app_routes
+    docs:
+        dir_name: 英语学习助手项目文档与参考实现
+        title: 英语学习助手项目文档与参考实现
+        scope:
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: client
+            - path: server
+    page_prototype:
+        dir_name: 英语精听助手原型页面
+        title: 英语精听助手原型页面
+        scope:
+            - page-prototype/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    server:
+        dir_name: SOE 发音评分 Fastify 代理服务
+        title: SOE 发音评分 Fastify 代理服务
+        scope:
+            - server/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: client/services_layer
+            - path: docs

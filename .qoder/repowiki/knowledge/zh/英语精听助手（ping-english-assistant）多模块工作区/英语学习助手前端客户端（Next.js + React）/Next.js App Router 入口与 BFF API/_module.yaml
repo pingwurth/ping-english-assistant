@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: client/app_routes
+title: Next.js App Router 入口与 BFF API
+scope:
+    - client/app/
+source_files: []
+depends_on: []
+related_to:
+    - path: client/ui_components

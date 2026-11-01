@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: client/types_models
+title: 客户端领域类型与 API 契约定义
+scope:
+    - client/types/
+source_files: []
+depends_on: []
+related_to: []

@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: page_prototype
+title: 英语精听助手原型页面
+scope:
+    - page-prototype/
+source_files: []
+depends_on: []
+related_to: []

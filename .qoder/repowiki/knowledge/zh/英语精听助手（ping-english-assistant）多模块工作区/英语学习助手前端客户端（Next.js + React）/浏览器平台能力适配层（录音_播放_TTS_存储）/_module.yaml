@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: client/platform_integrations
+title: 浏览器平台能力适配层（录音/播放/TTS/存储）
+scope:
+    - client/platform/
+source_files: []
+depends_on: []
+related_to:
+    - path: client/core_engines
+    - path: client/stores_state

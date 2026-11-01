@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: client/ui_components
+title: 英语学习应用 UI 组件层
+scope:
+    - client/components/
+source_files: []
+depends_on: []
+related_to:
+    - path: client/app_routes
