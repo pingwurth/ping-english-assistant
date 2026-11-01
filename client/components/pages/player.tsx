@@ -123,6 +123,9 @@ function Player() {
   const playedRef = useRef<{ indexes: Set<number>; dirty: boolean; lastFlush: number }>({ indexes: new Set(), dirty: false, lastFlush: 0 })
   /** 引擎装配版本号：装配 effect 重建引擎后触发一次渲染，让 LiveControlBar 拿到新实例 */
   const [engineVersion, setEngineVersion] = useState(0)
+  // 有笔记的句序号集合（memo：SubtitleList 浅比较 props 需要 stable 引用）。
+  // 必须在下方「材料未就绪」提前 return 之前 —— Hooks 不允许条件调用
+  const noteIndexes = useMemo(() => new Set(Object.entries(noteMap).filter(([, v]) => v.trim()).map(([k]) => Number(k))), [noteMap])
 
   // 数据侧：按 :materialId 从 IDB 读取材料与字幕；不存在则跳回材料库。
   // 媒体 Blob → ObjectURL 在进入页面时创建、组件卸载时 revoke（SSR 安全：仅在 useEffect 内访问）。
@@ -545,8 +548,6 @@ function Player() {
   const safeActive = Math.min(active, Math.max(0, sentences.length - 1))
   const current = sentences[safeActive]
   const favorited = favSet.has(safeActive)
-  // 有笔记的句序号集合（memo：SubtitleList 浅比较 props 需要 stable 引用）
-  const noteIndexes = useMemo(() => new Set(Object.entries(noteMap).filter(([, v]) => v.trim()).map(([k]) => Number(k))), [noteMap])
 
   const noted = !!noteMap[safeActive]?.trim()
 
