@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, ChevronRight, Download, FileText, Folder, FolderInput, Gauge, Languages, Pause, Pencil, Play, RotateCcw, SkipBack, SkipForward, Sparkles, Subtitles, Trash2, Upload, Volume2, VolumeX } from 'lucide-react'
+import { Check, ChevronRight, Download, FileText, Folder, FolderInput, Gauge, Languages, Pause, Pencil, Play, RotateCcw, SkipBack, SkipForward, Sparkles, StickyNote, Subtitles, Trash2, Upload, Volume2, VolumeX } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -125,7 +125,7 @@ function PlayerControlBar({ playing, setPlaying, mode, setMode, loop, setLoop, s
  *  - favoriteIndexes 中的句子显示 ★ 收藏标记。
  *  - onTranslate 为整篇翻译入口（单句翻译在字幕编辑弹窗内）。
  */
-function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndexes, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items?: SubtitleSentence[]; favoriteIndexes?: Set<number>; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: () => void }) {
+function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndexes, noteIndexes, onOpenNote, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items?: SubtitleSentence[]; favoriteIndexes?: Set<number>; noteIndexes?: Set<number>; onOpenNote?: (index: number) => void; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: () => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const manualUntilRef = useRef(0)
@@ -211,6 +211,11 @@ function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndex
               <span>{active === i ? '▶' : s.index + 1}</span>
               <span>{formatDuration(s.startMs)}</span>
               {favoriteIndexes?.has(s.index) && <span aria-label="已收藏" className="text-primary">★</span>}
+              {noteIndexes?.has(s.index) && onOpenNote && (
+                <Button variant="secondary" size="icon" className="size-6" aria-label={`查看句子 ${s.index + 1} 的笔记`} title="查看笔记" onClick={(e) => { e.stopPropagation(); onOpenNote(s.index) }}>
+                  <StickyNote className="size-3 text-primary" />
+                </Button>
+              )}
             </div>
             {(mode === 'bilingual' || mode === 'english') && <p className="whitespace-pre-line leading-relaxed">{s.textEn}</p>}
             {(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 whitespace-pre-line leading-relaxed text-muted-foreground">{s.textZh}</p>}

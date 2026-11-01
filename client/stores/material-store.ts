@@ -111,7 +111,7 @@ export async function removeMaterial(id: string): Promise<void> {
   const keys = await recordsStore.allKeys()
   await Promise.all(keys.map(async (k) => {
     // progress: 键精确匹配（前缀匹配会误删 id 互为前缀的其他材料，如 m-1 与 m-10）
-    if (k === RECORD_KEYS.progress(id) || k.startsWith(`fav:${id}:`)) return recordsStore.delete(k)
+    if (k === RECORD_KEYS.progress(id) || k.startsWith(`fav:${id}:`) || k.startsWith(`note:${id}:`)) return recordsStore.delete(k)
     if (k.startsWith('train:')) {
       const rec = await recordsStore.get<TrainingRecord>(k)
       if (rec?.materialId === id) return recordsStore.delete(k)

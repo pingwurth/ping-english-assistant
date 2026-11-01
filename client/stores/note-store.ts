@@ -1,0 +1,71 @@
+/**
+ * 句子笔记 store —— records store 中 `note:{materialId}:{sentenceIndex}` 前缀。
+ *
+ * 播放器（边听边记）从这里读写；删除材料的级联清理在 stores/material-store.ts；
+ * 删句后的序号平移用 shiftNotesAfterDeletion（字幕句 index 会重排，笔记 key 必须跟随）。
+ */
+
+import { recordsStore } from '@/platform/storage/idb'
+import { RECORD_KEYS } from '@/platform/storage/schema'
+import type { SentenceNote } from '@/types/note'
+
+const NOTE_PREFIX = 'note:'
+
+/**
+ * 读取笔记记录。
+ * @param materialId 传入则只取该材料，省略则取全部
+ * @returns 按句序号升序
+ */
+export async function listNotes(materialId?: string): Promise<SentenceNote[]> {
+  const prefix = materialId ? `${NOTE_PREFIX}${materialId}:` : NOTE_PREFIX
+  const keys = (await recordsStore.allKeys()).filter((k) => k.startsWith(prefix))
+  const entries = await Promise.all(keys.map((k) => recordsStore.get<SentenceNote>(k)))
+  return entries.filter((n): n is SentenceNote => !!n).sort((a, b) => a.sentenceIndex - b.sentenceIndex)
+}
+
+/** 读取指定句的笔记（无则 null） */
+export async function getSentenceNote(materialId: string, sentenceIndex: number): Promise<SentenceNote | null> {
+  return (await recordsStore.get<SentenceNote>(RECORD_KEYS.note(materialId, sentenceIndex))) ?? null
+}
+
+/**
+ * 保存指定句的笔记。content 为空（去空白后）视同删除，保证"清空即无笔记"。
+ * createdAt 在首次创建时固定，后续编辑只刷新 updatedAt。
+ */
+export async function saveSentenceNote(materialId: string, sentenceIndex: number, content: string): Promise<void> {
+  const key = RECORD_KEYS.note(materialId, sentenceIndex)
+  if (!content.trim()) {
+    await recordsStore.delete(key)
+    return
+  }
+  const existing = await recordsStore.get<SentenceNote>(key)
+  const now = Date.now()
+  await recordsStore.put(key, {
+    materialId,
+    sentenceIndex,
+    content,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  } satisfies SentenceNote)
+}
+
+/** 删除指定句的笔记 */
+export async function deleteSentenceNote(materialId: string, sentenceIndex: number): Promise<void> {
+  await recordsStore.delete(RECORD_KEYS.note(materialId, sentenceIndex))
+}
+
+/**
+ * 删句后平移笔记：被删句的笔记移除，其后所有笔记句序号 -1（与字幕重排后的 index 对齐）。
+ * 全量重写该材料前缀的 key（旧 key 直接删除）。
+ */
+export async function shiftNotesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
+  const notes = await listNotes(materialId)
+  const next = notes
+    .filter((n) => n.sentenceIndex !== deletedIndex)
+    .map((n) => (n.sentenceIndex > deletedIndex ? { ...n, sentenceIndex: n.sentenceIndex - 1 } : n))
+  const stale = notes.filter((n) => n.sentenceIndex !== deletedIndex && n.sentenceIndex > deletedIndex)
+  await Promise.all([
+    ...stale.map((n) => recordsStore.delete(RECORD_KEYS.note(materialId, n.sentenceIndex))),
+    ...next.map((n) => recordsStore.put(RECORD_KEYS.note(materialId, n.sentenceIndex), n)),
+  ])
+}
