@@ -27,3 +27,25 @@ export function removePref(key: string): void {
     localStorage.removeItem(PREFIX + key)
   } catch { /* ignore */ }
 }
+
+/** 导出全部设置项（去前缀的 key → 已解析值），供备份用；损坏项跳过 */
+export function exportAllPrefs(): Record<string, unknown> {
+  try {
+    if (typeof localStorage === 'undefined') return {}
+    const out: Record<string, unknown> = {}
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (!k || !k.startsWith(PREFIX)) continue
+      try { out[k.slice(PREFIX.length)] = JSON.parse(localStorage.getItem(k) ?? '') } catch { /* 跳过损坏项 */ }
+    }
+    return out
+  } catch { return {} }
+}
+
+/** 该设置项是否已有本地值（备份导入时的冲突判断用） */
+export function hasPref(key: string): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false
+    return localStorage.getItem(PREFIX + key) != null
+  } catch { return false }
+}

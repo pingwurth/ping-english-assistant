@@ -10,16 +10,20 @@
  * 所有浏览器 API 仅在 effect/回调内访问，SSR 安全。
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Database, Gauge, Repeat, Trash2 } from 'lucide-react'
+import { Database, Download, FileArchive, Gauge, Repeat, Trash2, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { ModelConfigListSection } from '@/components/shared/model-config-list-dialog'
+import { parseBackupJson, type ImportStrategy } from '@/core/backup/backup-format'
+import { isZipMagic } from '@/core/backup/zip'
+import { buildBackup, buildFullBackupZip, downloadBlob, downloadJsonBackup, importBackup, importZipBackup, prepareZipImport, type ImportSummary } from '@/platform/storage/backup'
 import { blobsStore, estimateUsage, materialsStore, recordsStore } from '@/platform/storage/idb'
 import { initMaterials, materialStore, removeMaterial } from '@/stores/material-store'
 import { useStore } from '@/stores/store'
@@ -223,6 +227,224 @@ function LocalServicesSection() {
   )
 }
 
+/* ── 备份与迁移 ─────────────────────────────────── */
+
+/** 待确认导入的备份（已通过解析校验；kind 区分轻量 JSON / 完整 zip，json 路径 media* 恒 0） */
+interface PendingImport {
+  kind: 'json' | 'zip'
+  json: string
+  zipFile?: File
+  exportedAt: number
+  materialCount: number
+  recordCount: number
+  prefCount: number
+  mediaCount: number
+  mediaBytes: number
+  mediaMissing: number
+}
+
+function BackupSection() {
+  const [pending, setPending] = useState<PendingImport | null>(null)
+  const [strategy, setStrategy] = useState<ImportStrategy>('skipExisting')
+  const [importing, setImporting] = useState(false)
+  const [summary, setSummary] = useState<ImportSummary | null>(null)
+  const [error, setError] = useState('')
+  const [exportingFull, setExportingFull] = useState(false)
+  const [mediaInfo, setMediaInfo] = useState<{ count: number; bytes: number } | null>(null)
+  const fileRef = useRef<HTMLInputElement | null>(null)
+
+  // 本机可打包媒体统计（只碰 Blob 句柄不读内容，供完整备份前的体量提示）
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const ids = await materialsStore.allKeys()
+      let count = 0
+      let bytes = 0
+      for (const id of ids) {
+        const b = await blobsStore.get<Blob>(id)
+        if (b) { count++; bytes += b.size }
+      }
+      if (alive) setMediaInfo({ count, bytes })
+    })().catch(() => { /* 统计失败静默，不影响主流程 */ })
+    return () => { alive = false }
+  }, [])
+
+  const handleExport = async () => {
+    setError('')
+    try {
+      const { filename, json } = await buildBackup()
+      downloadJsonBackup(filename, json)
+    } catch {
+      setError('导出失败，请重试')
+    }
+  }
+
+  const handleExportFull = async () => {
+    setError('')
+    setExportingFull(true)
+    try {
+      const { filename, blob } = await buildFullBackupZip()
+      downloadBlob(filename, blob)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '导出失败，请重试')
+    } finally {
+      setExportingFull(false)
+    }
+  }
+
+  const handleFile = async (file: File) => {
+    setError('')
+    try {
+      // 魔数识别（PK\x03\x04 / PK\x05\x06）：.zip 被改名 .json 也能正确分派
+      const head = new Uint8Array(await file.slice(0, 4).arrayBuffer())
+      if (isZipMagic(head)) {
+        const preview = await prepareZipImport(file)
+        setPending({
+          kind: 'zip', json: '', zipFile: file,
+          exportedAt: preview.parsed.exportedAt,
+          materialCount: preview.parsed.materials.length,
+          recordCount: Object.keys(preview.parsed.records).length,
+          prefCount: Object.keys(preview.parsed.prefs).length,
+          mediaCount: preview.parsed.media.length,
+          mediaBytes: preview.mediaBytes,
+          mediaMissing: preview.mediaMissing,
+        })
+        return
+      }
+      const text = await file.text()
+      const parsed = parseBackupJson(text)
+      if (!parsed.ok) { setError(parsed.error); return }
+      setPending({
+        kind: 'json', json: text,
+        exportedAt: parsed.backup.exportedAt,
+        materialCount: parsed.backup.materials.length,
+        recordCount: Object.keys(parsed.backup.records).length,
+        prefCount: Object.keys(parsed.backup.prefs).length,
+        mediaCount: 0, mediaBytes: 0, mediaMissing: 0,
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '无法读取备份文件')
+    }
+  }
+
+  const confirmImport = async () => {
+    if (!pending) return
+    setImporting(true)
+    setError('')
+    try {
+      const s = pending.kind === 'zip' && pending.zipFile
+        ? await importZipBackup(pending.zipFile, strategy)
+        : await importBackup(pending.json, strategy)
+      setSummary(s)
+      setPending(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '导入失败')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-4 p-5">
+        <CardTitle className="text-base">📦 备份与迁移</CardTitle>
+        <CardDescription>
+          备份包含材料与字幕、学习进度、收藏、笔记、生词本、训练记录和设置。轻量备份导出为 JSON（不含音视频）；
+          完整备份打包为 zip（含音视频文件）。换设备：旧设备导出 → 新设备导入。
+        </CardDescription>
+
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => void handleExport()}>
+            <Download data-icon="inline-start" />导出备份
+          </Button>
+          <Button variant="outline" disabled={exportingFull} onClick={() => void handleExportFull()}>
+            <FileArchive data-icon="inline-start" />{exportingFull ? '打包中…' : '完整备份（含媒体）'}
+          </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json,application/zip,.zip"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = '' }}
+          />
+          <Button variant="outline" onClick={() => fileRef.current?.click()}>
+            <Upload data-icon="inline-start" />导入备份
+          </Button>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          本机可打包媒体：{mediaInfo ? `${mediaInfo.count} 个 · 约 ${formatBytes(mediaInfo.bytes)}` : '统计中…'}
+          ；导入支持 .json 与 .zip（自动识别），zip 导入需设备剩余存储空间充足。
+        </p>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+      </CardContent>
+
+      {/* 导入确认：备份概要 + 冲突策略 */}
+      <Dialog open={!!pending} onOpenChange={(o) => { if (!o) setPending(null) }}>
+        <DialogHeader>
+          <DialogTitle>导入备份</DialogTitle>
+          <DialogDescription>
+            {pending
+              ? `导出于 ${pending.exportedAt ? new Date(pending.exportedAt).toLocaleString() : '未知时间'} · 材料 ${pending.materialCount} · 记录 ${pending.recordCount} 条 · 设置 ${pending.prefCount} 项`
+                + (pending.kind === 'zip' ? ` · 媒体 ${pending.mediaCount} 个（约 ${formatBytes(pending.mediaBytes)}）` : '')
+              : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogContent>
+          <div className="flex flex-col gap-4">
+            {pending && pending.kind === 'zip' && pending.mediaMissing > 0 && (
+              <p className="text-sm text-amber-600">备份包中缺少 {pending.mediaMissing} 个媒体文件，对应材料导入后需单独补传媒体。</p>
+            )}
+            <div>
+              <p className="mb-2 text-sm font-medium">与本机已有数据冲突时：</p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant={strategy === 'skipExisting' ? 'secondary' : 'outline'} size="sm" onClick={() => setStrategy('skipExisting')}>保留本机数据</Button>
+                <Button variant={strategy === 'overwrite' ? 'secondary' : 'outline'} size="sm" onClick={() => setStrategy('overwrite')}>以备份覆盖</Button>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {strategy === 'skipExisting' ? '只导入本机没有的材料、记录与设置' : '同名材料与同 key 记录将被备份内容覆盖'}
+              </p>
+            </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setPending(null)}>取消</Button>
+              <Button onClick={() => void confirmImport()} disabled={importing}>{importing ? '导入中…' : '开始导入'}</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 导入结果：计数 + 刷新生效 */}
+      <Dialog open={!!summary} onOpenChange={(o) => { if (!o) window.location.reload() }}>
+        <DialogHeader>
+          <DialogTitle>导入完成</DialogTitle>
+          <DialogDescription>刷新页面后生效</DialogDescription>
+        </DialogHeader>
+        <DialogContent>
+          {summary && (
+            <div className="flex flex-col gap-3">
+              <div className={`grid gap-2 text-center ${summary.mediaWritten + summary.mediaSkipped + summary.mediaMissing > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+                <div className="rounded-xl bg-muted p-3"><p className="font-serif text-2xl font-semibold text-primary">{summary.materialsWritten}</p><p className="text-xs text-muted-foreground">材料导入 / 跳过 {summary.materialsSkipped}</p></div>
+                <div className="rounded-xl bg-muted p-3"><p className="font-serif text-2xl font-semibold text-primary">{summary.recordsWritten}</p><p className="text-xs text-muted-foreground">记录导入 / 跳过 {summary.recordsSkipped}</p></div>
+                <div className="rounded-xl bg-muted p-3"><p className="font-serif text-2xl font-semibold text-primary">{summary.prefsWritten}</p><p className="text-xs text-muted-foreground">设置导入 / 跳过 {summary.prefsSkipped}</p></div>
+                {summary.mediaWritten + summary.mediaSkipped + summary.mediaMissing > 0 && (
+                  <div className="rounded-xl bg-muted p-3"><p className="font-serif text-2xl font-semibold text-primary">{summary.mediaWritten}</p><p className="text-xs text-muted-foreground">媒体导入 / 跳过 {summary.mediaSkipped}</p></div>
+                )}
+              </div>
+              {summary.mediaWritten + summary.mediaSkipped > 0 ? (
+                summary.mediaMissing > 0 && <p className="text-xs text-muted-foreground">备份包中缺失媒体 {summary.mediaMissing} 个，对应材料需单独补传媒体。</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">轻量备份不含媒体文件，播放需重新导入对应媒体。</p>
+              )}
+              <div className="flex justify-end"><Button onClick={() => window.location.reload()}>刷新页面</Button></div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </Card>
+  )
+}
+
 /* ── 存储管理 ─────────────────────────────────── */
 
 function StorageSection() {
@@ -358,7 +580,8 @@ function SettingsPage() {
             <LocalServicesSection />
           </TabsContent>
           <TabsContent value="storage">
-            <StorageSection />
+            <BackupSection />
+            <div className="mt-4"><StorageSection /></div>
           </TabsContent>
         </Tabs>
       </div>
