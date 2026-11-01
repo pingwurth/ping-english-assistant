@@ -32,8 +32,12 @@ const CRC_TABLE = (() => {
   return t
 })()
 
-export function crc32(data: Uint8Array): number {
-  let c = 0xFFFFFFFF
+/**
+ * CRC32（标准反射算法）。传 seed 可做增量：crc32(chunk2, crc32(chunk1))。
+ * 单块调用（seed 缺省 0）与一次性全量计算结果一致。
+ */
+export function crc32(data: Uint8Array, seed = 0): number {
+  let c = (seed ^ 0xFFFFFFFF) >>> 0
   for (let i = 0; i < data.length; i++) c = CRC_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8)
   return (c ^ 0xFFFFFFFF) >>> 0
 }
@@ -51,6 +55,13 @@ export type ZipChunkSink = (chunk: Uint8Array) => void
 export interface ZipWriter {
   /** 追加一个条目；store=true → method 0 原样透传（不拷贝），默认 deflate level 6 */
   add(name: string, data: Uint8Array, opts?: { store?: boolean }): void
+  /**
+   * 流式追加 STORE 条目：数据不整体进内存，逐块推 sink 并增量累计 CRC——
+   * 大媒体文件（数百 MB 视频）导出时的峰值堆从「整文件」降到「单块」。
+   * size 须预先已知（Blob.size）；CRC 走 data descriptor 记录在数据尾部，
+   * 本地头三字段填 0（传统 zip 的 streaming 约定，读侧按中央目录真实值读）。
+   */
+  addStream(name: string, size: number, chunks: AsyncIterable<Uint8Array>): Promise<void>
   /** 写出中央目录 + EOCD；之后不得再 add */
   finish(): void
   readonly bytesWritten: number
@@ -110,6 +121,51 @@ export function createZipWriter(sink: ZipChunkSink, opts?: { limit?: number }): 
       push(compressed)
 
       records.push({ nameBytes, method, crc, compressedSize: compressed.length, uncompressedSize: data.length, localOffset })
+    },
+    async addStream(name, size, chunks) {
+      if (finished) throw new Error('zip writer 已 finish，不能再 add')
+      if (records.length >= 0xFFFF) throw new Error('备份条目过多（超过 65535），暂不支持')
+      if (size > 0xFFFFFFFF) throw new Error('条目过大，暂不支持 zip64')
+      const nameBytes = encoder.encode(name)
+      if (nameBytes.length > 0xFFFF) throw new Error(`条目名过长：${name}`)
+      const localOffset = offset
+
+      // 本地头：flag bit3（0x0008）= 数据后跟 data descriptor；crc/csize/usize 此处填 0
+      const h = new DataView(new ArrayBuffer(30))
+      h.setUint32(0, 0x04034b50, true)
+      h.setUint16(4, 20, true)
+      h.setUint16(6, 0x0800 | 0x0008, true)
+      h.setUint16(8, 0, true) // method 0 = STORE
+      h.setUint16(10, 0, true)
+      h.setUint16(12, 0x0021, true)
+      h.setUint32(14, 0, true)
+      h.setUint32(18, 0, true)
+      h.setUint32(22, 0, true)
+      h.setUint16(26, nameBytes.length, true)
+      h.setUint16(28, 0, true)
+      push(new Uint8Array(h.buffer))
+      push(nameBytes)
+
+      let crc = 0
+      let written = 0
+      for await (const chunk of chunks) {
+        if (chunk.length === 0) continue
+        crc = crc32(chunk, crc)
+        written += chunk.length
+        if (written > size) throw new Error(`条目 ${name} 的流式数据超过声明的 size`)
+        push(chunk)
+      }
+      if (written !== size) throw new Error(`条目 ${name} 的流式数据不足声明的 size（${written}/${size}）`)
+
+      // data descriptor（带可选签名 0x08074b50 的 16 字节形态）
+      const d = new DataView(new ArrayBuffer(16))
+      d.setUint32(0, 0x08074b50, true)
+      d.setUint32(4, crc, true)
+      d.setUint32(8, size, true)
+      d.setUint32(12, size, true)
+      push(new Uint8Array(d.buffer))
+
+      records.push({ nameBytes, method: 0, crc, compressedSize: size, uncompressedSize: size, localOffset })
     },
     finish() {
       if (finished) throw new Error('zip writer 已 finish')

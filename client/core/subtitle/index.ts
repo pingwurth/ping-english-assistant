@@ -75,10 +75,25 @@ export function parseSubtitle(text: string, format?: 'srt' | 'lrc', knownDuratio
 
 /** 将 SubtitleSentence[] 导出为 SRT 格式文本 */
 export function exportSrt(sentences: SubtitleSentence[]): string {
-  return sentences.map((s, i) => {
-    const timing = `${formatSrtTimestamp(s.startMs)} --> ${formatSrtTimestamp(s.endMs)}`
-    const lines = [s.textEn]
-    if (s.textZh) lines.push(s.textZh)
-    return `${i + 1}\n${timing}\n${lines.join('\n')}\n`
-  }).join('\n')
+  return exportSrtRows(
+    sentences.map((s) => ({
+      startMs: s.startMs,
+      endMs: s.endMs,
+      lines: s.textZh ? [s.textEn, s.textZh] : [s.textEn],
+    })),
+  )
+}
+
+/**
+ * 通用 SRT 行导出（全应用唯一 SRT 序列化实现）：每块 = 序号 + 时间轴 + 文本行，
+ * 块内 \n、块间空行、末块尾随 \n。播放器导出 / AI 转写产物 / TTS 字幕共用，
+ * 时间戳钳位等行为不再随拷贝漂移。
+ */
+export function exportSrtRows(rows: Array<{ startMs: number; endMs: number; lines: string[] }>): string {
+  return rows
+    .map((r, i) => {
+      const timing = `${formatSrtTimestamp(r.startMs)} --> ${formatSrtTimestamp(r.endMs)}`
+      return `${i + 1}\n${timing}\n${r.lines.join('\n')}\n`
+    })
+    .join('\n')
 }

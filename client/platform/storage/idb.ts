@@ -88,6 +88,11 @@ export interface KvStore {
   delete(key: string): Promise<void>
   allKeys(): Promise<string[]>
   clear(): Promise<void>
+  /**
+   * 单事务取全部 [key, value] 对 —— 列表/统计场景用它替代「allKeys 全扫 + 每键一个
+   * 独立事务」的 N+1（打开播放器页要为一份笔记开几十次事务的问题由此消除）。
+   */
+  getAllEntries(): Promise<Array<[string, unknown]>>
 }
 
 function makeStore(store: StoreName): KvStore {
@@ -120,6 +125,35 @@ function makeStore(store: StoreName): KvStore {
       useMemory
         ? (mem(store).clear(), Promise.resolve())
         : wrapWrite(tx<undefined>(store, 'readwrite', os => os.clear())),
+    getAllEntries: () =>
+      useMemory
+        ? Promise.resolve([...mem(store).entries()])
+        : wrapRead(
+            openDb().then(
+              (db) =>
+                new Promise<Array<[string, unknown]>>((resolve, reject) => {
+                  if (!db) return resolve([])
+                  try {
+                    // 同一 readonly 事务发 getAllKeys + getAll：快照一致，且均按主键序返回，可直接 zip
+                    const os = db.transaction(store, 'readonly').objectStore(store)
+                    const keysReq = os.getAllKeys()
+                    const valuesReq = os.getAll()
+                    keysReq.onsuccess = () => {
+                      valuesReq.onsuccess = () => {
+                        const keys = keysReq.result
+                        const values = valuesReq.result
+                        resolve(keys.map((k, i) => [String(k), values[i]] as [string, unknown]))
+                      }
+                    }
+                    keysReq.onerror = () => reject(keysReq.error ?? new Error('idb'))
+                    valuesReq.onerror = () => reject(valuesReq.error ?? new Error('idb'))
+                  } catch (e) {
+                    reject(e)
+                  }
+                }),
+            ),
+            [] as Array<[string, unknown]>,
+          ),
   }
 }
 

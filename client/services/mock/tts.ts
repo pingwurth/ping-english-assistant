@@ -20,6 +20,7 @@ import type { TtsGenerateRequest, TtsGenerateResponseMeta, TtsSubtitleResponse }
 import type { TtsGenerateResult, TtsService } from '../contracts'
 import { abortableDelay, ApiError, throwIfAborted } from '../contracts'
 import { encodeWav, TARGET_SAMPLE_RATE } from '../../core/audio/wav-encoder'
+import { exportSrtRows } from '../../core/subtitle'
 
 /** 契约⑥ text 上限（字符） */
 export const TTS_MAX_TEXT_LENGTH = 5000
@@ -93,21 +94,12 @@ export function buildTtsTimeline(sentences: string[], speed: number): { timings:
   return { timings, durationMs: sentences.length > 0 ? cursor - GAP_MS : 0 }
 }
 
-/** 毫秒 → SRT 时间戳 `HH:MM:SS,mmm`（契约⑦格式） */
-export function srtTime(ms: number): string {
-  const t = Math.max(0, Math.round(ms))
-  const h = Math.floor(t / 3600000)
-  const m = Math.floor((t % 3600000) / 60000)
-  const s = Math.floor((t % 60000) / 1000)
-  const ms3 = t % 1000
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms3).padStart(3, '0')}`
-}
+/** 毫秒 → SRT 时间戳 —— 统一实现见 core/subtitle 的 formatSrtTimestamp（历史导出名保留兼容） */
+export { formatSrtTimestamp as srtTime } from '@/core/subtitle'
 
-/** 时间轴 → SRT 文本（契约⑦：序号 + 时间轴行 + 句文本，块间空行） */
+/** 时间轴 → SRT 文本（契约⑦：序号 + 时间轴行 + 句文本；序列化统一走 core/subtitle 的 exportSrtRows） */
 export function buildSrt(timings: TtsSentenceTiming[]): string {
-  return timings
-    .map((t) => `${t.index + 1}\n${srtTime(t.startMs)} --> ${srtTime(t.endMs)}\n${t.text}`)
-    .join('\n\n')
+  return exportSrtRows(timings.map((t) => ({ startMs: t.startMs, endMs: t.endMs, lines: [t.text] })))
 }
 
 /** 占位音 WAV：每句一个低音量正弦基频（按句序变化），句间静音；时长对齐时间轴 */

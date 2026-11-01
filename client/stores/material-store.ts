@@ -42,13 +42,44 @@ async function refresh(): Promise<void> {
   const loaded = await Promise.all(keys.map((k) => materialsStore.get<MaterialRecord>(k)))
   const records = loaded.filter((r): r is MaterialRecord => !!r && !!r.material)
   records.sort(sortByRecent)
-  const rKeys = await recordsStore.allKeys()
-  const loadedCollections = await Promise.all(
-    rKeys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.collection)).map((k) => recordsStore.get<MaterialCollection>(k)),
-  )
-  const collections = loadedCollections.filter((c): c is MaterialCollection => !!c)
+  // collections 单事务批量读取（原 allKeys 全扫 + 每条一个事务）
+  const recordEntries = await recordsStore.getAllEntries()
+  const collections = recordEntries
+    .filter(([k, v]) => k.startsWith(RECORD_KEY_PREFIXES.collection) && !!v && typeof (v as MaterialCollection).createdAt === 'number')
+    .map(([, v]) => v as MaterialCollection)
   collections.sort((a, b) => a.createdAt - b.createdAt) // 与生词本一致：创建时间升序
   materialStore.set({ ready: true, records, collections })
+}
+
+/* ─── 增量补丁：CRUD 不再全量重读 IDB ───
+ * refresh() 要把所有材料记录（内嵌完整 subtitleData）结构化克隆一遍，
+ * 50 材料 × 2000 句的库打开任意材料仅 bump lastOpenedAt 也要付一次全量代价。
+ * CRUD 就地补丁内存态并保持排序；全量 refresh 只留给初始化。
+ */
+
+/** 就地更新/插入单条材料记录并按"最近学习"重排 */
+function patchRecord(record: MaterialRecord): void {
+  const state = materialStore.get()
+  const exists = state.records.some((r) => r.material.id === record.material.id)
+  const records = (exists
+    ? state.records.map((r) => (r.material.id === record.material.id ? record : r))
+    : [...state.records, record]
+  ).sort(sortByRecent)
+  materialStore.set({ ...state, ready: true, records })
+}
+
+/** 移除单条材料记录（不动排序） */
+function dropRecord(materialId: string): void {
+  const state = materialStore.get()
+  materialStore.set({ ...state, records: state.records.filter((r) => r.material.id !== materialId) })
+}
+
+/** 就地更新 collections（保持创建时间升序） */
+function patchCollections(next: MaterialCollection[], removedId?: string): void {
+  const state = materialStore.get()
+  const kept = removedId ? next.filter((c) => c.id !== removedId) : next
+  kept.sort((a, b) => a.createdAt - b.createdAt)
+  materialStore.set({ ...state, ready: true, collections: kept })
 }
 
 /** 种子字幕 → SubtitleData（内联进 material 记录，避免每次启动重复解析） */
@@ -83,17 +114,19 @@ export async function getMaterialRecord(id: string): Promise<MaterialRecord | un
 
 /** 新增/覆盖材料记录并广播列表变更（导入闭环使用） */
 export async function putMaterialRecord(record: MaterialRecord): Promise<void> {
+  await initMaterials()
   await materialsStore.put(record.material.id, record)
-  await refresh()
+  patchRecord(record)
 }
 
-/** 打开材料时更新 lastOpenedAt（驱动"最近学习"排序） */
+/** 打开材料时更新 lastOpenedAt（驱动"最近学习"排序；单记录补丁，不全量重读） */
 export async function touchMaterial(id: string): Promise<void> {
+  await initMaterials()
   const rec = await materialsStore.get<MaterialRecord>(id)
   if (!rec) return
-  rec.material = { ...rec.material, lastOpenedAt: Date.now() }
-  await materialsStore.put(id, rec)
-  await refresh()
+  const updated: MaterialRecord = { ...rec, material: { ...rec.material, lastOpenedAt: Date.now() } }
+  await materialsStore.put(id, updated)
+  patchRecord(updated)
 }
 
 /** 媒体 Blob 读写（blobs store，key = materialId） */
@@ -109,6 +142,7 @@ export function getProgress(materialId: string): Promise<LearningProgress | unde
 
 /** 删除材料：级联清理 material + blob + 相关 records（进度/收藏/训练记录） */
 export async function removeMaterial(id: string): Promise<void> {
+  await initMaterials()
   await materialsStore.delete(id)
   await blobsStore.delete(id)
   const keys = await recordsStore.allKeys()
@@ -120,7 +154,7 @@ export async function removeMaterial(id: string): Promise<void> {
       if (rec?.materialId === id) return recordsStore.delete(k)
     }
   }))
-  await refresh()
+  dropRecord(id)
 }
 
 /* ─── 材料集 CRUD（存 records store；成员关系在 material.collectionId 上，无悬挂引用） ─── */
@@ -130,7 +164,7 @@ export async function createCollection(name: string): Promise<MaterialCollection
   await initMaterials()
   const collection: MaterialCollection = { id: crypto.randomUUID(), name: name.trim(), createdAt: Date.now() }
   await recordsStore.put(RECORD_KEYS.collection(collection.id), collection)
-  await refresh()
+  patchCollections([...materialStore.get().collections, collection])
   return collection
 }
 
@@ -140,17 +174,22 @@ export async function renameCollection(collectionId: string, name: string): Prom
   if (!name.trim()) return
   const collection = await recordsStore.get<MaterialCollection>(RECORD_KEYS.collection(collectionId))
   if (!collection) return
-  await recordsStore.put(RECORD_KEYS.collection(collectionId), { ...collection, name: name.trim() })
-  await refresh()
+  const updated: MaterialCollection = { ...collection, name: name.trim() }
+  await recordsStore.put(RECORD_KEYS.collection(collectionId), updated)
+  patchCollections(materialStore.get().collections.map((c) => (c.id === collectionId ? updated : c)))
 }
 
 /** 删除材料集：仅删集合本身；成员材料 collectionId 置 null（材料与其数据不动，回到未分组） */
 export async function removeCollection(collectionId: string): Promise<void> {
   await initMaterials()
   await recordsStore.delete(RECORD_KEYS.collection(collectionId))
-  const members = materialStore.get().records.filter((r) => r.material.collectionId === collectionId)
-  await Promise.all(members.map((m) => materialsStore.put(m.material.id, { ...m, material: { ...m.material, collectionId: null } } satisfies MaterialRecord)))
-  await refresh()
+  const state = materialStore.get()
+  const members = state.records.filter((r) => r.material.collectionId === collectionId)
+  await Promise.all(members.map((m) => {
+    const updated: MaterialRecord = { ...m, material: { ...m.material, collectionId: null } }
+    return materialsStore.put(m.material.id, updated).then(() => patchRecord(updated))
+  }))
+  patchCollections(state.collections, collectionId)
 }
 
 /** 移动材料到材料集；collectionId 传 null 表示移出到未分组（材料或目标集合不存在时静默返回） */
@@ -160,6 +199,7 @@ export async function assignMaterialCollection(materialId: string, collectionId:
   if (collectionId !== null && !materialStore.get().collections.some((c) => c.id === collectionId)) return
   const rec = await materialsStore.get<MaterialRecord>(materialId)
   if (!rec) return
-  await materialsStore.put(materialId, { ...rec, material: { ...rec.material, collectionId } } satisfies MaterialRecord)
-  await refresh()
+  const updated: MaterialRecord = { ...rec, material: { ...rec.material, collectionId } } satisfies MaterialRecord
+  await materialsStore.put(materialId, updated)
+  patchRecord(updated)
 }

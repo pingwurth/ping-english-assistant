@@ -79,6 +79,47 @@ describe('writer round-trip（自写自读）', () => {
     expect(zip.subarray(u.dataOffset, u.dataOffset + u.uncompressedSize)).toEqual(uuid)
   })
 
+  it('addStream 流式条目：增量 CRC 与全量一致，data descriptor 形态可被自读侧与 fflate 解析', async () => {
+    const json = enc.encode('{"app":"ping-english-assistant"}')
+    const media = seededBytes(4096, 9)
+
+    // 分块模拟 Blob.stream()（块大小刻意不整除长度，覆盖末尾小块）
+    async function* chunks(): AsyncGenerator<Uint8Array> {
+      const STEP = 1000
+      for (let i = 0; i < media.length; i += STEP) yield media.subarray(i, Math.min(media.length, i + STEP))
+    }
+
+    const parts: Uint8Array[] = []
+    const w = createZipWriter((c) => parts.push(c))
+    w.add('backup.json', json)
+    await w.addStream('media/big-video', media.length, chunks())
+    w.finish()
+    const zip = new Uint8Array(parts.reduce((n, c) => n + c.length, 0))
+    let o = 0
+    for (const c of parts) { zip.set(c, o); o += c.length }
+
+    // 自读侧：中央目录含真实 crc/size，数据零拷贝切片等于原文
+    const idx = await indexZip(readerFromBytes(zip))
+    const e = idx.byName.get('media/big-video')!
+    expect(e.method).toBe(0)
+    expect(e.crc32).toBe(crc32(media)) // 增量累计与一次性全量一致
+    expect(e.uncompressedSize).toBe(media.length)
+    expect(zip.subarray(e.dataOffset, e.dataOffset + media.length)).toEqual(media)
+
+    // fflate 互操作：标准解压器也能读（校验 data descriptor 形态的合法性）
+    const unzipped = unzipSync(zip)
+    expect(unzipped['media/big-video']).toEqual(media)
+    expect(dec.decode(unzipped['backup.json']!)).toBe('{"app":"ping-english-assistant"}')
+  })
+
+  it('addStream 声明 size 与流数据不符时拒绝', async () => {
+    async function* short(): AsyncGenerator<Uint8Array> {
+      yield enc.encode('abc')
+    }
+    const w = createZipWriter(() => { /* 丢弃 */ })
+    await expect(w.addStream('m', 10, short())).rejects.toThrow('不足')
+  })
+
   it('空 zip（0 条目）返回空索引', async () => {
     const idx = await indexZip(readerFromBytes(buildZip([])))
     expect(idx.entries).toEqual([])

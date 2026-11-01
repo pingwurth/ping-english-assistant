@@ -12,6 +12,7 @@ import {
   TTS_MAX_TEXT_LENGTH,
 } from '../tts'
 import { ApiError } from '../../contracts'
+import { parseSubtitle } from '../../../core/subtitle'
 
 const noDelay = async () => {}
 
@@ -77,7 +78,9 @@ describe('srtTime / buildSrt', () => {
       { index: 0, text: 'Good morning.', startMs: 0, endMs: 2000 },
       { index: 1, text: 'Nice day.', startMs: 2120, endMs: 4000 },
     ])
-    expect(srt).toBe('1\n00:00:00,000 --> 00:00:02,000\nGood morning.\n\n2\n00:00:02,120 --> 00:00:04,000\nNice day.')
+    // 统一走 core/subtitle exportSrtRows：末块尾随 \n（回环解析不受影响）
+    expect(srt).toBe('1\n00:00:00,000 --> 00:00:02,000\nGood morning.\n\n2\n00:00:02,120 --> 00:00:04,000\nNice day.\n')
+    expect(parseSubtitle(srt, 'srt').sentences).toHaveLength(2)
   })
 })
 

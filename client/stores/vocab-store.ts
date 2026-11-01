@@ -20,12 +20,17 @@ export interface VocabStoreState {
 export const vocabStore = createStore<VocabStoreState>({ ready: false, books: [], entries: [] })
 
 async function refresh(): Promise<void> {
-  const keys = await recordsStore.allKeys()
-  const bookKeys = keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.vocabBook))
-  const entryKeys = keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.vocabEntry))
-
-  const books = (await Promise.all(bookKeys.map((k) => recordsStore.get<VocabBook>(k)))).filter((b): b is VocabBook => !!b)
-  const entries = (await Promise.all(entryKeys.map((k) => recordsStore.get<VocabEntry>(k)))).filter((e): e is VocabEntry => !!e)
+  // 单事务批量读取并按前缀分拣（原 allKeys 全扫 + 每条记录一个事务的 N+1）
+  const all = await recordsStore.getAllEntries()
+  const books: VocabBook[] = []
+  const entries: VocabEntry[] = []
+  for (const [k, v] of all) {
+    if (k.startsWith(RECORD_KEY_PREFIXES.vocabBook) && !!v && typeof (v as VocabBook).createdAt === 'number') {
+      books.push(v as VocabBook)
+    } else if (k.startsWith(RECORD_KEY_PREFIXES.vocabEntry) && !!v && typeof (v as VocabEntry).addedAt === 'number') {
+      entries.push(v as VocabEntry)
+    }
+  }
 
   books.sort((a, b) => a.createdAt - b.createdAt)
   entries.sort((a, b) => b.addedAt - a.addedAt)

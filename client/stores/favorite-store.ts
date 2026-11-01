@@ -18,9 +18,13 @@ const FAV_PREFIX = RECORD_KEY_PREFIXES.favorite
  */
 export async function listFavorites(materialId?: string): Promise<Favorite[]> {
   const prefix = materialId ? `${FAV_PREFIX}${materialId}:` : FAV_PREFIX
-  const keys = (await recordsStore.allKeys()).filter((k) => k.startsWith(prefix))
-  const entries = await Promise.all(keys.map((k) => recordsStore.get<Favorite>(k)))
-  return entries.filter((f): f is Favorite => !!f).sort((a, b) => b.createdAt - a.createdAt)
+  // 单事务批量读取（原 allKeys 全扫 + 每条收藏一个事务的 N+1）
+  const entries = await recordsStore.getAllEntries()
+  return entries
+    .filter(([k]) => k.startsWith(prefix))
+    .map(([, v]) => v as Favorite)
+    .filter((f): f is Favorite => !!f && typeof f.createdAt === 'number')
+    .sort((a, b) => b.createdAt - a.createdAt)
 }
 
 /** 收藏 / 取消收藏（幂等；重复收藏不刷新时间戳） */

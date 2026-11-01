@@ -114,10 +114,26 @@ export async function buildFullBackupZip(): Promise<{ filename: string; blob: Bl
   const writer = createZipWriter(sink)
   writer.add('backup.json', new TextEncoder().encode(JSON.stringify(payload)))
   for (const c of collected) {
-    writer.add(`media/${c.id}`, new Uint8Array(await c.blob.arrayBuffer()), { store: true }) // 一次仅一个媒体进堆
+    // 流式写入：媒体分块喂 writer（增量 CRC + data descriptor），峰值堆 ≈ 单块 + 32MB sink，
+    // 不再把整个文件（数百 MB 视频）一次性读进 JS 堆
+    await writer.addStream(`media/${c.id}`, c.blob.size, blobChunks(c.blob))
   }
   writer.finish()
   return { filename: fullBackupFilename(), blob: new Blob(chunks, { type: 'application/zip' }) }
+}
+
+/** Blob → 异步块序列（供 zip writer 流式写入；块大小由浏览器 stream 实现决定） */
+async function* blobChunks(blob: Blob): AsyncGenerator<Uint8Array> {
+  const reader = blob.stream().getReader()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) yield value
+    }
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 /** 触发浏览器下载文件 —— 统一实现见 lib/download.ts（历史四份拷贝收敛） */
