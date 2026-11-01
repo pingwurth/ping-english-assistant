@@ -20,6 +20,12 @@ import type { MediaSource, PlayerController, PlayerError, PlayerEvents, PlayerSt
 const SEEK_DRIFT_THRESHOLD_MS = 300
 /** seek 校准兜底超时：此后仍无原生 timeupdate 则强制解除静默，防进度派发永久卡死 */
 const SEEK_CALIBRATE_TIMEOUT_MS = 2000
+/**
+ * timeupdate 对外派发节流间隔。rAF 采样 60-120Hz，但消费者（进度条/句高亮）只需 ~10Hz；
+ * 不门控的话，任何忘了自带节流的订阅者（如 shadowing 页）就是每秒 60+ 次的整页重渲染循环。
+ * 内部边界判定（A-B 循环、区间停点）不受影响——它们按派发值判断，容差（±120ms）> 节流粒度。
+ */
+const TIME_EMIT_INTERVAL_MS = 100
 
 export class HtmlPlayerController implements PlayerController {
   private el: HTMLAudioElement | HTMLVideoElement
@@ -40,6 +46,8 @@ export class HtmlPlayerController implements PlayerController {
   private seekTimer: number | null = null
   /** 最近一次 seek 的实际漂移量（实际落点 - 目标） */
   private seekDriftMs = 0
+  /** 上次对外派发 timeupdate 的位置（节流基准；seek 校准分支派发后同步更新） */
+  private lastEmitMs = 0
   /** controller 级 A-B 循环区间（无次数限制；带次数的循环由 SentencePlayer 承担） */
   private loop: { startMs: number; endMs: number } | null = null
   private destroyed = false
@@ -91,8 +99,10 @@ export class HtmlPlayerController implements PlayerController {
       // （如训练页区间播放到 endMs 自动暂停、录音前停原音）。期望终态已达成，静默吞掉，
       // 不上报 PLAY_BLOCKED 也不外抛——调用方多为 void play()，外抛会成为 unhandled rejection。
       if (typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'AbortError') return
+      // 播放被拦截（如 iOS 无手势自动播放的 NotAllowedError）：错误已走事件通道
+      // （UI 会提示），这里不再重抛——全仓调用点均为 void play()，重抛只会多一个
+      // unhandled rejection。
       this.emitError('PLAY_BLOCKED', e instanceof Error ? e.message : '播放被拦截')
-      throw e
     })
   }
 
@@ -185,6 +195,7 @@ export class HtmlPlayerController implements PlayerController {
       this.pendingSeekMs = null
       this.clearSeekTimeout()
       this.currentMs = actualMs
+      this.lastEmitMs = actualMs
       this.emit('timeupdate', actualMs)
       return
     }
@@ -239,7 +250,7 @@ export class HtmlPlayerController implements PlayerController {
     this.rafId = null
   }
 
-  /** 派发进度：seek 待校准期间静默旧值，防止进度条回跳闪烁 */
+  /** 派发进度：seek 待校准期间静默旧值，防止进度条回跳闪烁；对外按 TIME_EMIT_INTERVAL_MS 节流 */
   private pushTime(ms: number): void {
     if (this.pendingSeekMs !== null) return
     this.currentMs = ms
@@ -247,7 +258,11 @@ export class HtmlPlayerController implements PlayerController {
       this.seekTo(this.loop.startMs)
       return
     }
-    this.emit('timeupdate', ms)
+    // 位置回跳（循环回跳后首个采样）立即派发，正常前进按间隔节流
+    if (Math.abs(ms - this.lastEmitMs) >= TIME_EMIT_INTERVAL_MS) {
+      this.lastEmitMs = ms
+      this.emit('timeupdate', ms)
+    }
   }
 
   private setState(state: PlayerState): void {

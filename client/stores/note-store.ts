@@ -6,10 +6,10 @@
  */
 
 import { recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS } from '@/platform/storage/schema'
+import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import type { SentenceNote } from '@/types/note'
 
-const NOTE_PREFIX = 'note:'
+const NOTE_PREFIX = RECORD_KEY_PREFIXES.note
 
 /**
  * 读取笔记记录。
@@ -56,16 +56,18 @@ export async function deleteSentenceNote(materialId: string, sentenceIndex: numb
 
 /**
  * 删句后平移笔记：被删句的笔记移除，其后所有笔记句序号 -1（与字幕重排后的 index 对齐）。
- * 全量重写该材料前缀的 key（旧 key 直接删除）。
+ * 受影响区间（被删句及其后）的旧 key 全部删除后重写——被删句自己的 key 也必须删，
+ * 否则残留的笔记会附到"顶替它位置的那句"上（幽灵笔记）。
  */
 export async function shiftNotesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
   const notes = await listNotes(materialId)
-  const next = notes
-    .filter((n) => n.sentenceIndex !== deletedIndex)
-    .map((n) => (n.sentenceIndex > deletedIndex ? { ...n, sentenceIndex: n.sentenceIndex - 1 } : n))
-  const stale = notes.filter((n) => n.sentenceIndex !== deletedIndex && n.sentenceIndex > deletedIndex)
+  const after = notes.filter((n) => n.sentenceIndex > deletedIndex)
   await Promise.all([
-    ...stale.map((n) => recordsStore.delete(RECORD_KEYS.note(materialId, n.sentenceIndex))),
-    ...next.map((n) => recordsStore.put(RECORD_KEYS.note(materialId, n.sentenceIndex), n)),
+    ...notes
+      .filter((n) => n.sentenceIndex >= deletedIndex)
+      .map((n) => recordsStore.delete(RECORD_KEYS.note(materialId, n.sentenceIndex))),
+    ...after.map((n) =>
+      recordsStore.put(RECORD_KEYS.note(materialId, n.sentenceIndex - 1), { ...n, sentenceIndex: n.sentenceIndex - 1 }),
+    ),
   ])
 }

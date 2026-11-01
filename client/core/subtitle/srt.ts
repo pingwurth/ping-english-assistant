@@ -39,9 +39,11 @@ export function parseSrt(text: string): RawBlock[] {
     }
     const timing = parseSrtTimingLine(group[timingIdx])
     if (!timing) throw new SubtitleParseError('时间戳格式无法识别', firstLine + timingIdx)
-    // 时间轴之前的行只允许是序号（缺失时按出现顺序补号，此处直接忽略）
-    const before = group.slice(0, timingIdx).filter((l) => l.trim().length > 0)
-    if (before.some((l) => !PURE_INDEX_RE.test(l.trim()))) throw new SubtitleParseError('时间戳前出现无法识别的内容', firstLine)
+    // 时间轴之前的行只允许是序号（缺失时按出现顺序补号，此处直接忽略）。
+    // 报错行号指向真正的杂行（在未过滤空行的原始切片上找），而非块首行
+    const beforeRaw = group.slice(0, timingIdx)
+    const badOffset = beforeRaw.findIndex((l) => l.trim().length > 0 && !PURE_INDEX_RE.test(l.trim()))
+    if (badOffset >= 0) throw new SubtitleParseError('时间戳前出现无法识别的内容', firstLine + badOffset)
     const textLines = group.slice(timingIdx + 1).map((l) => l.trim()).filter(Boolean)
     if (textLines.length > 0) blocks.push({ startMs: timing.startMs, endMs: timing.endMs, lines: textLines, lineNo: firstLine })
     group = []

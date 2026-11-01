@@ -28,8 +28,10 @@ export interface VocabEntry {
   bookId: string
   /** 添加时间戳 */
   addedAt: number
-  /** 在所有已导入材料中的出现次数（由材料导入时累加） */
+  /** 在所有已导入材料中的出现次数（= materialCounts 各值之和；重导入/重转写按材料先减旧贡献） */
   frequency: number
+  /** 每材料出现次数记账（materialId → 次数）。防重跑转写/重导入字幕时频次无条件累加翻倍 */
+  materialCounts?: Record<string, number>
   /** 可选 LLM 释义 */
   definition?: string
   /** 用户笔记 */

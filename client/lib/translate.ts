@@ -44,9 +44,14 @@ export async function translateTexts(
       signal,
     })
 
-    const data = (await res.json().catch(() => null)) as
-      | (TranslateResponse & { error?: string })
-      | null
+    let data: (TranslateResponse & { error?: string }) | null = null
+    try {
+      data = (await res.json()) as (TranslateResponse & { error?: string }) | null
+    } catch {
+      // body 读取失败有两种可能：响应体确实非 JSON，或用户取消导致读取中断 ——
+      // 先查中止，把主动取消与真实故障区分开（调用方对 AbortError 静默处理）
+      if (signal?.aborted) throw new DOMException('翻译已取消', 'AbortError')
+    }
 
     if (!res.ok) {
       const message = data?.error || `翻译失败 (${res.status})`

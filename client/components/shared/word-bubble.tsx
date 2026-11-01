@@ -48,6 +48,8 @@ export function WordBubble({ items, materialId, selectionContainerRef }: WordBub
   const [initialized, setInitialized] = useState(false)
   const bubbleRef = useRef<HTMLDivElement | null>(null)
   const rafRef = useRef(0)
+  /** "已加入生词本"提示 2s 后自动收起的定时器：新选词/新提示要先清旧的，防止提前杀掉新气泡 */
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useStore(vocabStore)
 
@@ -93,6 +95,8 @@ export function WordBubble({ items, materialId, selectionContainerRef }: WordBub
     const range = sel.getRangeAt(0)
     const rect = range.getBoundingClientRect()
 
+    // 新气泡不应被上一个"已加入"提示的定时器误杀
+    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = undefined }
     setBubble({
       text: normalized,
       sentence: matched,
@@ -156,8 +160,15 @@ export function WordBubble({ items, materialId, selectionContainerRef }: WordBub
   const handleAdded = (bookName: string) => {
     setShowPicker(false)
     setAddedBookName(bookName)
-    setTimeout(() => clearBubble(), 2000)
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = setTimeout(() => {
+      hideTimerRef.current = undefined
+      clearBubble()
+    }, 2000)
   }
+
+  // 卸载收口，防泄漏
+  useEffect(() => () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current) }, [])
 
   const bubbleContent = (
     <>

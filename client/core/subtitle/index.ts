@@ -62,7 +62,12 @@ export function parseSubtitle(text: string, format?: 'srt' | 'lrc', knownDuratio
   const known = knownDurationMs != null && Number.isFinite(knownDurationMs) ? Math.round(knownDurationMs) : undefined
   const totalDurationMs = known != null && known > lastStartMs ? known : lastStartMs
   const sentences = blocks.map((b, i) => {
-    const endMs = i < blocks.length - 1 ? blocks[i + 1].startMs : totalDurationMs
+    // 中间句相邻同时间戳（机器生成/卡拉OK LRC 常见）会产生 endMs == startMs 的零长句，
+    // playRange 把 endMs<=startMs 当 open-ended 会一路播到媒体末尾 —— 最短 1ms 兜底。
+    // 末句 endMs=startMs 是文档 §2.4 规则 5 的既定退化，由播放侧 open-ended 兜底，不加偏移。
+    const isLast = i >= blocks.length - 1
+    const rawEnd = isLast ? totalDurationMs : blocks[i + 1].startMs
+    const endMs = isLast ? rawEnd : Math.max(rawEnd, b.startMs + 1)
     return blockToSentence({ ...b, endMs }, i)
   })
   return { format: 'lrc', isBilingual: detectBilingual(sentences), sentences, totalDurationMs }

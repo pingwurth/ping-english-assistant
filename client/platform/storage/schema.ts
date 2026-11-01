@@ -13,6 +13,22 @@ export interface MaterialRecord {
   subtitleData: SubtitleData | null
 }
 
+/**
+ * records store 的 key 前缀 —— 唯一出处。统计面板/级联清理等需要扫描前缀的地方
+ * 一律从这里取（`startsWith(RECORD_KEY_PREFIXES.train)`），
+ * 不要在组件里手写 `'train:'` 字面量（键格式变更时会逐个静默弄坏扫描器）。
+ */
+export const RECORD_KEY_PREFIXES = {
+  progress: 'progress:',
+  favorite: 'fav:',
+  note: 'note:',
+  training: 'train:',
+  vocabBook: 'vocabbook:',
+  vocabEntry: 'vocabentry:',
+  mnemonic: 'mnemonic:',
+  collection: 'collection:',
+} as const
+
 /** records store 的 key 前缀约定（类型前缀 + 业务 id） */
 export const RECORD_KEYS = {
   progress: (materialId: string) => `progress:${materialId}`,

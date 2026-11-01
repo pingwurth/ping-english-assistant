@@ -17,7 +17,7 @@ import type { TrainingRecord } from '@/types/training'
 import type { Material, MaterialCollection } from '@/types/material'
 import type { SubtitleData } from '@/types/subtitle'
 import { blobsStore, materialsStore, recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS, type MaterialRecord } from '@/platform/storage/schema'
+import { RECORD_KEYS, RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import { seedMaterials, seedSentences } from '@/data/seed'
 import { createStore } from '@/stores/store'
 
@@ -44,7 +44,7 @@ async function refresh(): Promise<void> {
   records.sort(sortByRecent)
   const rKeys = await recordsStore.allKeys()
   const loadedCollections = await Promise.all(
-    rKeys.filter((k) => k.startsWith('collection:')).map((k) => recordsStore.get<MaterialCollection>(k)),
+    rKeys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.collection)).map((k) => recordsStore.get<MaterialCollection>(k)),
   )
   const collections = loadedCollections.filter((c): c is MaterialCollection => !!c)
   collections.sort((a, b) => a.createdAt - b.createdAt) // 与生词本一致：创建时间升序
@@ -58,11 +58,14 @@ function buildSeedSubtitle(material: Material): SubtitleData {
   return { format: 'srt', isBilingual, sentences, totalDurationMs: material.durationMs }
 }
 
-/** 首次启动种子注入：仅在 materials store 为空时执行 */
+/** seeded 标记（records store）：把「首次启动」与「store 暂时为空」区分开 —— 用户逐个删光材料后刷新，不该复活种子 */
+const SEEDED_FLAG_KEY = 'meta:seeded'
+
+/** 首次启动种子注入：仅未打过标记时执行（设置页"清空全部数据"会连标记一起清，恢复示例内容） */
 async function seedIfEmpty(): Promise<void> {
-  const keys = await materialsStore.allKeys()
-  if (keys.length > 0) return
+  if (await recordsStore.get(SEEDED_FLAG_KEY)) return
   await Promise.all(seedMaterials.map((m) => materialsStore.put(m.id, { material: m, subtitleData: buildSeedSubtitle(m) } satisfies MaterialRecord)))
+  await recordsStore.put(SEEDED_FLAG_KEY, true)
 }
 
 let initPromise: Promise<void> | null = null
@@ -111,8 +114,8 @@ export async function removeMaterial(id: string): Promise<void> {
   const keys = await recordsStore.allKeys()
   await Promise.all(keys.map(async (k) => {
     // progress: 键精确匹配（前缀匹配会误删 id 互为前缀的其他材料，如 m-1 与 m-10）
-    if (k === RECORD_KEYS.progress(id) || k.startsWith(`fav:${id}:`) || k.startsWith(`note:${id}:`)) return recordsStore.delete(k)
-    if (k.startsWith('train:')) {
+    if (k === RECORD_KEYS.progress(id) || k.startsWith(`${RECORD_KEY_PREFIXES.favorite}${id}:`) || k.startsWith(`${RECORD_KEY_PREFIXES.note}${id}:`)) return recordsStore.delete(k)
+    if (k.startsWith(RECORD_KEY_PREFIXES.training)) {
       const rec = await recordsStore.get<TrainingRecord>(k)
       if (rec?.materialId === id) return recordsStore.delete(k)
     }

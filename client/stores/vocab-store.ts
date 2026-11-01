@@ -8,7 +8,7 @@
 import type { VocabBook, VocabEntry } from '@/types/vocabulary'
 import { DEFAULT_BOOK_ID } from '@/types/vocabulary'
 import { recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS } from '@/platform/storage/schema'
+import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import { createStore } from '@/stores/store'
 
 export interface VocabStoreState {
@@ -21,8 +21,8 @@ export const vocabStore = createStore<VocabStoreState>({ ready: false, books: []
 
 async function refresh(): Promise<void> {
   const keys = await recordsStore.allKeys()
-  const bookKeys = keys.filter((k) => k.startsWith('vocabbook:'))
-  const entryKeys = keys.filter((k) => k.startsWith('vocabentry:'))
+  const bookKeys = keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.vocabBook))
+  const entryKeys = keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.vocabEntry))
 
   const books = (await Promise.all(bookKeys.map((k) => recordsStore.get<VocabBook>(k)))).filter((b): b is VocabBook => !!b)
   const entries = (await Promise.all(entryKeys.map((k) => recordsStore.get<VocabEntry>(k)))).filter((e): e is VocabEntry => !!e)
@@ -161,11 +161,15 @@ export function hasText(text: string, bookId?: string): boolean {
 }
 
 /**
- * 导入材料后调用：扫描字幕单词与生词本词条匹配，累加出现次数。
- * @param words - 字幕中所有句子的单词扁平数组（建议已 toLowerCase）
+ * 导入/重导入材料字幕后调用：扫描字幕单词与生词本词条匹配，按材料记账更新出现次数。
+ * 幂等：同一材料重复应用（重导入 SRT / 重跑 AI 转写）先减去该材料的旧贡献再累加新值，
+ * 频次不会翻倍；词条在此材料中不再出现时回落。
+ * @param words      字幕中所有句子的单词扁平数组（建议已 toLowerCase）
+ * @param materialId 来源材料 id（记账粒度）
  */
-export async function updateFrequencies(words: string[]): Promise<void> {
+export async function updateFrequencies(words: string[], materialId: string): Promise<void> {
   await initVocab()
+  if (!materialId) return
 
   // 构建 word → 出现次数 Map
   const wordCount = new Map<string, number>()
@@ -174,14 +178,16 @@ export async function updateFrequencies(words: string[]): Promise<void> {
     wordCount.set(key, (wordCount.get(key) ?? 0) + 1)
   }
 
-  // 匹配生词本词条，累加 frequency
   const { entries } = vocabStore.get()
   const toUpdate: VocabEntry[] = []
   for (const entry of entries) {
-    const count = wordCount.get(entry.text.toLowerCase())
-    if (count && count > 0) {
-      toUpdate.push({ ...entry, frequency: entry.frequency + count })
-    }
+    const oldCount = entry.materialCounts?.[materialId] ?? 0
+    const newCount = wordCount.get(entry.text.toLowerCase()) ?? 0
+    if (oldCount === newCount) continue
+    const materialCounts = { ...(entry.materialCounts ?? {}) }
+    if (newCount > 0) materialCounts[materialId] = newCount
+    else delete materialCounts[materialId]
+    toUpdate.push({ ...entry, frequency: Math.max(0, entry.frequency - oldCount + newCount), materialCounts })
   }
 
   if (toUpdate.length === 0) return

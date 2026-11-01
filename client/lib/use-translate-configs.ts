@@ -34,7 +34,12 @@ export function useTranslateConfigs(enabled: boolean) {
       try {
         const res = await fetch('/api/settings/llm-configs')
         const data = await res.json()
-        if (cancelled) return
+        if (cancelled) {
+          // 成功响应被丢弃（打开即关/快速切换）：必须复位标记，
+          // 否则之后每次打开都命中 early return，configs 永久为空
+          loadedRef.current = false
+          return
+        }
         const list: TranslateConfig[] = (data.configs || [])
           .filter((c: { translateModel?: string }) => c.translateModel)
           .map((c: TranslateConfig) => ({ id: c.id, name: c.name, translateModel: c.translateModel }))

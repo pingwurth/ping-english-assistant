@@ -40,7 +40,6 @@ import { getServices } from '@/services'
 import { initVocab, vocabStore } from '@/stores/vocab-store'
 import { useStore } from '@/stores/store'
 import {
-  getMnemonicFromMemory,
   loadMnemonic,
   saveMnemonic,
   saveAssociation,
@@ -538,9 +537,13 @@ export function MnemonicPage() {
     try {
       const gen = services.mnemonic.generateCardStream(found.text, found.context, found.note)
       let lastCard: MnemonicCard | null = null
+      // 局部累积流出的字段：useCallback([]) 闭包里的 partialCard 永远是初值 {}，
+      // 无 done 事件（error/中断收场）时的兜底必须读这个局部副本
+      const partial: Partial<MnemonicCard> = {}
 
       for await (const event of gen) {
         if (event.event === 'field') {
+          partial[event.data.field] = event.data.value as never
           setPartialCard(prev => ({ ...prev, [event.data.field]: event.data.value }))
         } else if (event.event === 'done') {
           lastCard = event.data.card
@@ -555,9 +558,9 @@ export function MnemonicPage() {
         }
       }
 
-      // 如果流结束但没有 done 事件，用 partialCard 兜底
+      // 如果流结束但没有 done 事件，用已流出的字段兜底
       if (!lastCard) {
-        const fallback = partialCard as MnemonicCard
+        const fallback = partial as MnemonicCard
         if (fallback.core_meaning && fallback.phonetic_mnemonic) {
           setCard(fallback)
           await saveMnemonic({

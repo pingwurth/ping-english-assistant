@@ -110,7 +110,7 @@ function FileDropzone({
         <Icon className="h-8 w-8 transition-colors" style={{ color: dragging ? 'var(--primary)' : 'var(--muted-foreground)' }} />
         <span className="text-sm" style={{ color: 'var(--muted-foreground)' }}>点击选择或拖拽文件到此处</span>
         <span className="text-xs" style={{ color: 'var(--muted-foreground)', opacity: 0.7 }}>{hint}</span>
-        <Input ref={inputRef} type="file" accept={accept} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onChange(f) }} />
+        <Input ref={inputRef} type="file" accept={accept} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onChange(f) }} />
       </div>
       {selected}
     </div>
@@ -255,7 +255,7 @@ function ImportPage() {
       // 更新生词本出现频率：扫描字幕单词与词条匹配
       if (subtitle?.data?.sentences) {
         const allWords = subtitle.data.sentences.flatMap((s) => s.words)
-        await updateFrequencies(allWords)
+        await updateFrequencies(allWords, id)
       }
       if (fromTts && taskId) await consumeTtsExport(taskId)
       if (fromTranscribe && taskId) await consumeTranscribeExport(taskId)

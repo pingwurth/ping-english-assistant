@@ -13,7 +13,7 @@ import { SubtitleEditDialog } from '@/components/shared/subtitle-edit-dialog'
 import { TranslateDrawer } from '@/components/shared/translate-drawer'
 import { SentenceNoteDrawer } from '@/components/shared/sentence-note-drawer'
 import { getMaterialRecord, getMediaBlob, getProgress, putMaterialRecord, touchMaterial } from '@/stores/material-store'
-import { favoriteSentenceIndexes, setFavorite } from '@/stores/favorite-store'
+import { favoriteSentenceIndexes, setFavorite, shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
 import { deleteSentenceNote, listNotes, saveSentenceNote, shiftNotesAfterDeletion } from '@/stores/note-store'
 import { updateFrequencies } from '@/stores/vocab-store'
 import { recordsStore } from '@/platform/storage/idb'
@@ -22,6 +22,7 @@ import { HtmlPlayerController } from '@/platform/html-player'
 import { SentencePlayer } from '@/core/player/sentence-player'
 import { getDefaultLoop, getDefaultRate } from '@/lib/pref-keys'
 import { exportSrt, parseSubtitle } from '@/core/subtitle'
+import { downloadBlob } from '@/lib/download'
 import { copyText } from '@/lib/clipboard'
 import type { LearningProgress } from '@/types/progress'
 import type { SubtitleData, SubtitleMode, SubtitleSentence } from '@/types/subtitle'
@@ -380,7 +381,7 @@ function Player() {
     }
     await putMaterialRecord(updatedRecord)
     const allWords = data.sentences.flatMap((s) => s.words)
-    await updateFrequencies(allWords)
+    await updateFrequencies(allWords, materialId)
     setRecord(updatedRecord)
     setActive(0)
   }, [record, materialId])
@@ -413,16 +414,47 @@ function Player() {
     }
   }, [record, applySubtitleToRecord])
 
-  /** 删除句子：移除后重排 index 并持久化；笔记 key 跟随平移（被删句的笔记删除，其后句序号 -1） */
+  /** 删除句子：移除后重排 index 并持久化；笔记/收藏/播放进度 key 全部跟随平移（被删句自身删除，其后句序号 -1） */
   const handleDeleteSentence = useCallback(async (index: number) => {
     if (!record?.subtitleData) return
+    // ① 先把待落盘的笔记按「位移前」索引落盘：400ms 防抖定时器若不在删句前收口，
+    //    会在平移完成后带着旧索引把笔记写到错误的句子上（或在被删句槽位复活笔记）
+    for (const [i, p] of pendingNotesRef.current) {
+      clearTimeout(p.timer)
+      void saveSentenceNote(materialId, i, p.content)
+    }
+    pendingNotesRef.current.clear()
+
     const updated = record.subtitleData.sentences
       .filter((_, i) => i !== index)
       .map((s, i) => ({ ...s, index: i }))
     const data = { ...record.subtitleData, sentences: updated }
     const updatedRecord: MaterialRecord = { ...record, subtitleData: data }
     await putMaterialRecord(updatedRecord)
+    // ② 笔记与收藏的 key 平移（store 内会删除被删句自己的 key）
     await shiftNotesAfterDeletion(materialId, index)
+    await shiftFavoritesAfterDeletion(materialId, index)
+    setFavSet((prev) => {
+      const next = new Set<number>()
+      for (const i of prev) {
+        if (i === index) continue
+        next.add(i > index ? i - 1 : i)
+      }
+      return next
+    })
+    // ③ 已播进度平移（内存 + 已落盘的 progress 记录），否则统计虚高/指向错句
+    const prog = await getProgress(materialId)
+    if (prog) {
+      const shifted = prog.playedSentenceIndexes
+        .filter((i) => i !== index)
+        .map((i) => (i > index ? i - 1 : i))
+      await recordsStore.put(RECORD_KEYS.progress(materialId), { ...prog, playedSentenceIndexes: shifted })
+      playedRef.current.indexes = new Set(shifted)
+    } else {
+      playedRef.current.indexes = new Set(
+        [...playedRef.current.indexes].filter((i) => i !== index).map((i) => (i > index ? i - 1 : i)),
+      )
+    }
     setNoteMap((prev) => {
       const next: Record<number, string> = {}
       for (const [k, v] of Object.entries(prev)) {
@@ -464,13 +496,7 @@ function Player() {
   const handleExportSubtitle = useCallback(() => {
     if (!record?.subtitleData) return
     const srt = exportSrt(record.subtitleData.sentences)
-    const blob = new Blob([srt], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${record.material.name}.srt`
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(`${record.material.name}.srt`, new Blob([srt], { type: 'text/plain;charset=utf-8' }))
   }, [record])
 
   /** 翻译入口：整篇翻译抽屉（单句翻译在字幕编辑弹窗内） */

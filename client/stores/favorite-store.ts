@@ -6,10 +6,10 @@
  */
 
 import { recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS } from '@/platform/storage/schema'
+import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import type { Favorite } from '@/types/progress'
 
-const FAV_PREFIX = 'fav:'
+const FAV_PREFIX = RECORD_KEY_PREFIXES.favorite
 
 /**
  * 读取收藏记录。
@@ -39,4 +39,21 @@ export async function setFavorite(materialId: string, sentenceIndex: number, fav
 export async function favoriteSentenceIndexes(materialId: string): Promise<number[]> {
   const favorites = await listFavorites(materialId)
   return favorites.map((f) => f.sentenceIndex).sort((a, b) => a - b)
+}
+
+/**
+ * 删句后平移收藏：被删句的收藏移除，其后句序号 -1（与字幕重排后的 index 对齐）。
+ * 不平移的话收藏会静默指向错位的句子、被删句的收藏永久残留。
+ */
+export async function shiftFavoritesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
+  const favorites = await listFavorites(materialId)
+  const after = favorites.filter((f) => f.sentenceIndex > deletedIndex)
+  await Promise.all([
+    ...favorites
+      .filter((f) => f.sentenceIndex >= deletedIndex)
+      .map((f) => recordsStore.delete(RECORD_KEYS.favorite(materialId, f.sentenceIndex))),
+    ...after.map((f) =>
+      recordsStore.put(RECORD_KEYS.favorite(materialId, f.sentenceIndex - 1), { ...f, sentenceIndex: f.sentenceIndex - 1 }),
+    ),
+  ])
 }

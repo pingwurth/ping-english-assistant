@@ -25,14 +25,8 @@ export function segmentsToSrt(segments: AsrTranscribeSegment[]): string {
     .join('\n\n')
 }
 
-export function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
+/** 下载产物文件 —— 统一实现见 lib/download.ts（历史拷贝参数顺序相反，已对齐 (filename, blob)） */
+export { downloadBlob } from '@/lib/download'
 
 /* ── 类型 ── */
 
@@ -67,16 +61,6 @@ async function callLlmTranscribe(file: File, signal?: AbortSignal, configId?: st
   }
 
   return res.json()
-}
-
-async function checkLlmConfigured(): Promise<boolean> {
-  try {
-    const res = await fetch('/api/settings/llm')
-    const data = await res.json()
-    return data.configured === true
-  } catch {
-    return false
-  }
 }
 
 /* ── Local faster-whisper API 调用 ── */
@@ -136,7 +120,7 @@ export function useTranscribe() {
   const translateEnabledRef = useRef(false)
   const translateConfigIdRef = useRef('')
 
-  const loadAsrConfigs = useCallback(async () => {
+  const loadAsrConfigs = useCallback(async (): Promise<Array<{ id: string; name: string; asrModel: string }>> => {
     try {
       const res = await fetch('/api/settings/llm-configs')
       const data = await res.json()
@@ -152,10 +136,17 @@ export function useTranscribe() {
         const defaultTCfg = tConfigs.find((c: { id: string }) => c.id === data.defaultId) || tConfigs[0]
         setSelectedTranslateConfigId(defaultTCfg.id)
       }
-    } catch {}
+      return configs
+    } catch {
+      return []
+    }
   }, [])
 
-  useEffect(() => { void loadAsrConfigs() }, [loadAsrConfigs])
+  // 卸载时中止在途转写：路由离开后上传继续跑完只浪费 API 费用，结果无人消费
+  useEffect(() => {
+    void loadAsrConfigs()
+    return () => { abortRef.current?.abort() }
+  }, [loadAsrConfigs])
 
   // 用 useEffect 派生同步 ref：任何 state 变化（含配置加载时的默认值赋值）都自动同步，
   // 避免手工包装 setter 遗漏导致转写回调闭包读取过期值（如 translateConfigIdRef 恒为 ''）
@@ -248,7 +239,11 @@ export function useTranscribe() {
 
     // For 'model' method, check if ASR config exists
     if (method === 'model') {
-      if (asrConfigs.length === 0) {
+      // 闭包里的 asrConfigs 可能过期（配置对话框刚保存、刷新配置的 fetch 还在途）——
+      // 空时现查一次，避免"刚保存又弹出配置框、转写永不启动"
+      let configs = asrConfigs
+      if (configs.length === 0) configs = await loadAsrConfigs()
+      if (configs.length === 0) {
         setPendingFile(file)
         setShowModelConfig(true)
         return
@@ -288,7 +283,7 @@ export function useTranscribe() {
       setError(apiErr.message)
       setStatus('error')
     }
-  }, [method, executeTranscribe, asrConfigs, applyTranslation])
+  }, [method, executeTranscribe, asrConfigs, applyTranslation, loadAsrConfigs])
 
   const handleModelConfigSaved = useCallback(() => {
     setShowModelConfig(false)

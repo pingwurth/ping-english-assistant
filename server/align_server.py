@@ -15,9 +15,11 @@ Endpoints:
 """
 
 import argparse
+import asyncio
 import logging
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +33,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="WhisperX Alignment Server", version="1.0.0")
+
+# 同步推理线程池：whisperx.load_audio / load_align_model / align 全是密集同步调用
+# （首语言还可能触发分钟级模型下载），直接跑在 async 端点里会把事件循环整个冻住，
+# /health 与并发请求全部无响应（与 transcribe_server.py 的同款处理）
+_align_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="align")
 
 # ---------------------------------------------------------------------------
 # Global state — alignment models cached by language
@@ -128,6 +135,45 @@ async def list_models():
     }
 
 
+def _align_sync(tmp_path: str, text: str, language: str) -> tuple[list, list]:
+    """同步推理（跑在 _align_executor 线程里）：加载音频/模型 + 强制对齐。"""
+    import whisperx
+
+    # Load audio
+    audio_data = whisperx.load_audio(tmp_path)
+
+    # Build segments in WhisperX format from the input text
+    # WhisperX expects: list of dicts with "text", "start", "end" keys
+    # We provide the full text as one segment spanning the entire audio
+    audio_duration = len(audio_data) / 16000  # whisperx loads at 16kHz
+    raw_segments = [{"text": text, "start": 0.0, "end": audio_duration}]
+
+    # Load alignment model
+    model, metadata = _get_align_model(language)
+
+    # Run forced alignment
+    result = whisperx.align(
+        raw_segments,
+        model,
+        metadata,
+        audio_data,
+        _device,
+        return_char_alignments=False,
+    )
+
+    aligned_segments = result.get("segments", [])
+    words = [
+        {
+            "word": w.get("word", ""),
+            "start": w.get("start", 0),
+            "end": w.get("end", 0),
+        }
+        for seg in aligned_segments
+        for w in seg.get("words", [])
+    ]
+    return words, aligned_segments
+
+
 @app.post("/align")
 async def align(
     audio: UploadFile = File(..., description="Audio file (wav, mp3, m4a, etc.)"),
@@ -156,40 +202,11 @@ async def align(
         tmp_path = tmp.name
 
     try:
-        import whisperx
-
-        # Load audio
-        audio_data = whisperx.load_audio(tmp_path)
-
-        # Build segments in WhisperX format from the input text
-        # WhisperX expects: list of dicts with "text", "start", "end" keys
-        # We provide the full text as one segment spanning the entire audio
-        audio_duration = len(audio_data) / 16000  # whisperx loads at 16kHz
-        raw_segments = [{"text": text.strip(), "start": 0.0, "end": audio_duration}]
-
-        # Load alignment model
-        model, metadata = _get_align_model(language)
-
-        # Run forced alignment
-        result = whisperx.align(
-            raw_segments,
-            model,
-            metadata,
-            audio_data,
-            _device,
-            return_char_alignments=False,
+        # 推理放线程池：不让同步模型加载/对齐冻住事件循环（期间 /health 仍可响应）
+        loop = asyncio.get_running_loop()
+        words, aligned_segments = await loop.run_in_executor(
+            _align_executor, _align_sync, tmp_path, text.strip(), language
         )
-
-        aligned_segments = result.get("segments", [])
-        words = []
-        for seg in aligned_segments:
-            for w in seg.get("words", []):
-                word_entry = {
-                    "word": w.get("word", ""),
-                    "start": w.get("start", 0),
-                    "end": w.get("end", 0),
-                }
-                words.append(word_entry)
 
         elapsed = time.time() - start_time
         logger.info("Alignment done: %d words in %.2fs", len(words), elapsed)
@@ -200,6 +217,8 @@ async def align(
             "elapsed_seconds": round(elapsed, 2),
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Alignment failed")
         raise HTTPException(status_code=500, detail=str(e))
