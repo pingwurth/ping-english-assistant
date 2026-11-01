@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById, readLocalServices } from '@/lib/server-settings'
+import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import { transcribe, getAsrProviderType, LlmError } from '@/lib/llm'
 import type { AsrModelConfig, AsrSegment } from '@/lib/llm'
 import {
@@ -179,6 +180,9 @@ function probeWavDurationMs(buf: ArrayBuffer): number | null {
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
+  // formData() 会把整个 multipart 缓冲进内存：按声明体积提前拒绝（c055）
+  const oversized = rejectOversizedUpload(request, MAX_TRANSCRIBE_UPLOAD_BYTES)
+  if (oversized) return oversized
   try {
     const formData = await request.formData()
     const audioFile = formData.get('audio') as File | null

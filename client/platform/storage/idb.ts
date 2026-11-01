@@ -68,11 +68,20 @@ function tx<T>(store: StoreName, mode: IDBTransactionMode, fn: (os: IDBObjectSto
   return openDb().then(db => new Promise<T>((resolve, reject) => {
     if (!db) return reject(new Error('memory'))
     try {
-      const req = fn(db.transaction(store, mode).objectStore(store))
-      req.onsuccess = () => resolve(req.result as T)
-      req.onerror = () => {
-        console.error(`[IDB] transaction error on "${store}" (${mode}):`, req.error)
-        reject(req.error ?? new Error('idb'))
+      const t = db.transaction(store, mode)
+      let result: T | undefined
+      let reqError: unknown
+      const req = fn(t.objectStore(store))
+      // 结果取自 IDBRequest，但 promise 的成败以「事务生命周期」为准：
+      // request 成功 ≠ 落盘 —— Firefox/Safari 配额紧张时事务可能在 commit 阶段 abort，
+      // 只挂 request 会把未持久化的 put 当成功（假成功 = 静默丢数据）。
+      req.onsuccess = () => { result = req.result as T }
+      // request 级错误不立即 reject：错误事件未取消时事务随后 abort，统一由 onabort 收口
+      req.onerror = () => { reqError = req.error ?? new Error('idb') }
+      t.oncomplete = () => resolve(result as T)
+      t.onabort = () => {
+        console.error(`[IDB] transaction aborted on "${store}" (${mode}):`, t.error ?? reqError)
+        reject(t.error ?? reqError ?? new Error('idb transaction aborted'))
       }
     } catch (e) {
       console.error(`[IDB] transaction threw on "${store}" (${mode}):`, e)
@@ -134,19 +143,21 @@ function makeStore(store: StoreName): KvStore {
                 new Promise<Array<[string, unknown]>>((resolve, reject) => {
                   if (!db) return resolve([])
                   try {
-                    // 同一 readonly 事务发 getAllKeys + getAll：快照一致，且均按主键序返回，可直接 zip
-                    const os = db.transaction(store, 'readonly').objectStore(store)
+                    // 同一 readonly 事务发 getAllKeys + getAll：快照一致，且均按主键序返回，可直接 zip。
+                    // 成败同样以事务生命周期收口（见 tx() 注释）
+                    const t = db.transaction(store, 'readonly')
+                    const os = t.objectStore(store)
                     const keysReq = os.getAllKeys()
                     const valuesReq = os.getAll()
-                    keysReq.onsuccess = () => {
-                      valuesReq.onsuccess = () => {
-                        const keys = keysReq.result
-                        const values = valuesReq.result
-                        resolve(keys.map((k, i) => [String(k), values[i]] as [string, unknown]))
-                      }
-                    }
-                    keysReq.onerror = () => reject(keysReq.error ?? new Error('idb'))
-                    valuesReq.onerror = () => reject(valuesReq.error ?? new Error('idb'))
+                    let keys: IDBValidKey[] = []
+                    let values: unknown[] = []
+                    let reqError: unknown
+                    keysReq.onsuccess = () => { keys = keysReq.result }
+                    valuesReq.onsuccess = () => { values = valuesReq.result }
+                    keysReq.onerror = () => { reqError = keysReq.error ?? new Error('idb') }
+                    valuesReq.onerror = () => { reqError = valuesReq.error ?? new Error('idb') }
+                    t.oncomplete = () => resolve(keys.map((k, i) => [String(k), values[i]] as [string, unknown]))
+                    t.onabort = () => reject(t.error ?? reqError ?? new Error('idb transaction aborted'))
                   } catch (e) {
                     reject(e)
                   }

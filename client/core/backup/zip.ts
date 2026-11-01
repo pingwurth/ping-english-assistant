@@ -308,14 +308,16 @@ export async function indexZip(reader: RangeReader): Promise<ZipIndex> {
   return { entries, byName }
 }
 
-/** 读出一个条目的完整数据（STORE 原样 / deflate 解压 + CRC 校验） */
+/** 读出一个条目的完整数据（STORE 原样 / deflate 解压；两种方式都做 CRC 校验） */
 export async function readEntry(reader: RangeReader, e: ZipEntryInfo): Promise<Uint8Array> {
   if (e.method !== 0 && e.method !== 8) {
     throw new Error(`备份 zip 中 ${e.name} 使用了不支持的压缩方式`)
   }
   const raw = await readChecked(reader, e.dataOffset, e.dataOffset + e.compressedSize)
   if (e.method === 0) {
+    // STORE 同样校验 CRC：长度恰好不变而内容错位（坏块/截断的云盘同步）只有 CRC 能发现
     if (raw.length !== e.uncompressedSize) throw new Error(`备份 zip 已损坏（${e.name} 大小不符）`)
+    if (crc32(raw) !== e.crc32) throw new Error(`备份 zip 已损坏（${e.name} 校验失败）`)
     return raw
   }
   let out: Uint8Array

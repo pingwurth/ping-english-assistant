@@ -11,7 +11,7 @@
  */
 
 import { BACKUP_APP_ID, BACKUP_FORMAT_VERSION, parseBackupJson, planImport, type ImportStrategy, type MediaManifestEntry, type ParsedBackup } from '@/core/backup/backup-format'
-import { createZipWriter, indexZip, readEntry, type RangeReader, type ZipIndex } from '@/core/backup/zip'
+import { createZipWriter, crc32, indexZip, readEntry, type RangeReader, type ZipEntryInfo, type ZipIndex } from '@/core/backup/zip'
 import { blobsStore, estimateUsage, materialsStore, recordsStore } from '@/platform/storage/idb'
 import { exportAllPrefs, hasPref, setPref } from '@/platform/storage/prefs'
 import type { MaterialRecord } from '@/platform/storage/schema'
@@ -194,6 +194,25 @@ function readerFromBlob(file: Blob): RangeReader {
   return { size: file.size, read: async (start, end) => new Uint8Array(await file.slice(start, end).arrayBuffer()) }
 }
 
+/**
+ * STORE 条目流式 CRC 校验：零拷贝 slice 只保证长度，内容完整性必须另读一遍算 CRC
+ * （分块流过，内存有界；损坏媒体静默入库只会在播放时才暴露，且无法区分来源）。
+ */
+async function verifyStoreEntryCrc(file: Blob, info: ZipEntryInfo, name: string): Promise<void> {
+  const reader = file.slice(info.dataOffset, info.dataOffset + info.uncompressedSize).stream().getReader()
+  let crc = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) crc = crc32(value, crc)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  if (crc !== info.crc32) throw new Error(`备份 zip 已损坏（${name} 校验失败）`)
+}
+
 /** 打开完整备份 zip：索引 + 解析 backup.json + 媒体预检（预览与正式导入共用） */
 async function openBackupZip(file: Blob): Promise<{ reader: RangeReader; index: ZipIndex; parsed: ParsedBackup; mediaBytes: number; mediaMissing: number }> {
   const reader = readerFromBlob(file)
@@ -230,6 +249,13 @@ export async function importZipBackup(file: Blob, strategy: ImportStrategy): Pro
   const { usage, quota } = await estimateUsage()
   if (quota > 0 && usage + plannedBytes * 1.2 > quota) {
     throw new Error(`存储空间不足：需写入约 ${Math.round(plannedBytes / 1048576)} MB 媒体，请先清理空间或改用轻量备份导入`)
+  }
+
+  // 完整性预检：待写入的 STORE 媒体条目先流式校验 CRC（deflate 条目 readEntry 内已校验）。
+  // 必须在任何写入之前 —— 否则材料已落库、媒体写一半才报损坏，留下半导入状态。
+  for (const e of mediaPlan.toWrite) {
+    const info = index.byName.get(`media/${e.key}`)
+    if (info?.method === 0) await verifyStoreEntryCrc(file, info, `media/${e.key}`)
   }
 
   // 先写材料/记录/设置，再写媒体（媒体永不落单）

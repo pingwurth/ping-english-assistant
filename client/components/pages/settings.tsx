@@ -57,14 +57,25 @@ function LearningStatsSection() {
 
   const refreshStats = useCallback(async () => {
     try {
-      const keys = await recordsStore.allKeys()
-      const trainKeys = keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.training))
-      const loaded = await Promise.all(trainKeys.map((k) => recordsStore.get<TrainingRecord>(k)))
-      const scores = loaded.filter((r): r is TrainingRecord => !!r && typeof r.score === 'number')
+      // 单事务快照读取（原先 allKeys 全扫 + 每条 train: 记录独立读事务的 N+1）
+      const entries = await recordsStore.getAllEntries()
+      let trainCount = 0
+      let favCount = 0
+      let scoreSum = 0
+      let scoreCount = 0
+      for (const [k, v] of entries) {
+        if (k.startsWith(RECORD_KEY_PREFIXES.training)) {
+          trainCount++
+          const score = (v as TrainingRecord | null)?.score
+          if (typeof score === 'number') { scoreSum += score; scoreCount++ }
+        } else if (k.startsWith(RECORD_KEY_PREFIXES.favorite)) {
+          favCount++
+        }
+      }
       setStats({
-        trainCount: trainKeys.length,
-        avgScore: scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r.score, 0) / scores.length) : 0,
-        favCount: keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.favorite)).length,
+        trainCount,
+        avgScore: scoreCount > 0 ? Math.round(scoreSum / scoreCount) : 0,
+        favCount,
       })
     } catch { /* 统计失败不影响设置页 */ }
   }, [])

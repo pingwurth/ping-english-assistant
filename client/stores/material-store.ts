@@ -169,13 +169,20 @@ export async function removeMaterial(id: string): Promise<void> {
   await initMaterials()
   await materialsStore.delete(id)
   await blobsStore.delete(id)
-  const keys = await recordsStore.allKeys()
-  await Promise.all(keys.map(async (k) => {
-    // progress: 键精确匹配（前缀匹配会误删 id 互为前缀的其他材料，如 m-1 与 m-10）
-    if (k === RECORD_KEYS.progress(id) || k.startsWith(`${RECORD_KEY_PREFIXES.favorite}${id}:`) || k.startsWith(`${RECORD_KEY_PREFIXES.note}${id}:`)) return recordsStore.delete(k)
-    if (k.startsWith(RECORD_KEY_PREFIXES.training)) {
-      const rec = await recordsStore.get<TrainingRecord>(k)
-      if (rec?.materialId === id) return recordsStore.delete(k)
+  // 单事务快照后按规则清理（原先 allKeys 全扫 + 每条 train: 记录再开一个读事务的 N+1）
+  const entries = await recordsStore.getAllEntries()
+  await Promise.all(entries.map(([k, v]) => {
+    // progress: 键精确匹配、fav:/note: 带完整 id+':' 前缀（防 m-1 误删 m-10 的记录）；
+    // train: 记录键不含 materialId，按值里的 materialId 精确匹配
+    if (
+      k === RECORD_KEYS.progress(id) ||
+      k.startsWith(`${RECORD_KEY_PREFIXES.favorite}${id}:`) ||
+      k.startsWith(`${RECORD_KEY_PREFIXES.note}${id}:`)
+    ) {
+      return recordsStore.delete(k)
+    }
+    if (k.startsWith(RECORD_KEY_PREFIXES.training) && (v as TrainingRecord | null)?.materialId === id) {
+      return recordsStore.delete(k)
     }
   }))
   dropRecord(id)

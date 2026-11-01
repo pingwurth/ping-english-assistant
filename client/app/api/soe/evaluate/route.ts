@@ -5,6 +5,7 @@
  */
 import { NextResponse } from 'next/server'
 import { readSoeConfig, type SoeSettingsConfig } from '@/lib/server-settings'
+import { MAX_SOE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import { SOE_EVALUATE_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 
 /** 取所选 provider 的密钥（剥离空串）；未配置 → null（省略 creds 字段，代理回落 env） */
@@ -16,6 +17,10 @@ function buildCreds(cfg: SoeSettingsConfig): Record<string, Record<string, strin
 }
 
 export async function POST(req: Request) {
+  // formData() 会把整个 multipart 缓冲进内存：按声明体积提前拒绝（c055）
+  const oversized = rejectOversizedUpload(req, MAX_SOE_UPLOAD_BYTES)
+  if (oversized) return oversized
+
   const cfg = await readSoeConfig()
   if (!cfg || cfg.provider === 'mock') {
     return NextResponse.json({ code: 'BAD_REQUEST', message: '演示模式无需代理评分' }, { status: 400 })

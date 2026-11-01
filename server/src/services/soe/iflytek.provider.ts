@@ -93,7 +93,9 @@ export function createIflytekSoeProvider(env: Env): SoeProvider {
 
     return await new Promise<SoeEvaluateResponse>((resolve, reject) => {
       let settled = false
-      let xml = '' // base64 结果 XML 分片累积
+      // 结果 XML 以 base64 分片下发：必须先累积完整 base64 再一次性解码 ——
+      // 逐片解码时多字节 UTF-8 字符（中文评语）被分片边界切开会产生替换符咬坏 XML
+      let xmlB64 = ''
       let sock: WebSocket
 
       const onAbort = (): void => {
@@ -165,9 +167,10 @@ export function createIflytekSoeProvider(env: Env): SoeProvider {
           fail(apiError(ERR.SOE_UPSTREAM_ERROR, `讯飞 ISE 错误 ${msg.code}: ${msg.message ?? ''}${hint}`, { code: msg.code }))
           return
         }
-        // 结果 XML 以 base64 分片下发，逐片解码累积
-        if (msg.data?.result) xml += Buffer.from(msg.data.result, 'base64').toString('utf8')
+        // 结果 XML 的 base64 分片累积（status=2 收全后统一解码）
+        if (msg.data?.result) xmlB64 += msg.data.result
         if (msg.data?.status === 2) {
+          const xml = Buffer.from(xmlB64, 'base64').toString('utf8')
           const parsed = parseIflytekResultXml(xml)
           if (parsed.isRejected) {
             fail(apiError(ERR.SOE_NO_SPEECH, '未能识别出有效跟读内容，请重新朗读'))

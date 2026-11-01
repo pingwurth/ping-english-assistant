@@ -50,18 +50,25 @@ function TrainingCenter() {
       if (cancelled) return
       setRecord(rec ?? null)
       if (!rec) return
-      // 上次成绩：train: 记录中该材料各模式最新一条（createdAt 最大）
-      const keys = await recordsStore.allKeys()
-      const trainKeys = keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.training))
-      const entries = (await Promise.all(trainKeys.map((k) => recordsStore.get<TrainingRecord>(k)))).filter((r): r is TrainingRecord => !!r && r.materialId === materialId)
+      // 上次成绩：train: 记录中该材料各模式最新一条（createdAt 最大）；
+      // 收藏句数量：fav:{materialId}: 前缀。
+      // 两者共用一次 getAllEntries 快照 —— 原先 allKeys 全扫 + 每键独立读事务的 N+1，
+      // 重度用户数千条记录时进本页要秒级卡顿
+      const entries = await recordsStore.getAllEntries()
       const latest: Partial<Record<TrainingMode, TrainingRecord>> = {}
-      for (const e of entries) {
-        const prev = latest[e.mode]
-        if (!prev || e.createdAt > prev.createdAt) latest[e.mode] = e
+      let favCount = 0
+      const favPrefix = `${RECORD_KEY_PREFIXES.favorite}${materialId}:`
+      for (const [k, v] of entries) {
+        if (k.startsWith(favPrefix)) favCount++
+        else if (k.startsWith(RECORD_KEY_PREFIXES.training)) {
+          const r = v as TrainingRecord | undefined
+          if (r && r.materialId === materialId) {
+            const prev = latest[r.mode]
+            if (!prev || r.createdAt > prev.createdAt) latest[r.mode] = r
+          }
+        }
       }
-      // 收藏句数量：fav:{materialId}: 前缀
-      const prefix = `fav:${materialId}:`
-      if (!cancelled) { setLastByMode(latest); setFavCount(keys.filter((k) => k.startsWith(prefix)).length) }
+      if (!cancelled) { setLastByMode(latest); setFavCount(favCount) }
     })().catch(() => { if (!cancelled) setRecord(null) })
     return () => { cancelled = true }
   }, [materialId])

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { readLlmSettings, readLocalServices } from '@/lib/server-settings'
+import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import {
   DEFAULT_WHISPER_TRANSCRIBE_URL,
   WHISPER_TRANSCRIBE_ENDPOINT,
@@ -33,6 +34,9 @@ async function getTranscribeUrl(): Promise<string> {
 }
 
 export async function POST(request: Request) {
+  // formData() 会把整个 multipart 缓冲进内存：按声明体积提前拒绝（c055）
+  const oversized = rejectOversizedUpload(request, MAX_TRANSCRIBE_UPLOAD_BYTES)
+  if (oversized) return oversized
   try {
     const formData = await request.formData()
     const audioFile = formData.get('audio') as File | null

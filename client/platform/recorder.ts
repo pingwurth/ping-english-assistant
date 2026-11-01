@@ -82,7 +82,7 @@ const AUDIO_CTX_CTOR: typeof AudioContext | undefined =
     ? window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     : undefined
 
-type RecorderState = 'idle' | 'recording' | 'paused' | 'stopped'
+type RecorderState = 'idle' | 'starting' | 'recording' | 'paused' | 'stopped'
 
 /** §2.3 RecorderController 的 H5/Web 实现 */
 export class WebRecorder {
@@ -107,7 +107,10 @@ export class WebRecorder {
 
   /** §2.3 start(options?)：申请麦克风权限并开始录音 */
   async start(options?: Partial<RecordOptions>): Promise<void> {
-    if (this.state === 'recording' || this.state === 'paused') {
+    // 'starting' 必须在 await 之前落位：权限弹窗期间（getUserMedia 未决）二次 start()
+    // 会穿过只查 'recording'/'paused' 的守卫，建出双份 MediaStream/AudioContext，
+    // 后者覆盖前者引用 → 活 track 与 AudioContext 泄漏到页面刷新。
+    if (this.state === 'starting' || this.state === 'recording' || this.state === 'paused') {
       throw new RecorderError('录音已在进行中，请先 stop/cancel')
     }
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
@@ -117,10 +120,12 @@ export class WebRecorder {
     this.cleanupTimers()
     this.chunks = []
     this.elapsedMs = 0
+    this.state = 'starting'
 
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } })
     } catch (err) {
+      this.state = 'idle'
       const e = err as { name?: string }
       const denied =
         e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError' || e?.name === 'SecurityError'
@@ -151,6 +156,7 @@ export class WebRecorder {
       this.maxTimer = window.setTimeout(() => void this.autoStop(), this.options.maxDurationMs)
     } catch (err) {
       this.teardownMedia()
+      this.state = 'idle'
       const failure = new RecorderError('录音初始化失败', err)
       this.emit('error', failure)
       throw failure

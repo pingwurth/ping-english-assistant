@@ -173,6 +173,8 @@ export async function readLlmConfigs(): Promise<LlmConfigsResult> {
     if (configs.length === 0 && raw.llm) {
       const legacy = raw.llm as Record<string, unknown>
       if (legacy.baseUrl && legacy.apiKey) {
+        // 字段清单必须与 LlmSettings 全集一致：漏掉的键会在后续 setDefaultLlmConfig
+        // 回写 legacy 影子副本时被静默抹掉（曾漏 mnemonic*/whisper* 两对）
         const migrated: LlmConfig = {
           id: generateConfigId(),
           name: String(legacy.provider || '默认配置'),
@@ -185,6 +187,10 @@ export async function readLlmConfigs(): Promise<LlmConfigsResult> {
           ttsEndpoint: legacy.ttsEndpoint as string | undefined,
           translateModel: legacy.translateModel as string | undefined,
           translateEndpoint: legacy.translateEndpoint as string | undefined,
+          mnemonicModel: legacy.mnemonicModel as string | undefined,
+          mnemonicEndpoint: legacy.mnemonicEndpoint as string | undefined,
+          whisperAlignUrl: legacy.whisperAlignUrl as string | undefined,
+          whisperTranscribeUrl: legacy.whisperTranscribeUrl as string | undefined,
         }
         raw.llmConfigs = [migrated]
         raw.defaultLlmConfigId = migrated.id
