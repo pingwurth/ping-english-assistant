@@ -77,12 +77,6 @@ def _load_model_sync():
     return _model
 
 
-async def _load_model():
-    """Load model in thread pool to avoid blocking the event loop."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_executor, _load_model_sync)
-
-
 def _transcribe_sync(audio_path: str, language: str):
     """Run transcription (blocking, runs in thread pool)."""
     model = _load_model_sync()

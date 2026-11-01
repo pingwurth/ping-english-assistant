@@ -158,6 +158,8 @@ export class HtmlPlayerController implements PlayerController {
     this.listeners = []
     try {
       this.el.pause()
+      // 卸载 src + load()：中断仍在进行的媒体流下载（页面传入元素同样需要——
+      // 换材料时旧 ObjectURL 已 revoke，不卸载 src 会让旧 blob 拉取悬挂）
       this.el.removeAttribute('src')
       this.el.load()
     } catch { /* ignore */ }

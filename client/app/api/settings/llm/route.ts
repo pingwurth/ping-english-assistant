@@ -1,5 +1,13 @@
 import { NextResponse } from 'next/server'
 import { readLlmSettings, writeLlmSettings, maskSecret, type LlmSettings } from '@/lib/server-settings'
+import { isSameOriginRequest, forbiddenOriginResponse } from '@/lib/api-guard'
+
+/** settings.json 落盘含明文密钥，读写一律仅允许本机同源上下文（防 CSRF / DNS rebinding） */
+function guard(request: Request): Response | null {
+  return isSameOriginRequest(request.headers.get('origin'), request.headers.get('host'), request.url)
+    ? null
+    : forbiddenOriginResponse()
+}
 
 /** 根据 provider 返回对应的云端 TTS 音色列表 */
 function getTtsVoices(settings: LlmSettings) {
@@ -20,7 +28,9 @@ function getTtsVoices(settings: LlmSettings) {
   ]
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = guard(request)
+  if (denied) return denied
   try {
     const settings = await readLlmSettings()
     if (!settings) {
@@ -50,6 +60,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const denied = guard(request)
+  if (denied) return denied
   try {
     const body = await request.json()
     const {

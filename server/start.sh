@@ -153,9 +153,30 @@ fi
 fi  # NEED_NODE
 
 # ── 6. 启动服务 ────────────────────────────────────────────────────
+# 转写服务专属参数在 align_server.py 的 argparse 中不存在：不过滤会让对齐进程
+# 报 "unrecognized arguments" 后台静默退出，前端只能等到超时才发现对齐不可用。
+strip_transcribe_only_args() {
+    local -n _out=$1
+    local a swallow=0
+    # ${arr[@]+"${arr[@]}"}：bash < 4.4 下空数组展开会触发 set -u 未绑定错误
+    for a in ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; do
+        # 上一条是「带值选项」时吞掉其值（如 --model-size small 的 small）
+        if (( swallow > 0 )); then swallow=$((swallow - 1)); continue; fi
+        case "$a" in
+            --model-size) swallow=1 ;;        # 带值选项：连同值一起剔除
+            --model-size=*) ;;                # 等号形式：单 token 直接剔除
+            --preload) ;;                     # 布尔开关：只剔除自身
+            *) _out+=("$a") ;;
+        esac
+    done
+}
+
+ALIGN_ARGS=()
+strip_transcribe_only_args ALIGN_ARGS
+
 start_align() {
     echo "[start] 启动 align_server.py（端口 8765）..."
-    exec python3 align_server.py "${EXTRA_ARGS[@]}"
+    exec python3 align_server.py ${ALIGN_ARGS[@]+"${ALIGN_ARGS[@]}"}
 }
 
 start_transcribe() {
@@ -167,9 +188,15 @@ start_both() {
     echo "[start] 同时启动对齐 + 转写服务..."
     echo "[start]   align_server.py      → 端口 8765（后台）"
     echo "[start]   transcribe_server.py → 端口 8766（前台）"
-    python3 align_server.py "${EXTRA_ARGS[@]}" &
-    # 等待对齐服务绑定端口
+    python3 align_server.py ${ALIGN_ARGS[@]+"${ALIGN_ARGS[@]}"} &
+    ALIGN_PID=$!
+    # 等待对齐服务绑定端口；后台进程秒退（参数/环境问题）必须立即报错，
+    # 否则只剩转写服务在跑，前端要到超时才发现对齐静默不存在
     sleep 1
+    if ! kill -0 "$ALIGN_PID" 2>/dev/null; then
+        echo "错误：对齐服务启动失败（已退出）。请检查上方 align_server.py 的输出。"
+        exit 1
+    fi
     exec python3 transcribe_server.py "${EXTRA_ARGS[@]}"
 }
 
@@ -183,10 +210,18 @@ start_all() {
     echo "[start]   align_server.py      → 端口 8765（后台）"
     echo "[start]   transcribe_server.py → 端口 8766（后台）"
     echo "[start]   SOE 评分代理         → 端口 8788（前台）"
-    python3 align_server.py "${EXTRA_ARGS[@]}" &
-    sleep 1
+    python3 align_server.py ${ALIGN_ARGS[@]+"${ALIGN_ARGS[@]}"} &
+    ALIGN_PID=$!
     python3 transcribe_server.py "${EXTRA_ARGS[@]}" &
+    TRANSCRIBE_PID=$!
     sleep 1
+    # 后台进程秒退必须立即报错（同 start_both 的探活理由）
+    for pid in "$ALIGN_PID" "$TRANSCRIBE_PID"; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "错误：某个后台服务启动失败（已退出）。请检查上方 Python 服务输出。"
+            exit 1
+        fi
+    done
     exec pnpm start
 }
 

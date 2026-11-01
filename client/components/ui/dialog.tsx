@@ -14,22 +14,51 @@ interface DialogProps {
  */
 const OUTSIDE_CLICK_GRACE_MS = 300
 
+/**
+ * 嵌套 Dialog 治理（模块级打开栈）：
+ *  - 滚动锁只在最外层 Dialog 关闭时恢复 —— 内层卸载若直接清空 overflow，
+ *    外层还开着页面就恢复滚动了；
+ *  - Escape 只交给栈顶（最后打开者）处理 —— 各实例独立监听时一次 Esc 会同关
+ *    多层，丢掉正在内层填写的表单。
+ * 每个打开的实例占一个槽位（token），关闭/卸载时按槽位移除，重渲染不乱序。
+ */
+const dialogStack: Array<() => void> = []
+let escapeListenerOn = false
+function syncEscapeListener() {
+  if (dialogStack.length > 0 && !escapeListenerOn) {
+    document.addEventListener('keydown', onGlobalEscape)
+    escapeListenerOn = true
+  } else if (dialogStack.length === 0 && escapeListenerOn) {
+    document.removeEventListener('keydown', onGlobalEscape)
+    escapeListenerOn = false
+  }
+}
+function onGlobalEscape(e: KeyboardEvent) {
+  if (e.key === 'Escape') dialogStack[dialogStack.length - 1]?.()
+}
+
 function Dialog({ open, onOpenChange, children }: DialogProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
   const openedAtRef = useRef(0)
+  /** 本实例在栈中的槽位（-1 = 未压栈）；重渲染用同一槽位刷新回调 */
+  const slotRef = useRef(-1)
 
   useEffect(() => {
     if (!open) return
     openedAtRef.current = Date.now()
-    if (!open) return
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onOpenChange(false)
-    }
-    document.addEventListener('keydown', handleEscape)
-    document.body.style.overflow = 'hidden'
+    // 压栈/刷新：onOpenChange 可能是每次渲染新建的内联函数，槽位内容跟随最新值
+    const close = () => onOpenChange(false)
+    if (slotRef.current >= 0 && slotRef.current < dialogStack.length) dialogStack[slotRef.current] = close
+    else { dialogStack.push(close); slotRef.current = dialogStack.length - 1 }
+    // 滚动锁只在首个 Dialog 打开时上锁
+    if (dialogStack.length === 1) document.body.style.overflow = 'hidden'
+    syncEscapeListener()
     return () => {
-      document.removeEventListener('keydown', handleEscape)
-      document.body.style.overflow = ''
+      if (slotRef.current >= 0) dialogStack.splice(slotRef.current, 1)
+      slotRef.current = -1
+      // 栈空（最后一个 Dialog 关闭/卸载）才恢复页面滚动
+      if (dialogStack.length === 0) document.body.style.overflow = ''
+      syncEscapeListener()
     }
   }, [open, onOpenChange])
 
@@ -39,6 +68,8 @@ function Dialog({ open, onOpenChange, children }: DialogProps) {
     <div
       ref={overlayRef}
       data-dialog
+      role="dialog"
+      aria-modal="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={(e) => {
         if (Date.now() - openedAtRef.current < OUTSIDE_CLICK_GRACE_MS) return

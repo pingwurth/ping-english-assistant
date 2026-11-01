@@ -41,13 +41,12 @@ async function alignWithWhisperX(
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 120_000)
 
+    // fetch 抛错（连接失败等）时也要清掉定时器：否则悬挂 120s 且误 abort 已复用的 signal
     const response = await fetch(buildServiceUrl(alignUrl, WHISPER_ALIGN_ENDPOINT), {
       method: 'POST',
       body: formData,
       signal: controller.signal,
-    })
-
-    clearTimeout(timeout)
+    }).finally(() => clearTimeout(timeout))
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '')

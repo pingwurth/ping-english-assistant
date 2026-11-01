@@ -8,6 +8,7 @@ import {
   parseLrc,
   parseSrtTimestamp,
   parseLrcTimestamp,
+  formatSrtTimestamp,
   isCJK,
   splitBilingual,
   splitWords,
@@ -30,6 +31,13 @@ describe('timestamp 解析', () => {
     expect(parseLrcTimestamp('[01:05:99]')).toBe(65990) // 1-3 位分钟段允许
     expect(parseLrcTimestamp('[00:12]')).toBe(12000)
     expect(parseLrcTimestamp('[ti:title]')).toBeNull()
+  })
+
+  it('formatSrtTimestamp：正常值格式化 + 负数/NaN/Infinity 一律钳 0（杜绝 NaN 时间戳污染导出文件）', () => {
+    expect(formatSrtTimestamp(2610)).toBe('00:00:02,610')
+    expect(formatSrtTimestamp(-5)).toBe('00:00:00,000')
+    expect(formatSrtTimestamp(Number.NaN)).toBe('00:00:00,000')
+    expect(formatSrtTimestamp(Number.POSITIVE_INFINITY)).toBe('00:00:00,000')
   })
 })
 

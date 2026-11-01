@@ -108,7 +108,8 @@ async function translateSingleChunk(
   signal?: AbortSignal,
 ): Promise<string[]> {
   console.log(`[Translate] 发送翻译请求: ${texts.length} 条文本, 目标语言: ${targetLang}`)
-  console.log(`[Translate] 请求参数:`, JSON.stringify(texts, null, 2))
+  // 只记摘要不记全文：用户材料可能含隐私内容，且整段 JSON 全量落日志噪声极大
+  console.log(`[Translate] 首条预览: ${texts[0]?.slice(0, 100) ?? '(空)'}...`)
 
   const basePrompt =
     `你是专业翻译。用户消息是一个 JSON 字符串数组，包含 ${texts.length} 条文本。\n` +

@@ -1,7 +1,16 @@
 import { NextResponse } from 'next/server'
 import { readKokoroSettings, writeKokoroSettings } from '@/lib/server-settings'
+import { isSameOriginRequest, forbiddenOriginResponse } from '@/lib/api-guard'
 
-export async function GET() {
+function guard(request: Request): Response | null {
+  return isSameOriginRequest(request.headers.get('origin'), request.headers.get('host'), request.url)
+    ? null
+    : forbiddenOriginResponse()
+}
+
+export async function GET(request: Request) {
+  const denied = guard(request)
+  if (denied) return denied
   try {
     const settings = await readKokoroSettings()
     return NextResponse.json(settings)
@@ -11,6 +20,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const denied = guard(request)
+  if (denied) return denied
   try {
     const body = await request.json()
     const { modelId, modelPath } = body

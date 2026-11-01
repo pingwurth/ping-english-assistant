@@ -6,6 +6,14 @@
 import { NextResponse } from 'next/server'
 import { readSoeConfig, writeSoeConfig, maskSecret, type SoeSettingsConfig } from '@/lib/server-settings'
 import { DEFAULT_SOE_PROXY_URL } from '@/lib/service-endpoints'
+import { isSameOriginRequest, forbiddenOriginResponse } from '@/lib/api-guard'
+
+/** settings.json 落盘含明文密钥，读写一律仅允许本机同源上下文（防 CSRF / DNS rebinding） */
+function guard(request: Request): Response | null {
+  return isSameOriginRequest(request.headers.get('origin'), request.headers.get('host'), request.url)
+    ? null
+    : forbiddenOriginResponse()
+}
 
 const PROVIDERS = new Set(['mock', 'azure', 'tencent', 'iflytek'])
 const DEFAULT_CONFIG: SoeSettingsConfig = { provider: 'mock', proxyUrl: DEFAULT_SOE_PROXY_URL }
@@ -55,7 +63,9 @@ function normalizeCreds(
   return Object.keys(out).length > 0 ? out : undefined
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = guard(request)
+  if (denied) return denied
   try {
     const config = (await readSoeConfig()) ?? DEFAULT_CONFIG
     return NextResponse.json(maskSoeCreds(config))
@@ -65,6 +75,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const denied = guard(request)
+  if (denied) return denied
   try {
     const body = await request.json()
     const { provider, proxyUrl, azure, tencent, iflytek } = body ?? {}

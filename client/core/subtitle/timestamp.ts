@@ -34,9 +34,10 @@ export function parseLrcTimestamp(raw: string): number | null {
   return (Number(m[1]) * 60 + Number(m[2])) * 1000 + Number(frac.padEnd(3, '0'))
 }
 
-/** ms → "hh:mm:ss,mmm" 格式（SRT 导出用；负数钳 0、小数四舍五入 —— 全应用唯一实现） */
+/** ms → "hh:mm:ss,mmm" 格式（SRT 导出用；负数/NaN 钳 0、小数四舍五入 —— 全应用唯一实现） */
 export function formatSrtTimestamp(ms: number): string {
-  const t = Math.max(0, Math.round(ms))
+  // NaN/Infinity 若原样运算会导出 "NaN:NaN:NaN,NaN" 时间戳，再导入即解析失败 —— 一律归 0
+  const t = Number.isFinite(ms) ? Math.max(0, Math.round(ms)) : 0
   const h = Math.floor(t / 3_600_000)
   const m = Math.floor((t % 3_600_000) / 60_000)
   const s = Math.floor((t % 60_000) / 1_000)

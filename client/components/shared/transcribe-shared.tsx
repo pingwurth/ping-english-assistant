@@ -293,6 +293,7 @@ export function useTranscribe() {
     setResult('')
     setSrt('')
     setError('')
+    setEditing(false)
     setTranslateWarning('')
     setPendingFile(null)
   }, [])
