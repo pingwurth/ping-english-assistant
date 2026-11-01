@@ -19,6 +19,8 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Shell } from '@/components/shared/shell'
 import { MicPermissionOverlay } from '@/components/shared/score-panel'
 import { RecordButton } from '@/components/shared/record-button'
+import { WaveBars } from '@/components/shared/wave-bars'
+import { formatDuration } from '@/components/shared/player-parts'
 import { diffWords } from '@/core/training/dictation-diff'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
@@ -34,26 +36,6 @@ const HINT_MODES: { id: HintMode; label: string }[] = [
   { id: 'first', label: '仅首词' },
   { id: 'none', label: '无提示' },
 ]
-
-function formatClock(ms: number): string {
-  const t = Math.max(0, ms)
-  const m = Math.floor(t / 60000)
-  const s = Math.floor((t % 60000) / 1000)
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
-
-/** 声波振幅条：volume 事件驱动（§5.3） */
-function WaveBars({ level, active }: { level: number; active: boolean }) {
-  return (
-    <div aria-hidden className="flex h-8 items-center justify-center gap-1">
-      {Array.from({ length: 14 }, (_, i) => {
-        const shape = 0.3 + 0.7 * Math.abs(Math.sin(i * 1.7 + 0.4))
-        const h = active ? Math.max(0.15, Math.min(1, level * 1.4) * shape) : 0.15
-        return <span key={i} className="w-1 rounded-full bg-destructive/70 transition-[height] duration-75" style={{ height: `${Math.round(h * 100)}%` }} />
-      })}
-    </div>
-  )
-}
 
 /** 单句提示文案（随提示模式渲染） */
 function hintText(mode: HintMode, textEn: string, textZh: string | null, firstWord: string): string {
@@ -233,7 +215,7 @@ function Recitation() {
                 )}
                 <div className="flex w-full flex-col items-center gap-2">
                   <WaveBars level={level} active={phase === 'recording'} />
-                  <p className="font-mono text-sm text-muted-foreground">{phase === 'recording' ? `${formatClock(elapsed)} · 录音中` : '凭记忆背诵全文，准备好后开始录音'}</p>
+                  <p className="font-mono text-sm text-muted-foreground">{phase === 'recording' ? `${formatDuration(elapsed)} · 录音中` : '凭记忆背诵全文，准备好后开始录音'}</p>
                 </div>
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 {phase === 'recording' && (

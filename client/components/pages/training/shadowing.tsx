@@ -26,6 +26,7 @@ import { Progress } from '@/components/ui/progress'
 import { Shell } from '@/components/shared/shell'
 import { MicPermissionOverlay } from '@/components/shared/score-panel'
 import { diffWords } from '@/core/training/dictation-diff'
+import { formatDuration } from '@/components/shared/player-parts'
 import { SentencePlayer } from '@/core/player/sentence-player'
 import { HtmlPlayerController } from '@/platform/html-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
@@ -39,14 +40,6 @@ type Phase = 'intro' | 'recording' | 'transcribing' | 'result'
 
 /** 播放结束后的收尾延迟：原音播完留 2 秒余量读完最后一句，到点自动结束录音 */
 const END_GRACE_MS = 2000
-
-/** 时钟文案：03:24（原型 §4.8 跟读中状态） */
-function formatClock(ms: number): string {
-  const t = Math.max(0, ms)
-  const m = Math.floor(t / 60000)
-  const s = Math.floor((t % 60000) / 1000)
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
 
 /** 原文卡：供跟读时对照阅读；activeIdx ≥ 0 时高亮当前句并自动滚动居中（仅容器内滚动，不劫持页面） */
 function OriginalTextCard({ sentences, activeIdx }: { sentences: SubtitleSentence[]; activeIdx: number }) {
@@ -308,7 +301,7 @@ function Shadowing() {
               <CardContent className="flex flex-col gap-5 p-6 md:p-8">
                 <div className="rounded-xl bg-muted p-5 text-left">
                   <p className="font-medium">{record.material.name}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">{sentences.length} 句 · 全长 {formatClock(durationMs)} · 录音上限 60 秒（原型）</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{sentences.length} 句 · 全长 {formatDuration(durationMs)} · 录音上限 60 秒（原型）</p>
                 </div>
                 <div className="flex items-start gap-3 rounded-xl bg-primary/10 p-4 text-left text-primary">
                   <Headphones className="mt-0.5 size-5 shrink-0" />
@@ -332,8 +325,8 @@ function Shadowing() {
             <CardContent className="flex flex-col gap-5 p-6 md:p-8">
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">{paused ? '⏸ 已暂停' : '▶ 播放中'} {formatClock(playMs)} / {formatClock(durationMs)}</span>
-                  <span className={`font-mono ${paused ? 'text-muted-foreground' : 'text-destructive'}`}>{paused ? '⏸ 录音已暂停' : `● 录音中 ${formatClock(recMs)}`}</span>
+                  <span className="text-muted-foreground">{paused ? '⏸ 已暂停' : '▶ 播放中'} {formatDuration(playMs)} / {formatDuration(durationMs)}</span>
+                  <span className={`font-mono ${paused ? 'text-muted-foreground' : 'text-destructive'}`}>{paused ? '⏸ 录音已暂停' : `● 录音中 ${formatDuration(recMs)}`}</span>
                 </div>
                 <Progress value={playPct} />
               </div>

@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Shell, PageIntro } from '@/components/shared/shell'
+import { formatDuration } from '@/components/shared/player-parts'
 import { getMaterialRecord } from '@/stores/material-store'
 import { listFavorites, setFavorite } from '@/stores/favorite-store'
 import type { Favorite } from '@/types/progress'
@@ -37,13 +38,6 @@ function createdLabel(createdAt: number): string {
   if (days <= 0) return '今天'
   if (days === 1) return '昨天'
   return `${days} 天前`
-}
-
-/** ms → "mm:ss"（句首时间，与字幕列表展示一致） */
-function formatMs(ms: number): string {
-  const m = Math.floor(ms / 60000)
-  const s = Math.floor((ms % 60000) / 1000)
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
 /** 读取全部收藏并按材料聚合成分组（listFavorites 已按收藏时间降序，故组序即最近收藏序） */
@@ -134,7 +128,7 @@ function Favorites() {
                       <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         <Star className="size-3 fill-primary text-primary" />
                         <span>{r.favorite.sentenceIndex + 1}</span>
-                        {r.sentence && <span>{formatMs(r.sentence.startMs)}</span>}
+                        {r.sentence && <span>{formatDuration(r.sentence.startMs)}</span>}
                         <span>{createdLabel(r.favorite.createdAt)}收藏</span>
                       </div>
                       {r.sentence ? (

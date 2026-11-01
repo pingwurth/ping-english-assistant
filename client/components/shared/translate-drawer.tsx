@@ -5,6 +5,7 @@ import { Sheet, SheetHeader, SheetTitle, SheetDescription, SheetContent, SheetFo
 import { TranslateDirectionToggle } from '@/components/shared/translate-direction-toggle'
 import { translateTexts, detectDirection } from '@/lib/translate'
 import { useTranslateConfigs } from '@/lib/use-translate-configs'
+import { formatDuration } from '@/components/shared/player-parts'
 import type { SubtitleSentence } from '@/types/subtitle'
 import type { TranslateDirection } from '@/types/api'
 
@@ -285,7 +286,7 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
                 <div key={s.index} className="rounded-xl border p-3">
                   <div className="mb-1.5 flex items-center gap-2 text-xs text-muted-foreground">
                     <span>{s.index + 1}</span>
-                    <span>{formatMs(s.startMs)}</span>
+                    <span>{formatDuration(s.startMs)}</span>
                     {st === 'done' && <Check className="size-3 text-green-500" />}
                     {st === 'translating' && <Loader2 className="size-3 animate-spin text-primary" />}
                     {st === 'error' && <span className="text-destructive">失败</span>}
@@ -319,11 +320,4 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
     )}
     </>
   )
-}
-
-/** ms → "mm:ss" 格式 */
-function formatMs(ms: number): string {
-  const m = Math.floor(ms / 60000)
-  const s = Math.floor((ms % 60000) / 1000)
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }

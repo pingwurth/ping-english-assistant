@@ -21,6 +21,7 @@ import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { ModelConfigListSection } from '@/components/shared/model-config-list-dialog'
+import { RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import { parseBackupJson, type ImportStrategy } from '@/core/backup/backup-format'
 import { isZipMagic } from '@/core/backup/zip'
 import { buildBackup, buildFullBackupZip, downloadBlob, downloadJsonBackup, importBackup, importZipBackup, prepareZipImport, type ImportSummary } from '@/platform/storage/backup'
@@ -50,19 +51,20 @@ interface Stats { trainCount: number; avgScore: number; favCount: number }
 /* ── 学习统计 ─────────────────────────────────────────── */
 
 function LearningStatsSection() {
-  const { records } = useStore(materialStore)
+  // 统计真源是 recordsStore（下方 refreshStats 全量扫描），不订阅 materialStore ——
+  // 订阅会让全应用任意材料操作都白白重渲染本节
   const [stats, setStats] = useState<Stats>({ trainCount: 0, avgScore: 0, favCount: 0 })
 
   const refreshStats = useCallback(async () => {
     try {
       const keys = await recordsStore.allKeys()
-      const trainKeys = keys.filter((k) => k.startsWith('train:'))
+      const trainKeys = keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.training))
       const loaded = await Promise.all(trainKeys.map((k) => recordsStore.get<TrainingRecord>(k)))
       const scores = loaded.filter((r): r is TrainingRecord => !!r && typeof r.score === 'number')
       setStats({
         trainCount: trainKeys.length,
         avgScore: scores.length > 0 ? Math.round(scores.reduce((s, r) => s + r.score, 0) / scores.length) : 0,
-        favCount: keys.filter((k) => k.startsWith('fav:')).length,
+        favCount: keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.favorite)).length,
       })
     } catch { /* 统计失败不影响设置页 */ }
   }, [])

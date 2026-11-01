@@ -1,25 +1,15 @@
 /**
  * 九宫格拼句算法 —— 真源：docs/系统架构设计.md §2.5 puzzle.ts
  *
- * 纯 TS 零依赖：rng 注入（可测）、词数 >15 按标点并块、checkAnswer 返回 firstErrorIndex。
+ * 纯 TS 零依赖：rng 注入（可测）、词数 >15 按标点并块。
+ * 注：早期的「tiles 乱序拼句」模式（buildTiles/checkAnswer）已被九宫格 grid 模式取代删除，
+ * splitTargets/nextHint/puzzleScore 保留给 tiles 语义的测试与其潜在复用。
  */
 
 import type { SubtitleSentence } from '@/types/subtitle'
 
 /** 可注入随机源（测试时传确定性 rng） */
 export type Rng = () => number
-
-/** 词块（id 用于 React key 与重复词区分） */
-export interface PuzzleTile {
-  id: number
-  text: string
-}
-
-export interface PuzzleCheckResult {
-  correct: boolean
-  /** 首个错误位 index；全对为 -1 */
-  firstErrorIndex: number
-}
 
 /** 并块触发阈值：词数 >15 时按标点合并短语块（原型设计 §4.5） */
 const CHUNK_THRESHOLD = 15
@@ -59,26 +49,6 @@ function shuffle<T>(list: T[], rng: Rng): T[] {
     ;[arr[i], arr[j]] = [arr[j]!, arr[i]!]
   }
   return arr
-}
-
-/** 生成乱序词块：拆词（或并块）+ 洗牌 */
-export function buildTiles(sentence: SubtitleSentence, rng: Rng = Math.random): PuzzleTile[] {
-  const targets = splitTargets(sentence)
-  let shuffled = shuffle(targets, rng)
-  if (targets.length > 1 && shuffled.every((t, i) => t === targets[i])) shuffled = shuffle(shuffled, rng)
-  return shuffled.map((text, i) => ({ id: i, text }))
-}
-
-/** 判定：逐位对比 picked 与目标序列，返回首个错误位（全对 -1） */
-export function checkAnswer(picked: PuzzleTile[], sentence: SubtitleSentence): PuzzleCheckResult {
-  const targets = splitTargets(sentence)
-  const len = Math.max(picked.length, targets.length)
-  for (let i = 0; i < len; i++) {
-    const p = picked[i]?.text ?? ''
-    const t = targets[i] ?? ''
-    if (p !== t) return { correct: false, firstErrorIndex: i }
-  }
-  return { correct: true, firstErrorIndex: -1 }
 }
 
 /** 提示：返回下一个应选词块（targets[hintCursor]），越界返回 null */

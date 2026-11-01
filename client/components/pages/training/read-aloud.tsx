@@ -16,6 +16,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { MicPermissionOverlay, ScorePanel } from '@/components/shared/score-panel'
 import { RecordButton } from '@/components/shared/record-button'
+import { WaveBars } from '@/components/shared/wave-bars'
+import { formatDuration } from '@/components/shared/player-parts'
 import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { makeRecordId, sentencesInScope } from '@/core/training/session'
 import { SentencePlayer } from '@/core/player/sentence-player'
@@ -32,26 +34,10 @@ import { useRecordingReplayUrl } from './recording-review'
 /** 单句阶段：空闲 → 录音中 → 评分中 → 已出分 */
 type Phase = 'idle' | 'recording' | 'scoring' | 'scored'
 
-/** 录音时长文案：00:03.2（与原型 AudioTraining 展示一致） */
+/** 录音时长文案：00:03.2（与原型 AudioTraining 展示一致；mm:ss 部分复用共享 formatDuration） */
 function formatMs(ms: number): string {
   const t = Math.max(0, ms)
-  const m = Math.floor(t / 60000)
-  const s = Math.floor((t % 60000) / 1000)
-  const d = Math.floor((t % 1000) / 100)
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${d}`
-}
-
-/** 声波振幅条：volume 事件驱动（§5.3"录音中：声波振幅条"） */
-function WaveBars({ level, active }: { level: number; active: boolean }) {
-  return (
-    <div aria-hidden className="flex h-8 items-center justify-center gap-1">
-      {Array.from({ length: 14 }, (_, i) => {
-        const shape = 0.3 + 0.7 * Math.abs(Math.sin(i * 1.7 + 0.4))
-        const h = active ? Math.max(0.15, Math.min(1, level * 1.4) * shape) : 0.15
-        return <span key={i} className="w-1 rounded-full bg-destructive/70 transition-[height] duration-75" style={{ height: `${Math.round(h * 100)}%` }} />
-      })}
-    </div>
-  )
+  return `${formatDuration(t)}.${Math.floor((t % 1000) / 100)}`
 }
 
 function ReadAloud() {

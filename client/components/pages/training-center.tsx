@@ -9,6 +9,7 @@ import { recordsStore } from '@/platform/storage/idb'
 import { setPref } from '@/platform/storage/prefs'
 import { getTrainingScope, setTrainingScope, type PrefTrainingScope } from '@/lib/pref-keys'
 import type { MaterialRecord } from '@/platform/storage/schema'
+import { RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import type { TrainingMode, TrainingRecord } from '@/types/training'
 
 /** fullTextOnly：影子跟读/全文背诵始终按全文出题，选中「收藏句」时置灰 */
@@ -51,7 +52,7 @@ function TrainingCenter() {
       if (!rec) return
       // 上次成绩：train: 记录中该材料各模式最新一条（createdAt 最大）
       const keys = await recordsStore.allKeys()
-      const trainKeys = keys.filter((k) => k.startsWith('train:'))
+      const trainKeys = keys.filter((k) => k.startsWith(RECORD_KEY_PREFIXES.training))
       const entries = (await Promise.all(trainKeys.map((k) => recordsStore.get<TrainingRecord>(k)))).filter((r): r is TrainingRecord => !!r && r.materialId === materialId)
       const latest: Partial<Record<TrainingMode, TrainingRecord>> = {}
       for (const e of entries) {
