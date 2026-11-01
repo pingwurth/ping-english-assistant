@@ -27,14 +27,16 @@ import { Shell } from '@/components/shared/shell'
 import { MicPermissionOverlay } from '@/components/shared/score-panel'
 import { diffWords } from '@/core/training/dictation-diff'
 import { formatDuration } from '@/components/shared/player-parts'
-import { SentencePlayer } from '@/core/player/sentence-player'
-import { HtmlPlayerController } from '@/platform/html-player'
+import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-player'
+import { useSentencePlayer } from '@/lib/use-sentence-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
-import { getMediaBlob } from '@/stores/material-store'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { toApiError } from '@/services'
 import type { SubtitleSentence } from '@/types/subtitle'
 import { RecordingReview, transcribeRecording, useRecordingReplayUrl } from './recording-review'
+
+/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
+const NO_SENTENCES: SentenceRange[] = []
 
 type Phase = 'intro' | 'recording' | 'transcribing' | 'result'
 
@@ -72,7 +74,6 @@ function Shadowing() {
 
   const [phase, setPhase] = useState<Phase>('intro')
   const [transcript, setTranscript] = useState('')
-  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [playMs, setPlayMs] = useState(0)
   const [durationMs, setDurationMs] = useState(0)
   const [recMs, setRecMs] = useState(0)
@@ -84,7 +85,6 @@ function Shadowing() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null)
-  const playerRef = useRef<SentencePlayer | null>(null)
   const recorderRef = useRef<WebRecorder | null>(null)
   const timerRef = useRef<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -100,20 +100,7 @@ function Shadowing() {
   const fullEn = useMemo(() => sentences.map((s) => s.textEn).join(' '), [sentences])
   const diffTokens = useMemo(() => diffWords(transcript, fullEn), [transcript, fullEn])
 
-  // 媒体 Blob → ObjectURL（SSR 安全：仅 effect 内；卸载时 revoke）
-  useEffect(() => {
-    if (!record) return
-    let cancelled = false
-    let objectUrl: string | null = null
-    ;(async () => {
-      const blob = await getMediaBlob(record.material.id)
-      if (cancelled) return
-      if (blob) { objectUrl = URL.createObjectURL(blob); setMediaUrl(objectUrl) }
-    })().catch(() => { /* 无媒体：仅录音，无原音跟播 */ })
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
-  }, [record])
-
-  /** 播放结束后自动收尾（延迟 END_GRACE_MS，给用户读完最后一句的余量） */
+  /** 播放结束后自动收尾（延迟 END_GRACE_MS，给用户读完最后一句的余量；内部全走 ref，闭包旧亦安全） */
   const finishAfterGrace = () => {
     if (endGraceTimerRef.current !== null) window.clearTimeout(endGraceTimerRef.current)
     endGraceTimerRef.current = window.setTimeout(() => {
@@ -127,27 +114,25 @@ function Shadowing() {
     endGraceTimerRef.current = null
   }
 
-  // 播放引擎装配：全文连播（timeupdate 驱动进度，ended 延迟 2s 触发收尾）
-  useEffect(() => {
-    if (!record || !mediaUrl) return
-    const list = record.subtitleData?.sentences ?? []
-    const mediaType = record.material.mediaType
-    const controller = mediaType === 'audio' && audioRef.current
-      ? new HtmlPlayerController('audio', audioRef.current)
-      : new HtmlPlayerController(mediaType)
-    const sp = new SentencePlayer(controller, list)
-    playerRef.current = sp
-    controller.load({ type: mediaType, src: mediaUrl }).then(() => {
-      setDurationMs(controller.getDurationMs() || record.material.durationMs)
-    }).catch(() => { /* 加载失败：进度按材料元时长展示 */ })
-    sp.on('timeupdate', (ms) => setPlayMs(ms))
-    sp.on('sentencechange', (i) => setActiveIdx(i))
-    sp.on('ended', finishAfterGrace)
-    return () => {
-      clearEndGrace()
-      sp.destroy(); controller.destroy(); playerRef.current = null
-    }
-  }, [record, mediaUrl])
+  // 媒体与播放引擎：共享装配（全文连播：timeupdate 驱动进度，ended 延迟 2s 触发收尾）
+  const { player: enginePlayer, mediaUrl } = useSentencePlayer(record?.material.id, {
+    mediaType: record?.material.mediaType ?? 'audio',
+    sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
+    audioElement: audioRef,
+    onSetup: (sp) => {
+      sp.on('timeupdate', (ms) => setPlayMs(ms))
+      sp.on('sentencechange', (i) => setActiveIdx(i))
+      sp.on('ended', finishAfterGrace)
+    },
+    onLoaded: (_sp, controller) => {
+      // duration 兜底：加载失败时 hook 不回调，进度按材料元时长展示（下方录音器 effect 已设）
+      setDurationMs(controller.getDurationMs() || record?.material.durationMs || 0)
+    },
+  })
+  const playerRef = useRef<SentencePlayer | null>(null)
+  playerRef.current = enginePlayer
+  // 引擎重建/卸载时清掉待触发的收尾定时器（对应原装配 effect 的 cleanup）
+  useEffect(() => () => { clearEndGrace() }, [enginePlayer])
 
   // 录音器生命周期：挂载创建；到达 60s 上限自动收尾；卸载 destroy + 中止转写请求
   useEffect(() => {

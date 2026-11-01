@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, ChevronRight, Download, FileText, Folder, FolderInput, Gauge, Languages, Pause, Pencil, Play, RotateCcw, SkipBack, SkipForward, Sparkles, StickyNote, Subtitles, Trash2, Upload, Volume2, VolumeX } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -133,7 +133,7 @@ function PlayerControlBar({ playing, setPlaying, mode, setMode, loop, setLoop, s
  *  - favoriteIndexes 中的句子显示 ★ 收藏标记。
  *  - onTranslate 为整篇翻译入口（单句翻译在字幕编辑弹窗内）。
  */
-function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndexes, noteIndexes, onOpenNote, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items?: SubtitleSentence[]; favoriteIndexes?: Set<number>; noteIndexes?: Set<number>; onOpenNote?: (index: number) => void; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: () => void }) {
+function SubtitleListImpl({ mode, active, onSelect, items = sentences, favoriteIndexes, noteIndexes, onOpenNote, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items?: SubtitleSentence[]; favoriteIndexes?: Set<number>; noteIndexes?: Set<number>; onOpenNote?: (index: number) => void; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: () => void }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const manualUntilRef = useRef(0)
@@ -237,5 +237,8 @@ function SubtitleList({ mode, active, onSelect, items = sentences, favoriteIndex
     </section>
   )
 }
+
+/** 千句列表浅比较 memo：active/收藏/笔记/模式之外的渲染（如播放器其它 state）不再触发全列表 diff */
+const SubtitleList = memo(SubtitleListImpl)
 
 export { MaterialCard, CollectionCard, MaterialMoveDialog, PlayerControlBar, SubtitleList, lastLabel, loadProgressPercents }

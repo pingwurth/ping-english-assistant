@@ -49,6 +49,11 @@ export interface PlayerController {
   getCurrentTimeMs(): number
   getDurationMs(): number
   getState(): PlayerState
+  /**
+   * 最近一次 seek 的实际落点偏差（实际 - 目标，ms）；|偏差| ≤ 300ms 视为无漂移返回 0。
+   * 供上层循环边界容差修正（架构 §5.1）；实现无 seek 落点校准机制时可省略。
+   */
+  getSeekDriftMs?(): number
   on<E extends keyof PlayerEvents>(event: E, cb: PlayerEvents[E]): void
   off<E extends keyof PlayerEvents>(event: E, cb: PlayerEvents[E]): void
   destroy(): void

@@ -4,7 +4,7 @@ import { CircleHelp, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial } from '@/components/shared/training-session-shell'
-import { SentencePlayer } from '@/core/player/sentence-player'
+import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-player'
 import {
   collectDistractorWords,
   getGridHint,
@@ -17,11 +17,13 @@ import {
 } from '@/core/training/puzzle'
 import { formatElapsed, summarize } from '@/core/training/scoring'
 import { attempt, createSession, currentSentence, hint, makeRecordId, next, submit, type SessionState } from '@/core/training/session'
-import { HtmlPlayerController } from '@/platform/html-player'
+import { useSentencePlayer } from '@/lib/use-sentence-player'
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS } from '@/platform/storage/schema'
-import { getMediaBlob } from '@/stores/material-store'
 import type { PuzzleDetail, TrainingRecord } from '@/types/training'
+
+/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
+const NO_SENTENCES: SentenceRange[] = []
 
 /** 每句提示上限（每次扣 2 分，由 gridScore 结算） */
 const MAX_HINTS = 3
@@ -38,10 +40,8 @@ function Puzzle() {
   /** 被提示的答案词文本（同词多格时高亮全部同文本格） */
   const [hintText, setHintText] = useState<string | null>(null)
   const [plays, setPlays] = useState(0)
-  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const writtenRef = useRef(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const playerRef = useRef<SentencePlayer | null>(null)
 
   // 材料就绪 → 开启全文范围会话
   useEffect(() => {
@@ -50,32 +50,14 @@ function Puzzle() {
     writtenRef.current = false
   }, [record, scope])
 
-  // 媒体 Blob → ObjectURL
-  useEffect(() => {
-    if (!record) return
-    let cancelled = false
-    let objectUrl: string | null = null
-    ;(async () => {
-      const blob = await getMediaBlob(record.material.id)
-      if (cancelled) return
-      if (blob) { objectUrl = URL.createObjectURL(blob); setMediaUrl(objectUrl) }
-    })().catch(() => { /* 无媒体：播放按钮置灰 */ })
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
-  }, [record])
-
-  // 播放引擎：SentencePlayer
-  useEffect(() => {
-    if (!record || !mediaUrl) return
-    const sentences = record.subtitleData?.sentences ?? []
-    const mediaType = record.material.mediaType
-    const controller = mediaType === 'audio' && audioRef.current
-      ? new HtmlPlayerController('audio', audioRef.current)
-      : new HtmlPlayerController(mediaType)
-    const sp = new SentencePlayer(controller, sentences)
-    playerRef.current = sp
-    controller.load({ type: mediaType, src: mediaUrl }).catch(() => { /* 加载失败 → 播放置灰 */ })
-    return () => { sp.destroy(); controller.destroy(); playerRef.current = null }
-  }, [record, mediaUrl])
+  // 媒体与播放引擎：共享装配（Blob→ObjectURL + HtmlPlayerController/SentencePlayer 生命周期）
+  const { player: enginePlayer, mediaUrl } = useSentencePlayer(record?.material.id, {
+    mediaType: record?.material.mediaType ?? 'audio',
+    sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
+    audioElement: audioRef,
+  })
+  const playerRef = useRef<SentencePlayer | null>(null)
+  playerRef.current = enginePlayer
 
   const sentence = session ? currentSentence(session) : undefined
   const queue = session?.queue

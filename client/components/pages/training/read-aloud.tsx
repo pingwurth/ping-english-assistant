@@ -20,13 +20,15 @@ import { WaveBars } from '@/components/shared/wave-bars'
 import { formatDuration } from '@/components/shared/player-parts'
 import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { makeRecordId, sentencesInScope } from '@/core/training/session'
-import { SentencePlayer } from '@/core/player/sentence-player'
-import { HtmlPlayerController } from '@/platform/html-player'
+import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-player'
+import { useSentencePlayer } from '@/lib/use-sentence-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS } from '@/platform/storage/schema'
-import { getMediaBlob } from '@/stores/material-store'
 import { ApiError, getSoeService } from '@/services'
+
+/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
+const NO_SENTENCES: SentenceRange[] = []
 import type { SoeEvaluateResponse } from '@/types/api'
 import type { ReadAloudDetail, TrainingRecord } from '@/types/training'
 import { useRecordingReplayUrl } from './recording-review'
@@ -52,12 +54,10 @@ function ReadAloud() {
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
-  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [totals, setTotals] = useState<number[]>([])
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null)
-  const playerRef = useRef<SentencePlayer | null>(null)
   const recorderRef = useRef<WebRecorder | null>(null)
   const timerRef = useRef<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -72,32 +72,14 @@ function ReadAloud() {
   const sentences = useMemo(() => sentencesInScope(record?.subtitleData?.sentences ?? [], scope), [record, scope])
   const sentence = sentences[cursor]
 
-  // 媒体 Blob → ObjectURL（SSR 安全：仅 effect 内；卸载时 revoke）
-  useEffect(() => {
-    if (!record) return
-    let cancelled = false
-    let objectUrl: string | null = null
-    ;(async () => {
-      const blob = await getMediaBlob(record.material.id)
-      if (cancelled) return
-      if (blob) { objectUrl = URL.createObjectURL(blob); setMediaUrl(objectUrl) }
-    })().catch(() => { /* 无媒体：听原音按钮置灰 */ })
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
-  }, [record])
-
-  // 播放引擎装配：句段播放（playRange 播一遍自动暂停）
-  useEffect(() => {
-    if (!record || !mediaUrl) return
-    const list = record.subtitleData?.sentences ?? []
-    const mediaType = record.material.mediaType
-    const controller = mediaType === 'audio' && audioRef.current
-      ? new HtmlPlayerController('audio', audioRef.current)
-      : new HtmlPlayerController(mediaType)
-    const sp = new SentencePlayer(controller, list)
-    playerRef.current = sp
-    controller.load({ type: mediaType, src: mediaUrl }).catch(() => { /* 加载失败 → 播放置灰 */ })
-    return () => { sp.destroy(); controller.destroy(); playerRef.current = null }
-  }, [record, mediaUrl])
+  // 媒体与播放引擎：共享装配（句段播放 playRange 播一遍自动暂停）
+  const { player: enginePlayer, mediaUrl } = useSentencePlayer(record?.material.id, {
+    mediaType: record?.material.mediaType ?? 'audio',
+    sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
+    audioElement: audioRef,
+  })
+  const playerRef = useRef<SentencePlayer | null>(null)
+  playerRef.current = enginePlayer
 
   // 录音器生命周期：挂载创建 + volume 监听 + 到达 60s 上限自动收尾；卸载 destroy + 中止评分请求
   useEffect(() => {

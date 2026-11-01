@@ -183,10 +183,14 @@ export class SentencePlayer {
     }
 
     // A-B 单句循环：边界 `>=` 减容差判断，回跳句首并递减次数；
-    // open-ended 句（endMs<=startMs，未回填的 LRC 末句）跳过循环判断，避免立即回跳死循环
+    // open-ended 句（endMs<=startMs，未回填的 LRC 末句）跳过循环判断，避免立即回跳死循环。
+    // §5.1 漂移补偿：循环回跳也是一次 seek，视频关键帧媒体的实际落点可能比句首晚数百 ms
+    // （controller.getSeekDriftMs 上报，≤300ms 归零）——把漂移加进边界阈值，保证回跳后
+    // 句子仍按原时长播放；不补偿的话大漂移下回跳瞬间即再次越界，∞ 循环会连续回跳。
     if (this.loopIndex >= 0) {
       const s = this.sentences[this.loopIndex]
-      if (s && s.endMs > s.startMs && currentMs >= s.endMs - LOOP_TOLERANCE_MS) {
+      const drift = this.controller.getSeekDriftMs?.() ?? 0
+      if (s && s.endMs > s.startMs && currentMs >= s.endMs - LOOP_TOLERANCE_MS + drift) {
         if (this.loopRemaining === Number.POSITIVE_INFINITY || this.loopRemaining > 0) {
           if (this.loopRemaining !== Number.POSITIVE_INFINITY) this.loopRemaining -= 1
           this.controller.seekTo(s.startMs)

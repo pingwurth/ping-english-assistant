@@ -8,12 +8,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { diffWords, sentenceAccuracy, toWords, type DiffToken } from '@/core/training/dictation-diff'
 import { createSession, currentSentence, makeRecordId, next, retryAt, submit, type SessionState } from '@/core/training/session'
-import { SentencePlayer } from '@/core/player/sentence-player'
-import { HtmlPlayerController } from '@/platform/html-player'
+import type { SentenceRange } from '@/core/player/sentence-player'
+import type { SentencePlayer } from '@/core/player/sentence-player'
+import { useSentencePlayer } from '@/lib/use-sentence-player'
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS } from '@/platform/storage/schema'
-import { getMediaBlob } from '@/stores/material-store'
 import type { DictationDetail, TrainingRecord } from '@/types/training'
+
+/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
+const NO_SENTENCES: SentenceRange[] = []
 
 /** 逐词 diff 着色渲染：正确不变色 / 错词红删（附正确词）/ 漏词绿插 / 多词灰 */
 function DiffView({ tokens }: { tokens: DiffToken[] }) {
@@ -31,10 +34,8 @@ function Dictation() {
   const [value, setValue] = useState('')
   const [tokens, setTokens] = useState<DiffToken[] | null>(null)
   const [plays, setPlays] = useState(0)
-  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const playerRef = useRef<SentencePlayer | null>(null)
   /** 每句只写一条 train: 记录（首次核对时） */
   const writtenRef = useRef<Set<number>>(new Set())
 
@@ -45,33 +46,14 @@ function Dictation() {
     writtenRef.current = new Set()
   }, [record, scope])
 
-  // 媒体 Blob → ObjectURL（SSR 安全：仅 effect 内）
-  useEffect(() => {
-    if (!record) return
-    let cancelled = false
-    let objectUrl: string | null = null
-    ;(async () => {
-      const blob = await getMediaBlob(record.material.id)
-      if (cancelled) return
-      if (blob) { objectUrl = URL.createObjectURL(blob); setMediaUrl(objectUrl) }
-    })().catch(() => { /* 无媒体：播放按钮置灰 */ })
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
-  }, [record])
-
-  // 播放引擎：真实播放当前句段 [startMs, endMs]（播几遍计几遍）
-  useEffect(() => {
-    if (!record || !mediaUrl) return
-    const sentences = record.subtitleData?.sentences ?? []
-    const mediaType = record.material.mediaType
-    const controller = mediaType === 'audio' && audioRef.current
-      ? new HtmlPlayerController('audio', audioRef.current)
-      : new HtmlPlayerController(mediaType)
-    const sp = new SentencePlayer(controller, sentences)
-    playerRef.current = sp
-    let cancelled = false
-    controller.load({ type: mediaType, src: mediaUrl }).catch(() => { /* 加载失败 → 播放置灰 */ })
-    return () => { cancelled = true; sp.destroy(); controller.destroy(); playerRef.current = null }
-  }, [record, mediaUrl])
+  // 媒体与播放引擎：共享装配（Blob→ObjectURL + HtmlPlayerController/SentencePlayer 生命周期）
+  const { player: enginePlayer, mediaUrl } = useSentencePlayer(record?.material.id, {
+    mediaType: record?.material.mediaType ?? 'audio',
+    sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
+    audioElement: audioRef,
+  })
+  const playerRef = useRef<SentencePlayer | null>(null)
+  playerRef.current = enginePlayer
 
   const sentence = session ? currentSentence(session) : undefined
   const cursor = session?.cursor

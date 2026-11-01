@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Check, Copy, Sparkles, Star, StickyNote } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -94,7 +94,6 @@ function Player() {
   const [loop, setLoop] = useState(() => { const l = getDefaultLoop(); return l === 'inf' ? Number.POSITIVE_INFINITY : l })
   const [rate, setRate] = useState<number>(() => getDefaultRate())
   const [active, setActive] = useState(0)
-  const [currentMs, setCurrentMs] = useState(0)
   const [durationMs, setDurationMs] = useState(0)
   const [volume, setVolumeState] = useState(1)
   const [favSet, setFavSet] = useState<Set<number>>(new Set())
@@ -122,8 +121,8 @@ function Player() {
   loopRef.current = loop
   /** 播放过的句子增量收集（5s 节流写 progress: 记录） */
   const playedRef = useRef<{ indexes: Set<number>; dirty: boolean; lastFlush: number }>({ indexes: new Set(), dirty: false, lastFlush: 0 })
-  /** 状态更新节流：记录上次 setCurrentMs 的时间戳 */
-  const lastMsUpdateRef = useRef(0)
+  /** 引擎装配版本号：装配 effect 重建引擎后触发一次渲染，让 LiveControlBar 拿到新实例 */
+  const [engineVersion, setEngineVersion] = useState(0)
 
   // 数据侧：按 :materialId 从 IDB 读取材料与字幕；不存在则跳回材料库。
   // 媒体 Blob → ObjectURL 在进入页面时创建、组件卸载时 revoke（SSR 安全：仅在 useEffect 内访问）。
@@ -190,6 +189,7 @@ function Player() {
       : new HtmlPlayerController(mediaType)
     const sp = new SentencePlayer(controller, sentences)
     playerRef.current = sp
+    setEngineVersion((v) => v + 1) // 触发渲染，LiveControlBar 订阅新实例
     // 应用 P10 设置的默认倍速与循环次数（仅装配时一次，后续由控件交互覆盖）
     if (rate !== 1) sp.setRate(rate)
     if (loop > 0) sp.setLoopTimes(loop)
@@ -207,16 +207,9 @@ function Player() {
       }
     }).catch(() => { /* 加载失败：保持静态展示，控件可用但播放会报错提示 */ })
 
-    sp.on('timeupdate', (ms) => {
-      // 状态更新节流：每 100ms 最多更新一次 setCurrentMs，减少 React 重新渲染频率
-      // 解决视频播放时主线程被 rAF 循环和 React 状态更新阻塞导致返回按钮无响应的问题
-      const now = Date.now()
-      if (now - lastMsUpdateRef.current >= 100) {
-        lastMsUpdateRef.current = now
-        setCurrentMs(ms)
-      }
-
-      // 播放过的句子：随进度增量标记 + 5s 节流落盘
+    sp.on('timeupdate', () => {
+      // 进度条 currentMs 已下沉到 LiveControlBar 内部订阅（引擎侧 100ms 发射门控），
+      // 这里只做播放进度标记 + 节流落盘 —— 播放期间不再触发整页重渲染
       const idx = sp.getCurrentSentenceIndex()
       if (idx >= 0 && !playedRef.current.indexes.has(idx)) {
         playedRef.current.indexes.add(idx)
@@ -341,11 +334,12 @@ function Player() {
     if (v) void sp.play()
     else sp.pause()
   }
-  const selectSentence = (i: number) => {
+  // 稳定引用（供 SubtitleList memo 生效）：内部只读 ref 与 setState
+  const selectSentence = useCallback((i: number) => {
     const sp = playerRef.current
     if (sp) sp.playSentence(i)
     else setActive(i) // 演示材料：仅切换高亮
-  }
+  }, [])
   const cycleRate = () => {
     const next = RATES[(RATES.indexOf(rate) + 1) % RATES.length] ?? 1
     setRate(next)
@@ -551,10 +545,28 @@ function Player() {
   const safeActive = Math.min(active, Math.max(0, sentences.length - 1))
   const current = sentences[safeActive]
   const favorited = favSet.has(safeActive)
-  const noted = !!noteMap[safeActive]?.trim()
-  const noteIndexes = new Set(Object.entries(noteMap).filter(([, v]) => v.trim()).map(([k]) => Number(k)))
+  // 有笔记的句序号集合（memo：SubtitleList 浅比较 props 需要 stable 引用）
+  const noteIndexes = useMemo(() => new Set(Object.entries(noteMap).filter(([, v]) => v.trim()).map(([k]) => Number(k))), [noteMap])
 
-  return <Shell back><div className="mx-auto flex max-w-[1440px] flex-col px-4 py-6 md:px-8"><div className="mb-6 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">正在学习 · {record.material.mediaType === 'video' ? '视频' : '音频'} · {formatDuration(record.material.durationMs)}</p><h1 className="font-serif text-2xl font-semibold md:text-3xl">{record.material.name}</h1></div><Link to={`/training/${record.material.id}`} onClick={pauseAllMedia}><Button><Sparkles data-icon="inline-start" />进入训练</Button></Link></div><div className="grid h-[calc(100vh-180px)] gap-6 overflow-hidden lg:grid-cols-[1.6fr_1fr]"><div className="flex min-h-0 flex-col gap-4"><div className="relative min-h-72 flex-1 rounded-3xl bg-primary shadow-inner lg:min-h-[480px]" onMouseMove={handleVideoMouseMove} onMouseLeave={handleVideoMouseLeave}>{isSeedDemo && <p className="absolute inset-x-6 top-6 z-10 rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs text-primary-foreground/90">演示材料（无音频）——导入真实材料后即可播放音视频</p>}{mediaUrl && record.material.mediaType === 'video' ? <video ref={videoRef} src={mediaUrl} preload="metadata" className="absolute inset-0 h-full w-full rounded-3xl object-contain" /> : <BackgroundCarousel images={shuffledImages} interval={8000} transitionDuration={1000} className="absolute inset-0 rounded-3xl" />}<div className={`absolute inset-x-0 bottom-0 z-20 px-6 pb-4 pt-16 bg-gradient-to-t from-black/60 to-transparent rounded-b-3xl transition-opacity duration-300 max-md:pointer-events-auto max-md:opacity-100 ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onMouseEnter={handleControlsMouseEnter} onMouseLeave={handleControlsMouseLeave}><PlayerControlBar {...{playing,setPlaying:togglePlay,mode,setMode,loop,setLoop:cycleLoop,sentenceIndex:safeActive,setSentenceIndex:selectSentence,items:sentences,currentMs,durationMs,onSeek:(ms)=>playerRef.current?.seekTo(ms),rate,onRateCycle:cycleRate,volume,onVolumeChange:handleVolumeChange,disabled:!playable,isBilingual:record.subtitleData ? record.subtitleData.isBilingual : true}} /></div></div><Card ref={currentSentenceRef}><CardContent className="flex min-h-[7.5rem] items-center p-5"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-xs font-semibold uppercase tracking-wider text-primary">当前句</p><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textEn} title="复制原文" aria-label="复制原文" onClick={() => void handleCopySentence('en', current?.textEn ?? '')}>{copiedKind === 'en' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}复制原文</Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textZh} title="复制译文" aria-label="复制译文" onClick={() => void handleCopySentence('zh', current?.textZh ?? '')}>{copiedKind === 'zh' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}复制译文</Button><Button variant={noted ? 'secondary' : 'outline'} size="xs" disabled={sentences.length === 0} onClick={() => setNoteDrawerIndex(safeActive)} aria-label={noted ? `查看句子 ${safeActive + 1} 的笔记` : `为句子 ${safeActive + 1} 记笔记`}><StickyNote data-icon="inline-start" className={noted ? 'text-primary' : ''} /><span className="hidden sm:inline">{noted ? '查看笔记' : '记笔记'}</span><kbd className="hidden rounded border px-1 text-[10px] font-normal text-muted-foreground sm:inline">N</kbd></Button><Button variant="outline" size="xs" className="ml-auto shrink-0" disabled={sentences.length === 0} onClick={() => void toggleFavorite(safeActive)} aria-pressed={favorited} aria-label={favorited ? '取消收藏当前句' : '收藏当前句'}><Star data-icon="inline-start" className={favorited ? 'fill-primary text-primary' : ''} /><span className="hidden sm:inline">{favorited ? '已收藏' : '收藏'}</span></Button></div><ScrollFade className="mt-2 h-[7.5rem]" resetKey={safeActive}>{current ? <>{(mode === 'bilingual' || mode === 'english') && <p className="whitespace-pre-line text-lg leading-relaxed select-text">{current.textEn}</p>}{(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 whitespace-pre-line text-muted-foreground">{current.textZh}</p>}</> : <p className="text-lg leading-relaxed text-muted-foreground">该材料暂无字幕</p>}</ScrollFade></div></CardContent></Card><WordBubble items={sentences} materialId={record.material.id} selectionContainerRef={currentSentenceRef} />{mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}</div><SubtitleList mode={mode} active={safeActive} onSelect={selectSentence} items={sentences} favoriteIndexes={favSet} noteIndexes={noteIndexes} onOpenNote={setNoteDrawerIndex} onImportSubtitle={(f) => void handleImportSubtitle(f)} onAiConvert={handleAiConvert} onDeleteSentence={(i) => void handleDeleteSentence(i)} onEditSentence={handleEditSentenceOpen} onExportSubtitle={handleExportSubtitle} onTranslate={handleTranslate} /></div></div><AiTranscribeDialog open={showAiDialog} onOpenChange={setShowAiDialog} mediaFile={mediaFile} onSubtitleGenerated={(srt) => void handleAiSubtitleGenerated(srt)} /><SubtitleEditDialog open={!!editingSentence} onOpenChange={(open) => { if (!open) setEditingSentence(null) }} sentence={editingSentence?.sentence ?? null} onSave={(updated) => void handleEditSentenceSave(updated)} /><TranslateDrawer open={showTranslateDrawer} onOpenChange={setShowTranslateDrawer} sentences={sentences} onApplyAll={(updated, direction) => void handleTranslateApplyAll(updated, direction)} /><SentenceNoteDrawer open={noteDrawerIndex != null} target={noteDrawerIndex != null ? (sentences[noteDrawerIndex] ?? null) : null} content={noteDrawerIndex != null ? (noteMap[noteDrawerIndex] ?? '') : ''} onChange={(v) => { if (noteDrawerIndex != null) handleNoteChange(noteDrawerIndex, v) }} onDelete={() => { if (noteDrawerIndex != null) handleNoteDelete(noteDrawerIndex) }} onLocate={() => { if (noteDrawerIndex != null) { selectSentence(noteDrawerIndex); setNoteDrawerIndex(null) } }} onClose={() => setNoteDrawerIndex(null)} /></Shell>
+  const noted = !!noteMap[safeActive]?.trim()
+
+  return <Shell back><div className="mx-auto flex max-w-[1440px] flex-col px-4 py-6 md:px-8"><div className="mb-6 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">正在学习 · {record.material.mediaType === 'video' ? '视频' : '音频'} · {formatDuration(record.material.durationMs)}</p><h1 className="font-serif text-2xl font-semibold md:text-3xl">{record.material.name}</h1></div><Link to={`/training/${record.material.id}`} onClick={pauseAllMedia}><Button><Sparkles data-icon="inline-start" />进入训练</Button></Link></div><div className="grid h-[calc(100vh-180px)] gap-6 overflow-hidden lg:grid-cols-[1.6fr_1fr]"><div className="flex min-h-0 flex-col gap-4"><div className="relative min-h-72 flex-1 rounded-3xl bg-primary shadow-inner lg:min-h-[480px]" onMouseMove={handleVideoMouseMove} onMouseLeave={handleVideoMouseLeave}>{isSeedDemo && <p className="absolute inset-x-6 top-6 z-10 rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs text-primary-foreground/90">演示材料（无音频）——导入真实材料后即可播放音视频</p>}{mediaUrl && record.material.mediaType === 'video' ? <video ref={videoRef} src={mediaUrl} preload="metadata" className="absolute inset-0 h-full w-full rounded-3xl object-contain" /> : <BackgroundCarousel images={shuffledImages} interval={8000} transitionDuration={1000} className="absolute inset-0 rounded-3xl" />}<div className={`absolute inset-x-0 bottom-0 z-20 px-6 pb-4 pt-16 bg-gradient-to-t from-black/60 to-transparent rounded-b-3xl transition-opacity duration-300 max-md:pointer-events-auto max-md:opacity-100 ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onMouseEnter={handleControlsMouseEnter} onMouseLeave={handleControlsMouseLeave}><LiveControlBar key={engineVersion} player={playerRef.current} {...{playing,setPlaying:togglePlay,mode,setMode,loop,setLoop:cycleLoop,sentenceIndex:safeActive,setSentenceIndex:selectSentence,items:sentences,durationMs,onSeek:(ms)=>playerRef.current?.seekTo(ms),rate,onRateCycle:cycleRate,volume,onVolumeChange:handleVolumeChange,disabled:!playable,isBilingual:record.subtitleData ? record.subtitleData.isBilingual : true}} /></div></div><Card ref={currentSentenceRef}><CardContent className="flex min-h-[7.5rem] items-center p-5"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="text-xs font-semibold uppercase tracking-wider text-primary">当前句</p><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textEn} title="复制原文" aria-label="复制原文" onClick={() => void handleCopySentence('en', current?.textEn ?? '')}>{copiedKind === 'en' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}复制原文</Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textZh} title="复制译文" aria-label="复制译文" onClick={() => void handleCopySentence('zh', current?.textZh ?? '')}>{copiedKind === 'zh' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}复制译文</Button><Button variant={noted ? 'secondary' : 'outline'} size="xs" disabled={sentences.length === 0} onClick={() => setNoteDrawerIndex(safeActive)} aria-label={noted ? `查看句子 ${safeActive + 1} 的笔记` : `为句子 ${safeActive + 1} 记笔记`}><StickyNote data-icon="inline-start" className={noted ? 'text-primary' : ''} /><span className="hidden sm:inline">{noted ? '查看笔记' : '记笔记'}</span><kbd className="hidden rounded border px-1 text-[10px] font-normal text-muted-foreground sm:inline">N</kbd></Button><Button variant="outline" size="xs" className="ml-auto shrink-0" disabled={sentences.length === 0} onClick={() => void toggleFavorite(safeActive)} aria-pressed={favorited} aria-label={favorited ? '取消收藏当前句' : '收藏当前句'}><Star data-icon="inline-start" className={favorited ? 'fill-primary text-primary' : ''} /><span className="hidden sm:inline">{favorited ? '已收藏' : '收藏'}</span></Button></div><ScrollFade className="mt-2 h-[7.5rem]" resetKey={safeActive}>{current ? <>{(mode === 'bilingual' || mode === 'english') && <p className="whitespace-pre-line text-lg leading-relaxed select-text">{current.textEn}</p>}{(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 whitespace-pre-line text-muted-foreground">{current.textZh}</p>}</> : <p className="text-lg leading-relaxed text-muted-foreground">该材料暂无字幕</p>}</ScrollFade></div></CardContent></Card><WordBubble items={sentences} materialId={record.material.id} selectionContainerRef={currentSentenceRef} />{mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}</div><SubtitleList mode={mode} active={safeActive} onSelect={selectSentence} items={sentences} favoriteIndexes={favSet} noteIndexes={noteIndexes} onOpenNote={setNoteDrawerIndex} onImportSubtitle={handleImportSubtitle} onAiConvert={handleAiConvert} onDeleteSentence={handleDeleteSentence} onEditSentence={handleEditSentenceOpen} onExportSubtitle={handleExportSubtitle} onTranslate={handleTranslate} /></div></div><AiTranscribeDialog open={showAiDialog} onOpenChange={setShowAiDialog} mediaFile={mediaFile} onSubtitleGenerated={(srt) => void handleAiSubtitleGenerated(srt)} /><SubtitleEditDialog open={!!editingSentence} onOpenChange={(open) => { if (!open) setEditingSentence(null) }} sentence={editingSentence?.sentence ?? null} onSave={(updated) => void handleEditSentenceSave(updated)} /><TranslateDrawer open={showTranslateDrawer} onOpenChange={setShowTranslateDrawer} sentences={sentences} onApplyAll={(updated, direction) => void handleTranslateApplyAll(updated, direction)} /><SentenceNoteDrawer open={noteDrawerIndex != null} target={noteDrawerIndex != null ? (sentences[noteDrawerIndex] ?? null) : null} content={noteDrawerIndex != null ? (noteMap[noteDrawerIndex] ?? '') : ''} onChange={(v) => { if (noteDrawerIndex != null) handleNoteChange(noteDrawerIndex, v) }} onDelete={() => { if (noteDrawerIndex != null) handleNoteDelete(noteDrawerIndex) }} onLocate={() => { if (noteDrawerIndex != null) { selectSentence(noteDrawerIndex); setNoteDrawerIndex(null) } }} onClose={() => setNoteDrawerIndex(null)} /></Shell>
+}
+
+/**
+ * 进度条专用包装：订阅引擎 timeupdate 把 currentMs 局限在本组件内部 ——
+ * 播放期间的 ~10Hz 更新只重渲染控制条，不再带动整页 reconcile
+ * （千句字幕列表每秒万级 diff 的问题由此消除；引擎侧已有 100ms 发射门控，无需再节流）。
+ */
+function LiveControlBar({ player, ...barProps }: Omit<React.ComponentProps<typeof PlayerControlBar>, 'currentMs'> & { player: SentencePlayer | null }) {
+  const [currentMs, setCurrentMs] = useState(0)
+  useEffect(() => {
+    if (!player) return
+    setCurrentMs(player.getCurrentTimeMs())
+    player.on('timeupdate', setCurrentMs)
+    return () => { player.off('timeupdate', setCurrentMs) }
+  }, [player])
+  return <PlayerControlBar {...barProps} currentMs={currentMs} />
 }
 
 export { Player }
