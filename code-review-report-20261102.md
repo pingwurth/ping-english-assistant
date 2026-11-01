@@ -1,5 +1,13 @@
 ## Review: repo
 
+> **修复记录（2026-11-02 同日）**：榜单 20 条全部复核至当前 HEAD 并处理完毕。**11 条在当日更早的修复提交（aee2e2d / 05dcc0f / 762559d / d27d841 / 87c3a09 等）中已完成**：#1 密钥掩码+掩码哨兵（soe/llm-configs 全分支）、#2 hf 代理段级拒绝+resolve 前缀断言、#3 fetchModels 改走 /api/models 探测不落盘 + settings/llm POST 浅合并、#4/#5 idb 取消永久内存降级（wrapRead/wrapWrite 单次失败单次负责）、#6 讯飞鉴权按官方 open-ise 方案重写（golden 向量同步）、#7 readRaw 损坏先备份 + tmp+rename 原子写 + 串行队列、#12 transcribe 消费 localServices 段（legacy 回退）、#13 SSE currentEvent 跨块存活、#17 isSoeRetryable 共享模块（429/5xx/连接层重试，4xx/超时不重试）；#18 播放器装配已收敛为 useSentencePlayer（player.tsx 保留页面化装配为 hook 头注释记录的设计决策）。
+> **本轮新修 7 项**：#8 idb `tx()`/`getAllEntries` 改为事务 `oncomplete`/`onabort` 收口（commit 期 abort 不再假成功）；#19 Recorder 新增 `'starting'` 态关掉权限弹窗期双开竞态（失败路径回 idle）；#20 STORE 条目 CRC 校验（readEntry + zip 导入写入前流式预检，杜绝损坏媒体静默入库）；#9 残余三处 N+1（training-center / settings 统计 / removeMaterial 级联）换 `getAllEntries` 单事务快照；#3 残余迁移清单补齐 mnemonic*/whisper* 两对；Summary 项 c069 讯飞 base64 分片累积后统一解码（跨片多字节字符不再咬坏）；c055 三条 multipart 入口（transcribe ×2 / soe evaluate）按 Content-Length 预检 413。
+> **测试缺口补齐（#10/#11/#14/#15/#16）**：新增 8 个测试文件 75 例（160→235）——sentence-player 循环三档/±120ms 容差/漂移补偿边界（17）、html-player seek 校准状态机+AbortError 分类+节流（12）、recorder 竞态+权限映射（4）、parseHfPath 恶意段矩阵（16，抽为 `platform/hf-path.ts` 纯模块）、material-store 级联删除 m-1/m-10 边界+种子注入（5）、server-settings 损坏备份/原子写/迁移/掩码保护（9）、soe 路由掩码往返回归（6）、upload-limit（6）；vitest include 扩至 platform/lib/stores/app/api；删除 lib/machine-translate 空目录漂移。
+> 验证基线：client `tsc --noEmit` 0 错 + vitest 235/235 + `next build` 通过；server `tsc --noEmit` 0 错 + vitest 51/51。
+> 遗留（规划级）：#9 深层项（records 建 materialId 索引 / 统计聚合记录 / train: 保留策略）、#18 录音 effect 两份小拷贝（行为已分化，抽 hook 收益有限）；开放问题 ①讯飞真实凭据握手、③Azure PA >30s 实测仍待真实环境验证。
+
+Brief: repo 模式深度审计:9 个角度 finder(A/C/E/F/H/I/J/K/T)对 client 六层 + server SOE 代理并行扫描,61 条新候选全部进入对抗验证(60 保留、1 驳回、11 条因 refuter 限流无票被引擎按规则丢弃)。最重的问题集中在三簇:存储层静默数据丢失(idb 内存回落 / 事务假成功 / settings.json 整文件重建)、BFF 安全面(密钥明文回显、hf 通配代理路径穿越、上传无上限)、以及会摧毁已保存配置的『获取模型列表』按钮。
+
 Brief: repo 模式深度审计:9 个角度 finder(A/C/E/F/H/I/J/K/T)对 client 六层 + server SOE 代理并行扫描,61 条新候选全部进入对抗验证(60 保留、1 驳回、11 条因 refuter 限流无票被引擎按规则丢弃)。最重的问题集中在三簇:存储层静默数据丢失(idb 内存回落 / 事务假成功 / settings.json 整文件重建)、BFF 安全面(密钥明文回显、hf 通配代理路径穿越、上传无上限)、以及会摧毁已保存配置的『获取模型列表』按钮。
 
 Run: carrier 1 — 主会话且 Workflow 工具可用:以 workflows/deep-review.js 调度 13 角度 finder + 逐候选对抗 refuter(载入 references/angles.md 全文 charter),随后以 submit --kind carrier1 回灌 ledger · rounds=1 · candidates=72 · dupDropped=11 · refuted=1 · capped-out=40

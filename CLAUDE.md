@@ -14,7 +14,7 @@ All commands run from `client/`:
 pnpm install          # install deps (pnpm, not npm)
 pnpm dev              # next dev — localhost:3000
 pnpm build            # next build
-pnpm test             # vitest run (core/ and services/mock/ only, node env)
+pnpm test             # vitest run (node env; core/services/platform/lib/stores/app-api unit tests)
 npx tsc --noEmit      # typecheck (no dedicated script)
 ```
 
@@ -66,9 +66,13 @@ Client-side routing via react-router-dom 7.x. Local-first: all user data in brow
 
 ### Test Layout
 
-Vitest 4.x, node environment only. Test files co-located in `__tests__/` dirs:
-- `core/subtitle/__tests__/`, `core/training/__tests__/`, `core/audio/__tests__/`
-- `services/mock/__tests__/`
+Vitest 4.x, node environment only (no browser/React component tests). Test files co-located in `__tests__/` dirs:
+- `core/**` — subtitle/training/audio/backup/player (`sentence-player` injects a fake PlayerController)
+- `services/**` — mock & api service tests
+- `platform/**` — html-player seek-calibration state machine, recorder (stubbed getUserMedia/MediaRecorder/AudioContext), hf-path, storage helpers
+- `lib/**` — server-settings (HOME redirected to a temp dir per test), upload-limit
+- `stores/**` — material-store cascade removal & seeding (idb falls back to in-memory in node)
+- `app/api/**` — BFF route handlers imported as functions (e.g. soe settings masking round-trip)
 
 Path alias `@/*` maps to `client/` root (defined in `tsconfig.json`).
 

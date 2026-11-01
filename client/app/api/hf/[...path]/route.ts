@@ -21,6 +21,7 @@ import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import { readKokoroSettings } from '@/lib/server-settings'
 import { DEFAULT_HF_BASE } from '@/lib/service-endpoints'
 import { isAllowedKokoroFile } from '@/platform/kokoro-protocol'
+import { parseHfPath, type HfFileRef } from '@/platform/hf-path'
 
 /** 上游地址：默认 huggingface.co，可用 HF_BASE 环境变量覆盖（如 hf-mirror.com） */
 const HF_BASE = process.env.HF_BASE || DEFAULT_HF_BASE
@@ -29,51 +30,9 @@ const HF_BASE = process.env.HF_BASE || DEFAULT_HF_BASE
 const UPSTREAM_ATTEMPTS = 2
 /** q8 Kokoro 模型约 89MB；保留余量并阻止把代理当作任意大文件下载器。 */
 const MAX_HF_FILE_BYTES = 128 * 1024 * 1024
-const KOKORO_REVISION = 'main'
 
 const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
 const proxyAgent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined
-
-interface HfFileRef {
-  /** 磁盘缓存目录名：{org}--{repo} */
-  cacheKey: string
-  /** 缓存目录内的相对路径 */
-  file: string
-  /** 完整 org/repo，用于和 settings.kokoro.modelId 精确比对 */
-  modelId: string
-  /** 上游 URL */
-  url: string
-}
-
-/** 解析 {org}/{repo}/resolve/{revision}/{file}，不合法时返回 null */
-function parseHfPath(path: string[]): HfFileRef | null {
-  // 路径段是磁盘路径的原料：空段、点段、编码斜杠/反斜杠一律拒绝（防路径穿越，Next 会先解码 %2e%2e/%2f）
-  if (
-    path.some(
-      (seg) => !seg || seg === '.' || seg === '..' || seg.includes('/') || seg.includes('\\'),
-    )
-  ) {
-    return null
-  }
-
-  const resolveIdx = path.indexOf('resolve')
-  if (resolveIdx < 2 || resolveIdx >= path.length - 1) return null
-
-  const org = path[0]!
-  const repo = path.slice(1, resolveIdx).join('/')
-  const revision = path[resolveIdx + 1]!
-  const file = path.slice(resolveIdx + 2).join('/')
-  if (!org || !repo || !revision || !file) return null
-  if (revision !== KOKORO_REVISION) return null
-
-  const modelId = `${org}/${repo}`
-  return {
-    modelId,
-    cacheKey: `${org}--${repo}`,
-    file,
-    url: `${HF_BASE}/${org}/${repo}/resolve/${revision}/${file}`,
-  }
-}
 
 /**
  * 解析磁盘缓存绝对路径。除路径 containment 外，还只接受：
@@ -186,7 +145,7 @@ export async function HEAD(
   _request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
-  const ref = parseHfPath((await params).path)
+  const ref = parseHfPath((await params).path, HF_BASE)
   if (!ref) return new NextResponse(null, { status: 400 })
 
   try {
@@ -216,7 +175,7 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
-  const ref = parseHfPath((await params).path)
+  const ref = parseHfPath((await params).path, HF_BASE)
   if (!ref) {
     return NextResponse.json({ error: 'Invalid HF path' }, { status: 400 })
   }
