@@ -66,6 +66,17 @@ export const DEFAULT_WHISPER_TRANSCRIBE_URL = 'http://127.0.0.1:8766'
 export const DEFAULT_LOCAL_MODEL_URL = 'http://127.0.0.1:11434'
 /** SOE 评分代理（Fastify server/，契约②）默认地址 */
 export const DEFAULT_SOE_PROXY_URL = 'http://127.0.0.1:8788'
+/** OpenAI-compatible `/models` 探测端点（模型配置弹窗使用） */
+export const OPENAI_MODELS_ENDPOINT = '/models'
+/** faster-whisper Python 服务端点 */
+export const WHISPER_TRANSCRIBE_ENDPOINT = '/transcribe'
+export const WHISPER_TRANSCRIBE_HEALTH_ENDPOINT = '/health'
+/** WhisperX Python 服务端点 */
+export const WHISPER_ALIGN_ENDPOINT = '/align'
+/** Fastify SOE 代理端点 */
+export const SOE_EVALUATE_ENDPOINT = '/api/v1/soe/evaluate'
+export const SOE_HEALTH_ENDPOINT = '/healthz'
+
 /** HuggingFace 模型下载默认源（可被 HF_BASE 环境变量覆盖，如 hf-mirror.com） */
 export const DEFAULT_HF_BASE = 'https://huggingface.co'
 

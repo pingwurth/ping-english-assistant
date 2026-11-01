@@ -7,6 +7,25 @@
 
 import type { TtsSentenceTiming } from '@/services/mock/tts'
 
+/** Kokoro q8 量化模型必需的非音色文件（与实际 transformers.js 加载清单一致） */
+export const KOKORO_MODEL_FILES = [
+  'config.json',
+  'tokenizer.json',
+  'tokenizer_config.json',
+  'onnx/model_quantized.onnx',
+] as const
+
+/** 内置美式英文音色；HF 代理只允许下载这些 voice 文件。 */
+export const KOKORO_VOICE_IDS = ['af_heart', 'af_nicole', 'am_adam', 'am_michael'] as const
+
+export type KokoroModelFile = (typeof KOKORO_MODEL_FILES)[number]
+export type KokoroVoiceId = (typeof KOKORO_VOICE_IDS)[number]
+
+export function isAllowedKokoroFile(file: string): boolean {
+  if ((KOKORO_MODEL_FILES as readonly string[]).includes(file)) return true
+  return KOKORO_VOICE_IDS.some((voice) => file === `voices/${voice}.bin`)
+}
+
 export type KokoroLoadPhase =
   /** 命中磁盘缓存，正在读本地文件 */
   | 'loading'

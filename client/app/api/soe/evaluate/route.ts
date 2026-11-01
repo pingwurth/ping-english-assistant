@@ -5,7 +5,7 @@
  */
 import { NextResponse } from 'next/server'
 import { readSoeConfig, type SoeSettingsConfig } from '@/lib/server-settings'
-import { buildServiceUrl } from '@/lib/service-endpoints'
+import { SOE_EVALUATE_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 
 /** 取所选 provider 的密钥（剥离空串）；未配置 → null（省略 creds 字段，代理回落 env） */
 function buildCreds(cfg: SoeSettingsConfig): Record<string, Record<string, string>> | null {
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
 
   let upstream: Response
   try {
-    upstream = await fetch(buildServiceUrl(cfg.proxyUrl, '/api/v1/soe/evaluate'), {
+    upstream = await fetch(buildServiceUrl(cfg.proxyUrl, SOE_EVALUATE_ENDPOINT), {
       method: 'POST',
       body: outgoing,
       signal: req.signal,

@@ -4,7 +4,7 @@
  * 根据 provider 分发到不同的实现：
  *   - dashscope: 阿里云原生 TTS API
  *   - mimo: OpenAI-compatible TTS
- *   - 其他: 回退到 dashscope
+ *   - 其他: 回退到 mimo（OpenAI-compatible）
  */
 
 import type { TtsModelConfig, TtsResult } from './types'
@@ -42,8 +42,8 @@ export async function generateTts(
       return generateTtsDashScope(text, config)
 
     default:
-      // 未知 provider 回退到 dashscope
-      console.log(`[TTS] Unknown provider "${provider}", falling back to DashScope`)
-      return generateTtsDashScope(text, config)
+      // 未知 provider 回退到 OpenAI-compatible（与 ASR/chat 的 fallback 口径一致）
+      console.log(`[TTS] Unknown provider "${provider}", falling back to OpenAI-compatible MiMo`)
+      return generateTtsMimo(text, config)
   }
 }

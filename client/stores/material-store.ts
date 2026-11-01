@@ -140,6 +140,30 @@ export function getProgress(materialId: string): Promise<LearningProgress | unde
   return recordsStore.get<LearningProgress>(RECORD_KEYS.progress(materialId))
 }
 
+/** 删句后平移单句训练明细中的 sentenceIndex；被删句的记录删除。 */
+export async function shiftTrainingRecordsAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
+  await initMaterials()
+  const entries = await recordsStore.getAllEntries()
+  for (const [key, value] of entries) {
+    if (!key.startsWith(RECORD_KEY_PREFIXES.training)) continue
+    const record = value as TrainingRecord | undefined
+    if (record?.materialId !== materialId || record.mode !== 'dictation') continue
+
+    const detail = record.detail as { sentenceIndex?: unknown }
+    if (typeof detail.sentenceIndex !== 'number') continue
+    if (detail.sentenceIndex === deletedIndex) {
+      await recordsStore.delete(key)
+      continue
+    }
+    if (detail.sentenceIndex > deletedIndex) {
+      await recordsStore.put(key, {
+        ...record,
+        detail: { ...record.detail, sentenceIndex: detail.sentenceIndex - 1 },
+      } satisfies TrainingRecord)
+    }
+  }
+}
+
 /** 删除材料：级联清理 material + blob + 相关 records（进度/收藏/训练记录） */
 export async function removeMaterial(id: string): Promise<void> {
   await initMaterials()

@@ -51,13 +51,17 @@ export async function favoriteSentenceIndexes(materialId: string): Promise<numbe
  */
 export async function shiftFavoritesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
   const favorites = await listFavorites(materialId)
-  const after = favorites.filter((f) => f.sentenceIndex > deletedIndex)
-  await Promise.all([
-    ...favorites
-      .filter((f) => f.sentenceIndex >= deletedIndex)
-      .map((f) => recordsStore.delete(RECORD_KEYS.favorite(materialId, f.sentenceIndex))),
-    ...after.map((f) =>
-      recordsStore.put(RECORD_KEYS.favorite(materialId, f.sentenceIndex - 1), { ...f, sentenceIndex: f.sentenceIndex - 1 }),
-    ),
-  ])
+  const affected = favorites.filter((f) => f.sentenceIndex >= deletedIndex)
+  const after = affected.filter((f) => f.sentenceIndex > deletedIndex)
+
+  // 先删除全部受影响旧 key，再写入平移 key；连续序号平移时同 key delete/put 顺序不可预测。
+  for (const favorite of affected) {
+    await recordsStore.delete(RECORD_KEYS.favorite(materialId, favorite.sentenceIndex))
+  }
+  for (const favorite of after) {
+    await recordsStore.put(
+      RECORD_KEYS.favorite(materialId, favorite.sentenceIndex - 1),
+      { ...favorite, sentenceIndex: favorite.sentenceIndex - 1 },
+    )
+  }
 }

@@ -197,14 +197,14 @@ export function useTranscribe() {
     }
   }, [])
 
-  const executeTranscribe = useCallback(async (file: File, signal?: AbortSignal) => {
+  const executeTranscribe = useCallback(async (file: File, signal?: AbortSignal, configId?: string) => {
     setStatus('running')
     setError('')
     setTranslateWarning('')
     setEditing(false)
 
     try {
-      const res = await callLlmTranscribe(file, signal, selectedAsrConfigId || undefined)
+      const res = await callLlmTranscribe(file, signal, configId)
       const srtText = segmentsToSrt(res.segments)
       const { srt: finalSrt, result: finalResult } = await applyTranslation(res.segments, srtText, res.text, signal)
       setResult(finalResult)
@@ -217,7 +217,7 @@ export function useTranscribe() {
       setError(apiErr.message)
       setStatus('error')
     }
-  }, [selectedAsrConfigId, applyTranslation])
+  }, [applyTranslation])
 
   const start = useCallback(async (file: File | null) => {
     if (!file) return
@@ -239,7 +239,9 @@ export function useTranscribe() {
         return
       }
 
-      await executeTranscribe(file, ctrl.signal)
+      // executeTranscribe 的闭包可能仍持有旧的空 selectedAsrConfigId；显式传本次解析到的默认配置。
+      const configId = selectedAsrConfigId || configs[0]?.id
+      await executeTranscribe(file, ctrl.signal, configId)
       return
     }
 

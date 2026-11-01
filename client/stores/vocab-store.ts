@@ -166,6 +166,29 @@ export function hasText(text: string, bookId?: string): boolean {
 }
 
 /**
+ * 删句后平移该材料词条的来源句序号；被删句来源置为 -1（保留词条与上下文，但不再指向现存句）。
+ */
+export async function shiftVocabEntriesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
+  await initVocab()
+  const entries = await recordsStore.getAllEntries()
+  let changed = false
+  for (const [key, value] of entries) {
+    if (!key.startsWith(RECORD_KEY_PREFIXES.vocabEntry)) continue
+    const entry = value as VocabEntry | undefined
+    if (entry?.materialId !== materialId || typeof entry.sentenceIndex !== 'number') continue
+
+    if (entry.sentenceIndex === deletedIndex) {
+      await recordsStore.put(key, { ...entry, sentenceIndex: -1 } satisfies VocabEntry)
+      changed = true
+    } else if (entry.sentenceIndex > deletedIndex) {
+      await recordsStore.put(key, { ...entry, sentenceIndex: entry.sentenceIndex - 1 } satisfies VocabEntry)
+      changed = true
+    }
+  }
+  if (changed) await refresh()
+}
+
+/**
  * 导入/重导入材料字幕后调用：扫描字幕单词与生词本词条匹配，按材料记账更新出现次数。
  * 幂等：同一材料重复应用（重导入 SRT / 重跑 AI 转写）先减去该材料的旧贡献再累加新值，
  * 频次不会翻倍；词条在此材料中不再出现时回落。

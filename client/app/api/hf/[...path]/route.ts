@@ -20,12 +20,16 @@ import { join, dirname, resolve, sep } from 'path'
 import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import { readKokoroSettings } from '@/lib/server-settings'
 import { DEFAULT_HF_BASE } from '@/lib/service-endpoints'
+import { isAllowedKokoroFile } from '@/platform/kokoro-protocol'
 
 /** 上游地址：默认 huggingface.co，可用 HF_BASE 环境变量覆盖（如 hf-mirror.com） */
 const HF_BASE = process.env.HF_BASE || DEFAULT_HF_BASE
 
 /** 上游重试次数：HF 的 /resolve 会 302 到 CDN，偶发连不上，重试一次基本能过 */
 const UPSTREAM_ATTEMPTS = 2
+/** q8 Kokoro 模型约 89MB；保留余量并阻止把代理当作任意大文件下载器。 */
+const MAX_HF_FILE_BYTES = 128 * 1024 * 1024
+const KOKORO_REVISION = 'main'
 
 const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
 const proxyAgent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined
@@ -35,6 +39,8 @@ interface HfFileRef {
   cacheKey: string
   /** 缓存目录内的相对路径 */
   file: string
+  /** 完整 org/repo，用于和 settings.kokoro.modelId 精确比对 */
+  modelId: string
   /** 上游 URL */
   url: string
 }
@@ -58,21 +64,32 @@ function parseHfPath(path: string[]): HfFileRef | null {
   const revision = path[resolveIdx + 1]!
   const file = path.slice(resolveIdx + 2).join('/')
   if (!org || !repo || !revision || !file) return null
+  if (revision !== KOKORO_REVISION) return null
 
+  const modelId = `${org}/${repo}`
   return {
+    modelId,
     cacheKey: `${org}--${repo}`,
     file,
     url: `${HF_BASE}/${org}/${repo}/resolve/${revision}/${file}`,
   }
 }
 
-/** 解析磁盘缓存绝对路径，并校验未逃逸出缓存根目录（纵深防御） */
-async function localFileOf(ref: HfFileRef): Promise<string> {
-  const { modelPath } = await readKokoroSettings()
+/**
+ * 解析磁盘缓存绝对路径。除路径 containment 外，还只接受：
+ * settings.kokoro.modelId、main revision、Kokoro 实际会加载的文件。
+ * 这样该代理不能被当作任意 HuggingFace 仓库/任意大文件的下载器。
+ */
+async function localFileOf(ref: HfFileRef): Promise<string | null> {
+  const { modelId: configuredModelId, modelPath } = await readKokoroSettings()
+  if (configuredModelId.split('/').some((seg) => !seg || seg === '.' || seg === '..')) return null
+  if (ref.modelId !== configuredModelId) return null
+  if (!isAllowedKokoroFile(ref.file)) return null
+
   const cacheRoot = resolve(modelPath)
   const localFile = resolve(join(cacheRoot, ref.cacheKey, ref.file))
   if (localFile !== cacheRoot && !localFile.startsWith(cacheRoot + sep)) {
-    throw new Error('HF path escapes cache directory')
+    return null
   }
   return localFile
 }
@@ -126,7 +143,16 @@ async function downloadAndCache(ref: HfFileRef, localFile: string): Promise<Buff
     throw err
   }
 
+  const declaredLength = Number(resp.headers.get('content-length') ?? 0)
+  if (declaredLength > MAX_HF_FILE_BYTES) {
+    throw new Error(`HF file exceeds ${MAX_HF_FILE_BYTES} bytes: ${ref.file}`)
+  }
+
+  // arrayBuffer 前先检查声明长度；chunked/压缩响应仍以下载后的实际长度兜底。
   const buffer = Buffer.from(await resp.arrayBuffer())
+  if (buffer.length > MAX_HF_FILE_BYTES) {
+    throw new Error(`HF file exceeds ${MAX_HF_FILE_BYTES} bytes: ${ref.file}`)
+  }
 
   // 挡住「不是模型数据」的响应：这类内容一旦落盘就会永久污染缓存
   const bad = detectBadPayload(buffer, resp.headers.get('content-length'), resp.headers.get('content-encoding'))
@@ -164,7 +190,9 @@ export async function HEAD(
   if (!ref) return new NextResponse(null, { status: 400 })
 
   try {
-    const size = await cacheStat(await localFileOf(ref))
+    const localFile = await localFileOf(ref)
+    if (localFile === null) return new NextResponse(null, { status: 403 })
+    const size = await cacheStat(localFile)
     if (size === null) {
       return new NextResponse(null, {
         status: 404,
@@ -193,11 +221,14 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid HF path' }, { status: 400 })
   }
 
-  let localFile: string
+  let localFile: string | null
   try {
     localFile = await localFileOf(ref)
   } catch {
     return NextResponse.json({ error: 'Invalid HF path' }, { status: 400 })
+  }
+  if (localFile === null) {
+    return NextResponse.json({ error: 'HF file is outside the configured Kokoro model' }, { status: 403 })
   }
 
   const cached = await readCached(localFile)

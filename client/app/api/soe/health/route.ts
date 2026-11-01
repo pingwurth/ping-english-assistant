@@ -4,7 +4,7 @@
  */
 import { NextResponse } from 'next/server'
 import { readSoeConfig } from '@/lib/server-settings'
-import { buildServiceUrl } from '@/lib/service-endpoints'
+import { SOE_HEALTH_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 
 export async function GET() {
   const cfg = await readSoeConfig()
@@ -12,7 +12,7 @@ export async function GET() {
     return NextResponse.json({ ok: false })
   }
   try {
-    const res = await fetch(buildServiceUrl(cfg.proxyUrl, '/healthz'), { signal: AbortSignal.timeout(3000) })
+    const res = await fetch(buildServiceUrl(cfg.proxyUrl, SOE_HEALTH_ENDPOINT), { signal: AbortSignal.timeout(3000) })
     if (!res.ok) return NextResponse.json({ ok: false })
     const data = await res.json().catch(() => null)
     return NextResponse.json(data ?? { ok: false })

@@ -98,7 +98,7 @@ function Puzzle() {
       id: makeRecordId(),
       materialId: record.material.id,
       mode: 'puzzle',
-      scope: { type: 'all' },
+      scope: scope.type === 'favorites' ? { type: 'favorites' } : { type: 'all' },
       score,
       detail,
       createdAt: Date.now(),

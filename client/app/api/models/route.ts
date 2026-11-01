@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { OPENAI_MODELS_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 import { readEffectiveLlmSettings } from '@/lib/server-settings'
 
 interface OpenAIModel {
@@ -20,7 +21,7 @@ async function fetchModelList(baseUrl: string, apiKey: string): Promise<Response
   if (!normalized.endsWith('/v1')) {
     normalized = `${normalized}/v1`
   }
-  return fetch(`${normalized}/models`, {
+  return fetch(buildServiceUrl(normalized, OPENAI_MODELS_ENDPOINT), {
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',

@@ -65,13 +65,18 @@ export async function deleteSentenceNote(materialId: string, sentenceIndex: numb
  */
 export async function shiftNotesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
   const notes = await listNotes(materialId)
-  const after = notes.filter((n) => n.sentenceIndex > deletedIndex)
-  await Promise.all([
-    ...notes
-      .filter((n) => n.sentenceIndex >= deletedIndex)
-      .map((n) => recordsStore.delete(RECORD_KEYS.note(materialId, n.sentenceIndex))),
-    ...after.map((n) =>
-      recordsStore.put(RECORD_KEYS.note(materialId, n.sentenceIndex - 1), { ...n, sentenceIndex: n.sentenceIndex - 1 }),
-    ),
-  ])
+  const affected = notes.filter((n) => n.sentenceIndex >= deletedIndex)
+  const after = affected.filter((n) => n.sentenceIndex > deletedIndex)
+
+  // 先删除全部受影响旧 key，再写入平移 key；handwritten IDB wrapper 每次写入一个事务，
+  // Promise.all 中同 key delete/put 的顺序不可预测，后提交的 delete 会丢笔记。
+  for (const note of affected) {
+    await recordsStore.delete(RECORD_KEYS.note(materialId, note.sentenceIndex))
+  }
+  for (const note of after) {
+    await recordsStore.put(
+      RECORD_KEYS.note(materialId, note.sentenceIndex - 1),
+      { ...note, sentenceIndex: note.sentenceIndex - 1 },
+    )
+  }
 }

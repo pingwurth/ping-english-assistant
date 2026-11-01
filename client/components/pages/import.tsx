@@ -9,7 +9,7 @@ import { Shell, PageIntro } from '@/components/shared/shell'
 import { formatDuration } from '@/components/shared/player-parts'
 import { parseSubtitle, SubtitleParseError } from '@/core/subtitle'
 import type { SubtitleData } from '@/types/subtitle'
-import { createCollection, initMaterials, materialStore, putMaterialRecord, putMediaBlob, deleteMediaBlob, removeCollection } from '@/stores/material-store'
+import { createCollection, initMaterials, materialStore, putMaterialRecord, putMediaBlob, removeCollection, removeMaterial } from '@/stores/material-store'
 import { useStore } from '@/stores/store'
 import { updateFrequencies } from '@/stores/vocab-store'
 import type { MaterialRecord } from '@/platform/storage/schema'
@@ -252,18 +252,21 @@ function ImportPage() {
         subtitleData: subtitle?.data ?? null, // 解析结果随元数据同存，避免重复解析（架构 §4.2）
       }
       await putMaterialRecord(record)
-      // 更新生词本出现频率：扫描字幕单词与词条匹配
+      // 更新生词本出现频率：扫描字幕单词与词条匹配。此步失败需回滚完整材料，避免无媒体孤儿。
       if (subtitle?.data?.sentences) {
         const allWords = subtitle.data.sentences.flatMap((s) => s.words)
         await updateFrequencies(allWords, id)
       }
-      if (fromTts && taskId) await consumeTtsExport(taskId)
-      if (fromTranscribe && taskId) await consumeTranscribeExport(taskId)
+
+      // 临时产物清理失败不影响已成功导入的材料；残留 key 可由下一次导入/清空数据清理。
+      if (fromTts && taskId) await consumeTtsExport(taskId).catch((error) => console.warn('清理 TTS 临时产物失败', error))
+      if (fromTranscribe && taskId) await consumeTranscribeExport(taskId).catch((error) => console.warn('清理转写临时产物失败', error))
+
       setDone(true)
       setDoneId(id)
     } catch {
-      // 回滚已写入的 blob 与本次新建的空集合，避免孤儿数据
-      await deleteMediaBlob(id).catch(() => {})
+      // 回滚 material + blob + 本次新建的空集合，避免材料列表出现不可播放的孤儿记录。
+      await removeMaterial(id).catch(() => {})
       if (createdCollectionId) await removeCollection(createdCollectionId).catch(() => {})
       setFinishError('导入失败，请重试')
       setSaving(false)

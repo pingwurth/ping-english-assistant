@@ -6,6 +6,7 @@ import { TranslateDirectionToggle } from '@/components/shared/translate-directio
 import { translateTexts, detectDirection } from '@/lib/translate'
 import { useTranslateConfigs } from '@/lib/use-translate-configs'
 import { formatDuration } from '@/components/shared/player-parts'
+import { splitWords } from '@/core/subtitle'
 import type { SubtitleSentence } from '@/types/subtitle'
 import type { TranslateDirection } from '@/types/api'
 
@@ -173,7 +174,7 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
       if (!translations[i]) return s
       return direction === 'en2zh'
         ? { ...s, textZh: translations[i] }
-        : { ...s, textEn: translations[i] }
+        : { ...s, textEn: translations[i], words: splitWords(translations[i]) }
     })
     onApplyAll(updated, direction)
     onOpenChange(false)

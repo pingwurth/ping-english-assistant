@@ -12,16 +12,23 @@ import { AiTranscribeDialog } from '@/components/shared/ai-transcribe-dialog'
 import { SubtitleEditDialog } from '@/components/shared/subtitle-edit-dialog'
 import { TranslateDrawer } from '@/components/shared/translate-drawer'
 import { SentenceNoteDrawer } from '@/components/shared/sentence-note-drawer'
-import { getMaterialRecord, getMediaBlob, getProgress, putMaterialRecord, touchMaterial } from '@/stores/material-store'
+import {
+  getMaterialRecord,
+  getMediaBlob,
+  getProgress,
+  putMaterialRecord,
+  shiftTrainingRecordsAfterDeletion,
+  touchMaterial,
+} from '@/stores/material-store'
 import { favoriteSentenceIndexes, setFavorite, shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
 import { deleteSentenceNote, listNotes, saveSentenceNote, shiftNotesAfterDeletion } from '@/stores/note-store'
-import { updateFrequencies } from '@/stores/vocab-store'
+import { shiftVocabEntriesAfterDeletion, updateFrequencies } from '@/stores/vocab-store'
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS, type MaterialRecord } from '@/platform/storage/schema'
 import { HtmlPlayerController } from '@/platform/html-player'
 import { SentencePlayer } from '@/core/player/sentence-player'
 import { getDefaultLoop, getDefaultRate } from '@/lib/pref-keys'
-import { exportSrt, parseSubtitle } from '@/core/subtitle'
+import { exportSrt, parseSubtitle, splitWords } from '@/core/subtitle'
 import { downloadBlob } from '@/lib/download'
 import { copyText } from '@/lib/clipboard'
 import type { LearningProgress } from '@/types/progress'
@@ -95,6 +102,10 @@ function Player() {
   const [rate, setRate] = useState<number>(() => getDefaultRate())
   const [active, setActive] = useState(0)
   const [durationMs, setDurationMs] = useState(0)
+  /** 媒体 metadata 加载完成，才允许把恢复位置 seek 到真实时间轴上 */
+  const [mediaReady, setMediaReady] = useState(false)
+  /** 待恢复的历史播放位置；收藏句 ?s=N 跳转优先 */
+  const [resumePositionMs, setResumePositionMs] = useState<number | null>(null)
   const [volume, setVolumeState] = useState(1)
   const [favSet, setFavSet] = useState<Set<number>>(new Set())
   // 句子笔记：sentenceIndex → Markdown 内容（本地缓存，编辑防抖落盘）
@@ -132,7 +143,17 @@ function Player() {
   useEffect(() => {
     let cancelled = false
     let objectUrl: string | null = null
-    // 换材料时复位笔记态（抽屉锚点与缓存内容都属于旧材料）
+    // 换材料时复位页面态：避免上一个材料的 revoked media URL、收藏与进度短暂附着到新材料。
+    setNotFound(false)
+    setRecord(null)
+    setMediaUrl(null)
+    setMediaFile(null)
+    setPlaying(false)
+    setActive(0)
+    setDurationMs(0)
+    setFavSet(new Set())
+    setMediaReady(false)
+    setResumePositionMs(null)
     setNoteMap({})
     setNoteDrawerIndex(null)
     ;(async () => {
@@ -149,6 +170,9 @@ function Player() {
         // 保存 File 对象用于 AI 转字幕
         const file = new File([blob], rec.material.mediaFileName || 'media', { type: blob.type })
         setMediaFile(file)
+      } else {
+        setMediaUrl(null)
+        setMediaFile(null)
       }
       // 收藏集合：records store 中 fav:{materialId}:* 前缀
       const favIndexes = await favoriteSentenceIndexes(materialId)
@@ -162,6 +186,7 @@ function Player() {
       const progress = await getProgress(materialId)
       if (cancelled || !progress) return
       playedRef.current.indexes = new Set(progress.playedSentenceIndexes)
+      setResumePositionMs(progress.lastPositionMs)
     })().catch(() => { if (!cancelled) setNotFound(true) })
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [materialId])
@@ -203,11 +228,12 @@ function Player() {
       setDurationMs(controller.getDurationMs() || record.material.durationMs)
       // 收藏夹跳转（?s=N）：定位到该句句首，不自动播放（高亮已由 jumpSentenceRef 的消费方设置）
       const jump = jumpSentenceRef.current
-      const target = jump == null ? undefined : sentences[jump]
-      if (target) {
-        jumpSentenceRef.current = null
-        sp.seekTo(target.startMs)
+      if (jump != null) {
+        const target = sentences[jump]
+        if (target) sp.seekTo(target.startMs)
+        jumpSentenceRef.current = null // 无效 s 参数也消费掉，给进度恢复让路
       }
+      setMediaReady(true)
     }).catch(() => { /* 加载失败：保持静态展示，控件可用但播放会报错提示 */ })
 
     sp.on('timeupdate', () => {
@@ -231,6 +257,7 @@ function Player() {
 
     return () => {
       cancelled = true
+      setMediaReady(false)
       // 卸载前先同步捕获播放位置，再异步落盘（destroy 后 controller 不可读）
       const lastMs = sp.getCurrentTimeMs()
       void flushProgress(lastMs)
@@ -240,6 +267,16 @@ function Player() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [materialId, playable, mediaUrl])
+
+  // 媒体 metadata 就绪后恢复上次位置；?s=N 已在 load 回调中优先消费。
+  useEffect(() => {
+    if (!mediaReady || resumePositionMs === null) return
+    if (jumpSentenceRef.current !== null) return
+    const player = playerRef.current
+    if (!player) return
+    player.seekTo(resumePositionMs)
+    setResumePositionMs(null)
+  }, [mediaReady, resumePositionMs])
 
   // 字幕数据变化（AI 转字幕/文件导入、纠错、删句、整篇翻译）时同步句列表到已装配引擎：
   // 装配 effect 依赖 [materialId, playable, mediaUrl]，字幕更新不会重建引擎，
@@ -418,7 +455,7 @@ function Player() {
     //    会在平移完成后带着旧索引把笔记写到错误的句子上（或在被删句槽位复活笔记）
     for (const [i, p] of pendingNotesRef.current) {
       clearTimeout(p.timer)
-      void saveSentenceNote(materialId, i, p.content)
+      await saveSentenceNote(materialId, i, p.content)
     }
     pendingNotesRef.current.clear()
 
@@ -426,11 +463,20 @@ function Player() {
       .filter((_, i) => i !== index)
       .map((s, i) => ({ ...s, index: i }))
     const data = { ...record.subtitleData, sentences: updated }
-    const updatedRecord: MaterialRecord = { ...record, subtitleData: data }
+    const updatedRecord: MaterialRecord = {
+      ...record,
+      material: record.material.subtitle
+        ? { ...record.material, subtitle: { ...record.material.subtitle, sentenceCount: updated.length } }
+        : record.material,
+      subtitleData: data,
+    }
     await putMaterialRecord(updatedRecord)
-    // ② 笔记与收藏的 key 平移（store 内会删除被删句自己的 key）
+    // ② 句序相关 records 全部平移；每次写 key 前先删旧 key，避免独立 IDB 事务顺序不确定。
     await shiftNotesAfterDeletion(materialId, index)
     await shiftFavoritesAfterDeletion(materialId, index)
+    await shiftTrainingRecordsAfterDeletion(materialId, index)
+    await shiftVocabEntriesAfterDeletion(materialId, index)
+    await updateFrequencies(updated.flatMap((sentence) => sentence.words), materialId)
     setFavSet((prev) => {
       const next = new Set<number>()
       for (const i of prev) {
@@ -470,7 +516,7 @@ function Player() {
   const handleEditSentenceSave = useCallback(async (updated: SubtitleSentence) => {
     if (!record?.subtitleData) return
     const sentences = [...record.subtitleData.sentences]
-    sentences[updated.index] = updated
+    sentences[updated.index] = { ...updated, words: splitWords(updated.textEn) }
     const isBilingual = sentences.some((s) => !!s.textZh)
     const data = { ...record.subtitleData, sentences, isBilingual }
     const updatedRecord: MaterialRecord = {
@@ -503,7 +549,11 @@ function Player() {
   const handleTranslateApplyAll = useCallback(async (updatedSentences: SubtitleSentence[], _direction: 'en2zh' | 'zh2en') => {
     if (!record?.subtitleData) return
     const sub = record.material.subtitle!
-    const data = { ...record.subtitleData, sentences: updatedSentences, isBilingual: true }
+    const data = {
+      ...record.subtitleData,
+      sentences: updatedSentences.map((sentence) => ({ ...sentence, words: splitWords(sentence.textEn) })),
+      isBilingual: true,
+    }
     const updatedRecord: MaterialRecord = {
       ...record,
       material: { ...record.material, subtitle: { ref: sub.ref, format: sub.format, sentenceCount: sub.sentenceCount, isBilingual: true } },

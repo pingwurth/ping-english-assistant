@@ -150,7 +150,7 @@ function ReadAloud() {
           id: makeRecordId(),
           materialId: record.material.id,
           mode: 'read-aloud',
-          scope: { type: 'all' },
+          scope: scope.type === 'favorites' ? { type: 'favorites' } : { type: 'all' },
           score: res.total,
           detail,
           createdAt: Date.now(),

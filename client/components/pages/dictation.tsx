@@ -86,7 +86,7 @@ function Dictation() {
         id: makeRecordId(),
         materialId: record.material.id,
         mode: 'dictation',
-        scope: { type: 'all' },
+        scope: scope.type === 'favorites' ? { type: 'favorites' } : { type: 'all' },
         score: accuracy,
         detail,
         createdAt: Date.now(),

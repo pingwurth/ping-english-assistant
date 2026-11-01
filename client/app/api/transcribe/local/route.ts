@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server'
 import { readLlmSettings, readLocalServices } from '@/lib/server-settings'
-import { DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
+import {
+  DEFAULT_WHISPER_TRANSCRIBE_URL,
+  WHISPER_TRANSCRIBE_ENDPOINT,
+  WHISPER_TRANSCRIBE_HEALTH_ENDPOINT,
+  buildServiceUrl,
+} from '@/lib/service-endpoints'
 
 /**
  * POST /api/transcribe/local
@@ -48,7 +53,7 @@ export async function POST(request: Request) {
 
     let response: Response
     try {
-      response = await fetch(`${transcribeUrl}/transcribe`, {
+      response = await fetch(buildServiceUrl(transcribeUrl, WHISPER_TRANSCRIBE_ENDPOINT), {
         method: 'POST',
         body: forwardForm,
         signal: controller.signal,
@@ -104,7 +109,7 @@ export async function GET() {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000)
 
-    const response = await fetch(`${transcribeUrl}/health`, {
+    const response = await fetch(buildServiceUrl(transcribeUrl, WHISPER_TRANSCRIBE_HEALTH_ENDPOINT), {
       signal: controller.signal,
     })
 

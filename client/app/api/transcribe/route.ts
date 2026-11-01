@@ -12,6 +12,8 @@ import type { AsrModelConfig, AsrSegment } from '@/lib/llm'
 import {
   getDefaultModel,
   DEFAULT_WHISPER_ALIGN_URL,
+  WHISPER_ALIGN_ENDPOINT,
+  buildServiceUrl,
 } from '@/lib/service-endpoints'
 
 // ---------------------------------------------------------------------------
@@ -39,7 +41,7 @@ async function alignWithWhisperX(
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 120_000)
 
-    const response = await fetch(`${alignUrl}/align`, {
+    const response = await fetch(buildServiceUrl(alignUrl, WHISPER_ALIGN_ENDPOINT), {
       method: 'POST',
       body: formData,
       signal: controller.signal,
