@@ -5,17 +5,24 @@
  * 本地缓存：{modelPath}/{org}--{repo}/{file}
  *          modelPath 来自 ~/.ping-eng/settings.json 的 kokoro.modelPath
  *
- * GET  ：命中磁盘直接返回，未命中才从 huggingface.co 下载并写入磁盘。
- * HEAD ：只探测磁盘，不发起任何上游请求 —— 客户端据此区分「读缓存」还是「首次下载」。
+ * GET ：命中磁盘直接返回，未命中才从上游下载并写入磁盘。
+ * HEAD：只探测磁盘，不发起任何上游请求 —— 客户端据此区分「读缓存」还是「首次下载」。
+ *
+ * 安全：路径段会直接成为磁盘路径原料，任何 `..`、`.`、编码斜杠（%2f/%2e）一律拒绝；
+ *       localFileOf 再做一次 resolve 前缀校验（纵深防御）。
+ * 缓存：下载经 tmp+rename 原子落盘，sidecar `.meta` 记录 size，命中时校验 ——
+ *       截断文件自动判 MISS 重新下载，不会永久污染；同文件并发未命中共享一次下载。
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { readFile, writeFile, mkdir, stat } from 'fs/promises'
-import { join, dirname } from 'path'
+import { readFile, writeFile, mkdir, stat, rename } from 'fs/promises'
+import { join, dirname, resolve, sep } from 'path'
 import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import { readKokoroSettings } from '@/lib/server-settings'
+import { DEFAULT_HF_BASE } from '@/lib/service-endpoints'
 
-const HF_BASE = 'https://huggingface.co'
+/** 上游地址：默认 huggingface.co，可用 HF_BASE 环境变量覆盖（如 hf-mirror.com） */
+const HF_BASE = process.env.HF_BASE || DEFAULT_HF_BASE
 
 /** 上游重试次数：HF 的 /resolve 会 302 到 CDN，偶发连不上，重试一次基本能过 */
 const UPSTREAM_ATTEMPTS = 2
@@ -34,12 +41,21 @@ interface HfFileRef {
 
 /** 解析 {org}/{repo}/resolve/{revision}/{file}，不合法时返回 null */
 function parseHfPath(path: string[]): HfFileRef | null {
+  // 路径段是磁盘路径的原料：空段、点段、编码斜杠/反斜杠一律拒绝（防路径穿越，Next 会先解码 %2e%2e/%2f）
+  if (
+    path.some(
+      (seg) => !seg || seg === '.' || seg === '..' || seg.includes('/') || seg.includes('\\'),
+    )
+  ) {
+    return null
+  }
+
   const resolveIdx = path.indexOf('resolve')
   if (resolveIdx < 2 || resolveIdx >= path.length - 1) return null
 
-  const org = path[0]
+  const org = path[0]!
   const repo = path.slice(1, resolveIdx).join('/')
-  const revision = path[resolveIdx + 1]
+  const revision = path[resolveIdx + 1]!
   const file = path.slice(resolveIdx + 2).join('/')
   if (!org || !repo || !revision || !file) return null
 
@@ -50,10 +66,93 @@ function parseHfPath(path: string[]): HfFileRef | null {
   }
 }
 
-/** 磁盘缓存中的绝对路径（目录不存在时按需创建） */
+/** 解析磁盘缓存绝对路径，并校验未逃逸出缓存根目录（纵深防御） */
 async function localFileOf(ref: HfFileRef): Promise<string> {
   const { modelPath } = await readKokoroSettings()
-  return join(modelPath, ref.cacheKey, ref.file)
+  const cacheRoot = resolve(modelPath)
+  const localFile = resolve(join(cacheRoot, ref.cacheKey, ref.file))
+  if (localFile !== cacheRoot && !localFile.startsWith(cacheRoot + sep)) {
+    throw new Error('HF path escapes cache directory')
+  }
+  return localFile
+}
+
+/** 读取下载时存的 sidecar（size/etag）；无 sidecar（旧版缓存）返回 null = 信任现有文件 */
+async function readCacheMeta(localFile: string): Promise<{ size: number } | null> {
+  try {
+    const meta = JSON.parse(await readFile(`${localFile}.meta`, 'utf-8')) as { size?: unknown }
+    return typeof meta.size === 'number' ? { size: meta.size } : null
+  } catch {
+    return null
+  }
+}
+
+/** 命中前提：文件存在，且（若有 sidecar）大小与落盘时一致；否则视为 MISS */
+async function readCached(localFile: string): Promise<Buffer | null> {
+  try {
+    const [data, meta] = await Promise.all([readFile(localFile), readCacheMeta(localFile)])
+    if (meta && data.length !== meta.size) {
+      console.warn(
+        `[hf] cache size mismatch for ${localFile} (${data.length} != ${meta.size}), re-downloading`,
+      )
+      return null
+    }
+    return data
+  } catch {
+    return null
+  }
+}
+
+/** HEAD 用轻量探测：stat + sidecar 校验，不读整个文件 */
+async function cacheStat(localFile: string): Promise<number | null> {
+  try {
+    const [info, meta] = await Promise.all([stat(localFile), readCacheMeta(localFile)])
+    if (meta && info.size !== meta.size) return null
+    return info.size
+  } catch {
+    return null
+  }
+}
+
+/** 同文件并发未命中时共享的下载任务（in-flight 去重） */
+const inflightDownloads = new Map<string, Promise<Buffer>>()
+
+/** 下载 + 原子落盘（tmp+rename），并写 size sidecar 供命中校验 */
+async function downloadAndCache(ref: HfFileRef, localFile: string): Promise<Buffer> {
+  const resp = await fetchUpstream(ref.url)
+  if (resp.status !== 200) {
+    const err = new Error(`HuggingFace returned ${resp.status}`) as Error & { status?: number }
+    err.status = resp.status
+    throw err
+  }
+
+  const buffer = Buffer.from(await resp.arrayBuffer())
+
+  // 挡住「不是模型数据」的响应：这类内容一旦落盘就会永久污染缓存
+  const bad = detectBadPayload(buffer, resp.headers.get('content-length'), resp.headers.get('content-encoding'))
+  if (bad) throw new Error(bad)
+
+  await mkdir(dirname(localFile), { recursive: true })
+  const tmp = `${localFile}.tmp-${process.pid}-${Date.now()}`
+  await writeFile(tmp, buffer)
+  await rename(tmp, localFile)
+
+  const metaTmp = `${localFile}.meta.tmp-${process.pid}-${Date.now()}`
+  await writeFile(metaTmp, JSON.stringify({ size: buffer.length }), 'utf-8')
+  await rename(metaTmp, `${localFile}.meta`)
+
+  return buffer
+}
+
+function downloadShared(ref: HfFileRef, localFile: string): Promise<Buffer> {
+  const existing = inflightDownloads.get(localFile)
+  if (existing) return existing
+  const task = downloadAndCache(ref, localFile)
+  inflightDownloads.set(localFile, task)
+  task
+    .finally(() => inflightDownloads.delete(localFile))
+    .catch(() => { /* 下载失败由各 await 方自行处理 */ })
+  return task
 }
 
 /** 探测磁盘缓存：只读本地文件，不会触发下载 */
@@ -65,20 +164,23 @@ export async function HEAD(
   if (!ref) return new NextResponse(null, { status: 400 })
 
   try {
-    const info = await stat(await localFileOf(ref))
+    const size = await cacheStat(await localFileOf(ref))
+    if (size === null) {
+      return new NextResponse(null, {
+        status: 404,
+        headers: { 'X-Cache': 'MISS', 'Cache-Control': 'no-store' },
+      })
+    }
     return new NextResponse(null, {
       status: 200,
       headers: {
         'X-Cache': 'HIT',
-        'X-File-Size': String(info.size),
+        'X-File-Size': String(size),
         'Cache-Control': 'no-store',
       },
     })
   } catch {
-    return new NextResponse(null, {
-      status: 404,
-      headers: { 'X-Cache': 'MISS', 'Cache-Control': 'no-store' },
-    })
+    return new NextResponse(null, { status: 400 })
   }
 }
 
@@ -91,54 +193,41 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid HF path' }, { status: 400 })
   }
 
-  const localFile = await localFileOf(ref)
-
+  let localFile: string
   try {
-    // 尝试从磁盘读取
-    const data = await readFile(localFile)
-    return new NextResponse(data, {
+    localFile = await localFileOf(ref)
+  } catch {
+    return NextResponse.json({ error: 'Invalid HF path' }, { status: 400 })
+  }
+
+  const cached = await readCached(localFile)
+  if (cached) {
+    return new NextResponse(cached, {
       headers: {
         'Content-Type': guessContentType(ref.file),
-        'Content-Length': String(data.length),
+        'Content-Length': String(cached.length),
         'X-Cache': 'HIT',
         // 浏览器侧不再留第二份副本，唯一缓存真源是磁盘
         'Cache-Control': 'no-store',
       },
     })
-  } catch {
-    // 缓存未命中，从 HuggingFace 下载
   }
 
   try {
-    const resp = await fetchUpstream(ref.url)
-    if (resp.status !== 200) {
-      return NextResponse.json(
-        { error: `HuggingFace returned ${resp.status}` },
-        { status: resp.status },
-      )
-    }
-
-    const buffer = Buffer.from(await resp.arrayBuffer())
-
-    // 挡住「不是模型数据」的响应：这类内容一旦落盘就会永久污染缓存
-    const bad = detectBadPayload(buffer, resp.headers.get('content-length'), resp.headers.get('content-encoding'))
-    if (bad) {
-      return NextResponse.json({ error: bad }, { status: 502 })
-    }
-
-    // 写入磁盘缓存
-    await mkdir(dirname(localFile), { recursive: true })
-    await writeFile(localFile, buffer)
-
+    const buffer = await downloadShared(ref, localFile)
     return new NextResponse(buffer, {
       headers: {
-        'Content-Type': resp.headers.get('Content-Type') || guessContentType(ref.file),
+        'Content-Type': guessContentType(ref.file),
         'Content-Length': String(buffer.length),
         'X-Cache': 'MISS',
         'Cache-Control': 'no-store',
       },
     })
   } catch (err) {
+    const status = (err as { status?: number }).status
+    if (status) {
+      return NextResponse.json({ error: `HuggingFace returned ${status}` }, { status })
+    }
     return NextResponse.json(
       { error: `Failed to fetch from HuggingFace: ${err}` },
       { status: 502 },

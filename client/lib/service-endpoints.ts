@@ -66,6 +66,8 @@ export const DEFAULT_WHISPER_TRANSCRIBE_URL = 'http://127.0.0.1:8766'
 export const DEFAULT_LOCAL_MODEL_URL = 'http://127.0.0.1:11434'
 /** SOE 评分代理（Fastify server/，契约②）默认地址 */
 export const DEFAULT_SOE_PROXY_URL = 'http://127.0.0.1:8788'
+/** HuggingFace 模型下载默认源（可被 HF_BASE 环境变量覆盖，如 hf-mirror.com） */
+export const DEFAULT_HF_BASE = 'https://huggingface.co'
 
 // ---------------------------------------------------------------------------
 // 默认模型
@@ -112,10 +114,16 @@ const DEFAULT_VOICES: Record<string, string> = {
 
 /**
  * 统一 URL 拼接：baseUrl 去尾部 `/` + endpoint。
+ * 版本前缀去重：baseUrl 已以 /v1 结尾且 endpoint 也以 /v1 开头时只保留一个 ——
+ * Ollama 官方文档写法 baseUrl=http://host:11434/v1 与本地默认 endpoint /v1/chat/completions
+ * 直接拼接会得到 /v1/v1/...（模型列表路由早已做此归一，此处统一）。
  */
 export function buildServiceUrl(baseUrl: string, endpoint: string): string {
   const host = baseUrl.replace(/\/+$/, '')
   const ep = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
+  if (/\/v\d+$/.test(host) && /^\/v\d+\//.test(ep)) {
+    return host + ep.slice(ep.indexOf('/', 1))
+  }
   return `${host}${ep}`
 }
 

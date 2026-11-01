@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'fs/promises'
+import { readFile, writeFile, mkdir, rename } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
 
@@ -54,46 +54,83 @@ const SETTINGS_FILE = join(SETTINGS_DIR, 'settings.json')
 
 /* ── raw file helpers ─────────────────────────────────── */
 
+/**
+ * 读取 settings.json。
+ * - 文件不存在（首次启动）→ 返回 {}
+ * - 文件存在但读取/解析失败（截断、损坏、手工编辑出错）→ 先把损坏文件改名备份，
+ *   再返回 {} —— 绝不能静默当作空：否则任何 mutator 的回写会把损坏前的全部密钥永久抹掉，
+ *   而备份文件保留了人工恢复的机会。
+ */
 async function readRaw(): Promise<Record<string, unknown>> {
   try {
     const data = await readFile(SETTINGS_FILE, 'utf-8')
     return JSON.parse(data)
   } catch (err) {
-    console.error('[server-settings] Failed to read/parse settings file:', err)
+    const code = (err as NodeJS.ErrnoException | null)?.code
+    if (code === 'ENOENT') return {}
+    console.error('[server-settings] settings.json unreadable, backing it up before continuing:', err)
+    try {
+      await rename(SETTINGS_FILE, `${SETTINGS_FILE}.corrupt-${Date.now()}`)
+    } catch { /* 备份失败（如权限）也无能为力，继续按空配置运行 */ }
     return {}
   }
 }
 
+/** 原子写：tmp + rename，进程崩溃/断电最多丢掉 tmp 文件，正式文件永远完整 */
 async function writeRaw(obj: Record<string, unknown>): Promise<void> {
   await mkdir(SETTINGS_DIR, { recursive: true })
-  await writeFile(SETTINGS_FILE, JSON.stringify(obj, null, 2), 'utf-8')
+  const tmp = `${SETTINGS_FILE}.tmp-${process.pid}-${Date.now()}`
+  await writeFile(tmp, JSON.stringify(obj, null, 2), 'utf-8')
+  await rename(tmp, SETTINGS_FILE)
+}
+
+/** 密钥掩码（GET 返回 / 编辑回填用）：≤8 字符整体打码，>8 显示前 8 位 */
+export function maskSecret(secret: string | null | undefined): string {
+  if (!secret) return ''
+  return secret.length <= 8 ? '***' : secret.slice(0, 8) + '***'
+}
+
+/* ── 读-改-写串行化 ──────────────────────────────────────
+ * 所有 mutator 都是跨 await 的「读 raw → 改 → 写回」，无锁并发时
+ * 后写者会用过期快照整段覆盖前写者。模块级 promise 队列保证同一进程内
+ * 的读-改-写严格排队（两个标签页 = 两个进程，靠原子 rename 兜底不撕裂）。
+ */
+let mutationQueue: Promise<unknown> = Promise.resolve()
+
+function enqueueMutation<T>(fn: () => Promise<T>): Promise<T> {
+  const run = mutationQueue.then(fn, fn)
+  mutationQueue = run.then(() => undefined, () => undefined)
+  return run
+}
+
+/** 串行化的读-改-写：fn 就地修改 raw 并返回业务结果，随后统一回写 */
+async function mutateRaw<T>(fn: (raw: Record<string, unknown>) => T | Promise<T>): Promise<T> {
+  return enqueueMutation(async () => {
+    const raw = await readRaw()
+    const result = await fn(raw)
+    await writeRaw(raw)
+    return result
+  })
 }
 
 /* ── legacy single-config (unchanged API contract) ────── */
 
 export async function readLlmSettings(): Promise<LlmSettings | null> {
-  try {
-    const data = await readFile(SETTINGS_FILE, 'utf-8')
-    const parsed = JSON.parse(data)
-    if (parsed.llm && parsed.llm.baseUrl && parsed.llm.apiKey) {
-      const raw = parsed.llm as Record<string, unknown>
-      // Backward compat: migrate old model/endpoint → asrModel/asrEndpoint
-      if (raw.model && !raw.asrModel) raw.asrModel = raw.model
-      if (raw.endpoint && !raw.asrEndpoint) raw.asrEndpoint = raw.endpoint
-      delete raw.model
-      delete raw.endpoint
-      return raw as unknown as LlmSettings
-    }
-    return null
-  } catch {
-    return null
-  }
+  const parsed = await readRaw()
+  const llm = parsed.llm as Record<string, unknown> | undefined
+  if (!llm || !llm.baseUrl || !llm.apiKey) return null
+  // Backward compat: migrate old model/endpoint → asrModel/asrEndpoint
+  if (llm.model && !llm.asrModel) llm.asrModel = llm.model
+  if (llm.endpoint && !llm.asrEndpoint) llm.asrEndpoint = llm.endpoint
+  delete llm.model
+  delete llm.endpoint
+  return llm as unknown as LlmSettings
 }
 
 export async function writeLlmSettings(settings: LlmSettings): Promise<void> {
-  const existing = await readRaw()
-  existing.llm = settings
-  await writeRaw(existing)
+  await mutateRaw((raw) => {
+    raw.llm = settings
+  })
 }
 
 /**
@@ -126,110 +163,115 @@ function generateConfigId(): string {
 
 /** Read all configs; auto-migrate from legacy `llm` on first access */
 export async function readLlmConfigs(): Promise<LlmConfigsResult> {
-  const raw = await readRaw()
-  let configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
-  const defaultId = (raw.defaultLlmConfigId as string | null) ?? null
+  // 走串行队列与写路径互斥；只有真正发生 migrate 时才回写
+  return enqueueMutation(async () => {
+    const raw = await readRaw()
+    const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
+    const defaultId = (raw.defaultLlmConfigId as string | null) ?? null
 
-  // Auto-migrate: if no configs exist but legacy llm does, convert it
-  if (configs.length === 0 && raw.llm) {
-    const legacy = raw.llm as Record<string, unknown>
-    if (legacy.baseUrl && legacy.apiKey) {
-      const migrated: LlmConfig = {
-        id: generateConfigId(),
-        name: String(legacy.provider || '默认配置'),
-        provider: String(legacy.provider || ''),
-        baseUrl: String(legacy.baseUrl || ''),
-        apiKey: String(legacy.apiKey || ''),
-        asrModel: legacy.asrModel as string | undefined,
-        asrEndpoint: legacy.asrEndpoint as string | undefined,
-        ttsModel: legacy.ttsModel as string | undefined,
-        ttsEndpoint: legacy.ttsEndpoint as string | undefined,
-        translateModel: legacy.translateModel as string | undefined,
-        translateEndpoint: legacy.translateEndpoint as string | undefined,
+    // Auto-migrate: if no configs exist but legacy llm does, convert it
+    if (configs.length === 0 && raw.llm) {
+      const legacy = raw.llm as Record<string, unknown>
+      if (legacy.baseUrl && legacy.apiKey) {
+        const migrated: LlmConfig = {
+          id: generateConfigId(),
+          name: String(legacy.provider || '默认配置'),
+          provider: String(legacy.provider || ''),
+          baseUrl: String(legacy.baseUrl || ''),
+          apiKey: String(legacy.apiKey || ''),
+          asrModel: legacy.asrModel as string | undefined,
+          asrEndpoint: legacy.asrEndpoint as string | undefined,
+          ttsModel: legacy.ttsModel as string | undefined,
+          ttsEndpoint: legacy.ttsEndpoint as string | undefined,
+          translateModel: legacy.translateModel as string | undefined,
+          translateEndpoint: legacy.translateEndpoint as string | undefined,
+        }
+        raw.llmConfigs = [migrated]
+        raw.defaultLlmConfigId = migrated.id
+        await writeRaw(raw)
+        return { configs: [migrated], defaultId: migrated.id }
       }
-      configs = [migrated]
-      raw.llmConfigs = configs
-      raw.defaultLlmConfigId = migrated.id
-      await writeRaw(raw)
-      return { configs, defaultId: migrated.id }
     }
-  }
 
-  return { configs, defaultId }
+    return { configs, defaultId }
+  })
 }
 
 /** Add a new config and return its id */
 export async function addLlmConfig(config: Omit<LlmConfig, 'id'>): Promise<string> {
-  const raw = await readRaw()
-  const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
-  const id = generateConfigId()
-  const newConfig: LlmConfig = { ...config, id }
-  configs.push(newConfig)
-  raw.llmConfigs = configs
+  return mutateRaw((raw) => {
+    const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
+    const id = generateConfigId()
+    const newConfig: LlmConfig = { ...config, id }
+    configs.push(newConfig)
+    raw.llmConfigs = configs
 
-  // If first config, make it the default and sync to legacy
-  if (configs.length === 1 || !raw.defaultLlmConfigId) {
-    raw.defaultLlmConfigId = id
-    raw.llm = toLlmSettings(newConfig)
-  }
+    // If first config, make it the default and sync to legacy
+    if (configs.length === 1 || !raw.defaultLlmConfigId) {
+      raw.defaultLlmConfigId = id
+      raw.llm = toLlmSettings(newConfig)
+    }
 
-  await writeRaw(raw)
-  return id
+    return id
+  })
 }
 
 /** Update an existing config by id */
 export async function updateLlmConfig(id: string, patch: Partial<LlmConfig>): Promise<boolean> {
-  const raw = await readRaw()
-  const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
-  const idx = configs.findIndex(c => c.id === id)
-  if (idx === -1) return false
+  return mutateRaw((raw) => {
+    const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
+    const idx = configs.findIndex(c => c.id === id)
+    if (idx === -1) return false
 
-  const { apiKey: patchKey, ...rest } = patch as Record<string, unknown>
-  const safePatch = patchKey ? { ...rest, apiKey: patchKey } : rest
-  configs[idx] = { ...configs[idx], ...safePatch, id }
-  raw.llmConfigs = configs
+    const { apiKey: patchKey, ...rest } = patch as Record<string, unknown>
+    // 掩码保护：编辑对话框回填的是掩码值，原样存回会毁掉真实 key —— 与现值掩码相同视为「未修改」
+    const currentKey = String(configs[idx]?.apiKey ?? '')
+    const keyIsUnchangedMask = typeof patchKey === 'string' && patchKey !== '' && patchKey === maskSecret(currentKey)
+    const safePatch = patchKey && !keyIsUnchangedMask ? { ...rest, apiKey: patchKey } : rest
+    configs[idx] = { ...configs[idx], ...safePatch, id }
+    raw.llmConfigs = configs
 
-  // Sync to legacy if this is the default
-  if (raw.defaultLlmConfigId === id) {
-    raw.llm = toLlmSettings(configs[idx])
-  }
+    // Sync to legacy if this is the default
+    if (raw.defaultLlmConfigId === id) {
+      raw.llm = toLlmSettings(configs[idx]!)
+    }
 
-  await writeRaw(raw)
-  return true
+    return true
+  })
 }
 
 /** Delete a config by id */
 export async function deleteLlmConfig(id: string): Promise<boolean> {
-  const raw = await readRaw()
-  const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
-  const idx = configs.findIndex(c => c.id === id)
-  if (idx === -1) return false
+  return mutateRaw((raw) => {
+    const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
+    const idx = configs.findIndex(c => c.id === id)
+    if (idx === -1) return false
 
-  configs.splice(idx, 1)
-  raw.llmConfigs = configs
+    configs.splice(idx, 1)
+    raw.llmConfigs = configs
 
-  // If deleted the default, reassign
-  if (raw.defaultLlmConfigId === id) {
-    const newDefaultId = configs.length > 0 ? configs[0].id : null
-    raw.defaultLlmConfigId = newDefaultId
-    raw.llm = newDefaultId ? toLlmSettings(configs[0]) : undefined
-  }
+    // If deleted the default, reassign
+    if (raw.defaultLlmConfigId === id) {
+      const newDefaultId = configs.length > 0 ? configs[0]!.id : null
+      raw.defaultLlmConfigId = newDefaultId
+      raw.llm = newDefaultId ? toLlmSettings(configs[0]!) : undefined
+    }
 
-  await writeRaw(raw)
-  return true
+    return true
+  })
 }
 
 /** Set a config as the default (syncs to legacy `llm`) */
 export async function setDefaultLlmConfig(id: string): Promise<boolean> {
-  const raw = await readRaw()
-  const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
-  const config = configs.find(c => c.id === id)
-  if (!config) return false
+  return mutateRaw((raw) => {
+    const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
+    const config = configs.find(c => c.id === id)
+    if (!config) return false
 
-  raw.defaultLlmConfigId = id
-  raw.llm = toLlmSettings(config)
-  await writeRaw(raw)
-  return true
+    raw.defaultLlmConfigId = id
+    raw.llm = toLlmSettings(config)
+    return true
+  })
 }
 
 /** Read a single config by id, returned as LlmSettings (no id/name) */
@@ -257,9 +299,9 @@ export async function readLocalServices(): Promise<LocalServices> {
 }
 
 export async function writeLocalServices(services: LocalServices): Promise<void> {
-  const raw = await readRaw()
-  raw.localServices = services
-  await writeRaw(raw)
+  await mutateRaw((raw) => {
+    raw.localServices = services
+  })
 }
 
 /* ── Kokoro TTS settings ─────────────────────────────── */
@@ -275,16 +317,13 @@ const DEFAULT_KOKORO_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX'
 const DEFAULT_KOKORO_MODEL_PATH = join(SETTINGS_DIR, 'kokoro-models')
 
 export async function readKokoroSettings(): Promise<KokoroSettings> {
+  // 纯读：不在 GET 里回写默认值（首读回写曾把损坏后的空配置固化，是密钥丢失事故的放大器）；
+  // 默认值在首次 PUT 保存时自然持久化
   const raw = await readRaw()
   const k = raw.kokoro as Record<string, unknown> | undefined
   const settings: KokoroSettings = {
     modelId: (k?.modelId as string) || DEFAULT_KOKORO_MODEL_ID,
     modelPath: (k?.modelPath as string) || DEFAULT_KOKORO_MODEL_PATH,
-  }
-  // 首次读取时写入默认值，确保持久化到 settings.json
-  if (!k) {
-    raw.kokoro = settings
-    await writeRaw(raw)
   }
   // 确保模型目录存在
   await mkdir(settings.modelPath, { recursive: true })
@@ -292,9 +331,9 @@ export async function readKokoroSettings(): Promise<KokoroSettings> {
 }
 
 export async function writeKokoroSettings(settings: KokoroSettings): Promise<void> {
-  const raw = await readRaw()
-  raw.kokoro = settings
-  await writeRaw(raw)
+  await mutateRaw((raw) => {
+    raw.kokoro = settings
+  })
 }
 
 /* ── SOE 语音评测设置 ─────────────────────────────────── */
@@ -320,7 +359,7 @@ export async function readSoeConfig(): Promise<SoeSettingsConfig | null> {
 }
 
 export async function writeSoeConfig(cfg: SoeSettingsConfig): Promise<void> {
-  const raw = await readRaw()
-  raw.soe = cfg
-  await writeRaw(raw)
+  await mutateRaw((raw) => {
+    raw.soe = cfg
+  })
 }

@@ -1,21 +1,56 @@
 /**
  * SOE 语音评测设置 API — 读写 ~/.ping-eng/settings.json 的 soe section。
- * 单用户本机应用：GET 原样返回密钥（与 llm-configs 编辑回填口径一致）。
+ * GET/PUT 返回给客户端的密钥一律掩码；PUT 端识别「掩码原样回传」并保留已存真值
+ * （编辑对话框回填掩码、用户未改密钥时不会把掩码存回去）。
  */
 import { NextResponse } from 'next/server'
-import { readSoeConfig, writeSoeConfig, type SoeSettingsConfig } from '@/lib/server-settings'
+import { readSoeConfig, writeSoeConfig, maskSecret, type SoeSettingsConfig } from '@/lib/server-settings'
 import { DEFAULT_SOE_PROXY_URL } from '@/lib/service-endpoints'
 
 const PROVIDERS = new Set(['mock', 'azure', 'tencent', 'iflytek'])
 const DEFAULT_CONFIG: SoeSettingsConfig = { provider: 'mock', proxyUrl: DEFAULT_SOE_PROXY_URL }
 
-/** 可选 provider 密钥对象归一：仅保留非空字符串字段；全空 → undefined */
-function normalizeCreds(v: unknown, keys: readonly string[]): Record<string, string> | undefined {
+/** GET 返回前掩码密钥字段 */
+function maskSoeCreds(config: SoeSettingsConfig): SoeSettingsConfig {
+  const out: SoeSettingsConfig = { ...config }
+  if (out.azure?.key) out.azure = { ...out.azure, key: maskSecret(out.azure.key) }
+  if (out.tencent) {
+    out.tencent = {
+      ...out.tencent,
+      secretId: maskSecret(out.tencent.secretId),
+      secretKey: maskSecret(out.tencent.secretKey),
+    }
+  }
+  if (out.iflytek) {
+    out.iflytek = {
+      ...out.iflytek,
+      apiKey: maskSecret(out.iflytek.apiKey),
+      apiSecret: maskSecret(out.iflytek.apiSecret),
+    }
+  }
+  return out
+}
+
+/**
+ * 可选 provider 密钥对象归一：仅保留非空字符串字段；全空 → undefined。
+ * 提交值与已存密钥的掩码形式相同 → 视为「未修改」，保留已存真值。
+ */
+function normalizeCreds(
+  v: unknown,
+  keys: readonly string[],
+  stored: Record<string, string> | undefined,
+): Record<string, string> | undefined {
   if (typeof v !== 'object' || v === null) return undefined
   const out: Record<string, string> = {}
   for (const k of keys) {
     const val = (v as Record<string, unknown>)[k]
-    if (typeof val === 'string' && val.trim()) out[k] = val.trim()
+    if (typeof val !== 'string' || !val.trim()) continue
+    const trimmed = val.trim()
+    if (stored?.[k] && trimmed === maskSecret(stored[k])) {
+      out[k] = stored[k] // 掩码原样回传 = 用户没改这个密钥
+    } else {
+      out[k] = trimmed
+    }
   }
   return Object.keys(out).length > 0 ? out : undefined
 }
@@ -23,7 +58,7 @@ function normalizeCreds(v: unknown, keys: readonly string[]): Record<string, str
 export async function GET() {
   try {
     const config = (await readSoeConfig()) ?? DEFAULT_CONFIG
-    return NextResponse.json(config)
+    return NextResponse.json(maskSoeCreds(config))
   } catch {
     return NextResponse.json({ error: 'Failed to read SOE settings' }, { status: 500 })
   }
@@ -41,15 +76,17 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'Missing required field: proxyUrl' }, { status: 400 })
     }
 
+    const stored = await readSoeConfig()
     const config: SoeSettingsConfig = {
       provider: provider as SoeSettingsConfig['provider'],
       proxyUrl: proxyUrl.trim(),
-      azure: normalizeCreds(azure, ['key', 'region', 'host']) as SoeSettingsConfig['azure'],
-      tencent: normalizeCreds(tencent, ['appId', 'secretId', 'secretKey']) as SoeSettingsConfig['tencent'],
-      iflytek: normalizeCreds(iflytek, ['appId', 'apiKey', 'apiSecret']) as SoeSettingsConfig['iflytek'],
+      azure: normalizeCreds(azure, ['key', 'region', 'host'], stored?.azure) as SoeSettingsConfig['azure'],
+      tencent: normalizeCreds(tencent, ['appId', 'secretId', 'secretKey'], stored?.tencent) as SoeSettingsConfig['tencent'],
+      iflytek: normalizeCreds(iflytek, ['appId', 'apiKey', 'apiSecret'], stored?.iflytek) as SoeSettingsConfig['iflytek'],
     }
     await writeSoeConfig(config)
-    return NextResponse.json(config)
+    // 回包同样只带掩码
+    return NextResponse.json(maskSoeCreds(config))
   } catch {
     return NextResponse.json({ error: 'Failed to save SOE settings' }, { status: 500 })
   }

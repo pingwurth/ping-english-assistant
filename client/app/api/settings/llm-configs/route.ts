@@ -5,13 +5,14 @@ import {
   updateLlmConfig,
   deleteLlmConfig,
   setDefaultLlmConfig,
+  maskSecret,
   type LlmConfig,
 } from '@/lib/server-settings'
 
 function maskApiKey(config: LlmConfig): LlmConfig {
   return {
     ...config,
-    apiKey: config.apiKey ? config.apiKey.slice(0, 8) + '***' : '',
+    apiKey: maskSecret(config.apiKey),
   }
 }
 
@@ -40,13 +41,14 @@ export async function GET(request: Request) {
     const id = searchParams.get('id')
     const { configs, defaultId } = await readLlmConfigs()
 
-    // 按 id 查询单条配置 — 返回完整信息（含明文 API Key，仅限本地请求）
+    // 按 id 查询单条配置 — 同样只返回掩码 key（编辑对话框回填掩码值，
+    // PUT 时服务端识别掩码并保留原 key，见 updateLlmConfig 的掩码保护）
     if (id) {
       const config = configs.find(c => c.id === id)
       if (!config) {
         return NextResponse.json({ error: 'Config not found' }, { status: 404 })
       }
-      return NextResponse.json(config)
+      return NextResponse.json(maskApiKey(config))
     }
 
     return NextResponse.json({

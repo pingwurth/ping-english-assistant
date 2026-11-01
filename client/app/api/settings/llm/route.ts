@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { readLlmSettings, writeLlmSettings, type LlmSettings } from '@/lib/server-settings'
+import { readLlmSettings, writeLlmSettings, maskSecret, type LlmSettings } from '@/lib/server-settings'
 
 /** 根据 provider 返回对应的云端 TTS 音色列表 */
 function getTtsVoices(settings: LlmSettings) {
@@ -39,7 +39,7 @@ export async function GET() {
       ttsVoices: getTtsVoices(settings),
       whisperAlignUrl: settings.whisperAlignUrl || '',
       whisperTranscribeUrl: settings.whisperTranscribeUrl || '',
-      apiKey: settings.apiKey.slice(0, 8) + '***',
+      apiKey: maskSecret(settings.apiKey),
     })
   } catch (error) {
     return NextResponse.json(
@@ -56,6 +56,8 @@ export async function POST(request: Request) {
       provider, baseUrl, apiKey,
       asrModel, asrEndpoint,
       ttsModel, ttsEndpoint,
+      translateModel, translateEndpoint,
+      mnemonicModel, mnemonicEndpoint,
       whisperAlignUrl, whisperTranscribeUrl,
     } = body
 
@@ -66,16 +68,26 @@ export async function POST(request: Request) {
       )
     }
 
+    // 与现存 llm 段浅合并：只 POST 部分字段（如探测性调用）不再剥掉其余模型配置；
+    // apiKey 为已存 key 的掩码形式时视为「未修改」，保留真值
+    const existing = await readLlmSettings()
+    const keyUnchanged = existing?.apiKey && apiKey === maskSecret(existing.apiKey)
+
     const settings: LlmSettings = {
-      provider: provider || '',
+      ...existing,
+      provider: provider ?? existing?.provider ?? '',
       baseUrl,
-      apiKey,
-      asrModel: asrModel || undefined,
-      asrEndpoint: asrEndpoint || undefined,
-      ttsModel: ttsModel || undefined,
-      ttsEndpoint: ttsEndpoint || undefined,
-      whisperAlignUrl: whisperAlignUrl || undefined,
-      whisperTranscribeUrl: whisperTranscribeUrl || undefined,
+      apiKey: keyUnchanged ? existing!.apiKey : apiKey,
+      asrModel: asrModel ?? existing?.asrModel,
+      asrEndpoint: asrEndpoint ?? existing?.asrEndpoint,
+      ttsModel: ttsModel ?? existing?.ttsModel,
+      ttsEndpoint: ttsEndpoint ?? existing?.ttsEndpoint,
+      translateModel: translateModel ?? existing?.translateModel,
+      translateEndpoint: translateEndpoint ?? existing?.translateEndpoint,
+      mnemonicModel: mnemonicModel ?? existing?.mnemonicModel,
+      mnemonicEndpoint: mnemonicEndpoint ?? existing?.mnemonicEndpoint,
+      whisperAlignUrl: whisperAlignUrl ?? existing?.whisperAlignUrl,
+      whisperTranscribeUrl: whisperTranscribeUrl ?? existing?.whisperTranscribeUrl,
     }
     await writeLlmSettings(settings)
 
