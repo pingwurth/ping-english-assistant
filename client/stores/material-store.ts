@@ -13,14 +13,16 @@
  */
 
 import type { LearningProgress } from '@/types/progress'
-import type { TrainingRecord } from '@/types/training'
 import type { Material, MaterialCollection } from '@/types/material'
 import type { SubtitleData } from '@/types/subtitle'
 import { blobsStore, materialsStore, recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS, RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
+import { MATERIAL_OWNED_RECORD_PREFIXES, RECORD_KEYS, RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import { seedMaterials, seedSentences } from '@/data/seed'
 import { createStore } from '@/stores/store'
-import { updateFrequencies } from '@/stores/vocab-store'
+import { shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
+import { shiftNotesAfterDeletion } from '@/stores/note-store'
+import { shiftTrainingRecordsAfterDeletion } from '@/stores/training-record-store'
+import { shiftVocabEntriesAfterDeletion, updateFrequencies } from '@/stores/vocab-store'
 
 export interface MaterialStoreState {
   ready: boolean
@@ -141,29 +143,33 @@ export function getProgress(materialId: string): Promise<LearningProgress | unde
   return recordsStore.get<LearningProgress>(RECORD_KEYS.progress(materialId))
 }
 
-/** 删句后平移单句训练明细中的 sentenceIndex；被删句的记录删除。 */
-export async function shiftTrainingRecordsAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
-  await initMaterials()
-  // materialId 索引点查：train: 记录键不含 materialId（原全库物化后逐条比对）
-  const entries = await recordsStore.getEntriesByMaterial(materialId)
-  for (const [key, value] of entries) {
-    if (!key.startsWith(RECORD_KEY_PREFIXES.training)) continue
-    const record = value as TrainingRecord | undefined
-    if (!record || record.mode !== 'dictation') continue
+/** 学习进度唯一写入口：组件不得绕过 store 直接拼 progress: key */
+export function putProgress(progress: LearningProgress): Promise<void> {
+  return recordsStore.put(RECORD_KEYS.progress(progress.materialId), progress)
+}
 
-    const detail = record.detail as { sentenceIndex?: unknown }
-    if (typeof detail.sentenceIndex !== 'number') continue
-    if (detail.sentenceIndex === deletedIndex) {
-      await recordsStore.delete(key)
-      continue
-    }
-    if (detail.sentenceIndex > deletedIndex) {
-      await recordsStore.put(key, {
-        ...record,
-        detail: { ...record.detail, sentenceIndex: detail.sentenceIndex - 1 },
-      } satisfies TrainingRecord)
-    }
+/** 删句后统一平移所有按句序号引用的持久化记录，返回平移后的学习进度 */
+export async function shiftSentenceReferences(
+  materialId: string,
+  deletedIndex: number,
+): Promise<LearningProgress | undefined> {
+  await Promise.all([
+    shiftNotesAfterDeletion(materialId, deletedIndex),
+    shiftFavoritesAfterDeletion(materialId, deletedIndex),
+    shiftTrainingRecordsAfterDeletion(materialId, deletedIndex),
+    shiftVocabEntriesAfterDeletion(materialId, deletedIndex),
+  ])
+
+  const progress = await getProgress(materialId)
+  if (!progress) return undefined
+  const shifted = {
+    ...progress,
+    playedSentenceIndexes: progress.playedSentenceIndexes
+      .filter((index) => index !== deletedIndex)
+      .map((index) => (index > deletedIndex ? index - 1 : index)),
   }
+  await putProgress(shifted)
+  return shifted
 }
 
 /** 删除材料：级联清理 material + blob + 相关 records（进度/收藏/笔记/训练记录） */
@@ -171,24 +177,23 @@ export async function removeMaterial(id: string): Promise<void> {
   await initMaterials()
   await materialsStore.delete(id)
   await blobsStore.delete(id)
-  // 精确清理，不再全库物化：
-  //  - progress: 键精确匹配（前缀匹配会误删 id 互为前缀的其他材料，如 m-1 与 m-10）；
-  //  - fav:/note: 材料前缀区间（尾随 ':' 使 m-1 的区间天然排除 m-10 的键）；
-  //  - train: 键不含 materialId，按值上的 materialId 索引点查（索引结果里的
-  //    note:/fav:/vocabentry: 由前缀过滤排除，vocab 词条按设计不随材料删除）。
-  const [favEntries, noteEntries, materialEntries] = await Promise.all([
+  // MATERIAL_OWNED_RECORD_PREFIXES 是“哪些记录随材料删除”的唯一清单。
+  // train: 走 materialId 值索引；fav:/note: 的键本身含 materialId，用带尾部分隔符
+  // 的前缀区间（天然排除 m-1 / m-10 互为前缀）；progress: 是精确键。
+  const [materialEntries, favoriteEntries, noteEntries] = await Promise.all([
+    recordsStore.getEntriesByMaterial(id),
     recordsStore.getAllEntriesByPrefix(`${RECORD_KEY_PREFIXES.favorite}${id}:`),
     recordsStore.getAllEntriesByPrefix(`${RECORD_KEY_PREFIXES.note}${id}:`),
-    recordsStore.getEntriesByMaterial(id),
   ])
-  const trainKeys = materialEntries
-    .filter(([k]) => k.startsWith(RECORD_KEY_PREFIXES.training))
-    .map(([k]) => k)
-  const keys = [...favEntries.map(([k]) => k), ...noteEntries.map(([k]) => k), ...trainKeys]
-  await Promise.all([
-    recordsStore.delete(RECORD_KEYS.progress(id)), // 不存在时 delete 为幂等 no-op
-    ...keys.map((k) => recordsStore.delete(k)),
+  const ownedKeys = new Set([
+    ...materialEntries
+      .filter(([key]) => key.startsWith(RECORD_KEY_PREFIXES.training))
+      .map(([key]) => key),
+    ...favoriteEntries.map(([key]) => key),
+    ...noteEntries.map(([key]) => key),
+    RECORD_KEYS.progress(id),
   ])
+  await Promise.all([...ownedKeys].map((key) => recordsStore.delete(key)))
   // 生词词频撤账：回收该材料对 frequency 的贡献（评审 #19，否则删除材料后词频永久虚高，
   // 违反 types/vocabulary.ts「frequency = materialCounts 各值之和」不变量）
   await updateFrequencies([], id)

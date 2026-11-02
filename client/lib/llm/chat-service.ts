@@ -344,62 +344,42 @@ function stripNumberPrefix(text: string): string {
   return text.replace(/^\[\d{1,3}\]\s*/, '')
 }
 
-/**
- * 从带 [N] 序号标记的文本中提取翻译结果
- *
- * 当 JSON 解析全部失败时，尝试匹配 [1] [2] ... [N] 前缀的行。
- * 这是 prompt 中要求模型输出序号标记的 fallback 解析路径。
- */
-function extractNumberedTranslations(content: string, expectedLength: number): string[] | null {
+/** 统一扫描 [N] 前缀；严格版与部分回填版共享同一解析规则 */
+function collectNumberedTranslations(content: string, expectedLength: number): Map<number, string> {
   // 匹配 [N] 前缀（N 为 1~999），后面跟翻译内容
   const re = /^\s*\[(\d{1,3})\]\s*(.+)$/gm
-  const items: Map<number, string> = new Map()
+  const items = new Map<number, string>()
   let match: RegExpExecArray | null
   while ((match = re.exec(content)) !== null) {
-    const idx = parseInt(match[1], 10)
-    const text = match[2].trim()
+    const idx = parseInt(match[1]!, 10)
+    const text = match[2]!.trim()
     if (idx >= 1 && idx <= expectedLength && text.length > 0) {
-      items.set(idx, text)
+      // 模型有时会在每条内容前重复加序号
+      items.set(idx, stripNumberPrefix(text))
     }
   }
+  return items
+}
 
-  // 必须恰好匹配 expectedLength 条，且序号连续从 1 开始
+/** 从带 [N] 序号标记的文本提取完整结果：必须恰为 N 条且从 1 连续编号 */
+function extractNumberedTranslations(content: string, expectedLength: number): string[] | null {
+  const items = collectNumberedTranslations(content, expectedLength)
   if (items.size !== expectedLength) return null
   const result: string[] = []
   for (let i = 1; i <= expectedLength; i++) {
-    const val = items.get(i)
-    if (!val) return null
-    // 去掉翻译内容中可能残留的 [N] 前缀（模型有时会在每条前重复加序号）
-    const cleaned = stripNumberPrefix(val)
-    result.push(cleaned)
+    const value = items.get(i)
+    if (!value) return null
+    result.push(value)
   }
   return result
 }
 
-/**
- * 从带 [N] 序号标记的文本中提取部分翻译结果（不要求条数完全匹配）
- *
- * 返回长度为 expectedLength 的稀疏数组，缺失位置为 null。
- * 仅当至少提取到一条翻译时返回结果，否则返回 null。
- */
+/** 从带 [N] 序号标记的文本提取部分结果；缺失位为 null，至少一条才可回填 */
 function extractNumberedTranslationsPartial(content: string, expectedLength: number): (string | null)[] | null {
-  const re = /^\s*\[(\d{1,3})\]\s*(.+)$/gm
-  const items: Map<number, string> = new Map()
-  let match: RegExpExecArray | null
-  while ((match = re.exec(content)) !== null) {
-    const idx = parseInt(match[1], 10)
-    const text = match[2].trim()
-    if (idx >= 1 && idx <= expectedLength && text.length > 0) {
-      items.set(idx, stripNumberPrefix(text))
-    }
-  }
-
+  const items = collectNumberedTranslations(content, expectedLength)
   if (items.size === 0) return null
-
   const result: (string | null)[] = []
-  for (let i = 1; i <= expectedLength; i++) {
-    result.push(items.get(i) ?? null)
-  }
+  for (let i = 1; i <= expectedLength; i++) result.push(items.get(i) ?? null)
   return result
 }
 

@@ -20,28 +20,26 @@ import type { TtsGenerateRequest, TtsGenerateResponseMeta, TtsSubtitleResponse }
 import type { TtsGenerateResult, TtsService } from '../contracts'
 import { abortableDelay, ApiError, throwIfAborted } from '../contracts'
 import { encodeWav, TARGET_SAMPLE_RATE } from '../../core/audio/wav-encoder'
-import { exportSrtRows } from '../../core/subtitle'
-
-/** 契约⑥ text 上限（字符） */
-export const TTS_MAX_TEXT_LENGTH = 5000
-
-/** 分句切分符（契约 §3.4：句级时间轴为分句合成真实边界） */
-const SENTENCE_SPLIT_RE = /[.!?;:\n]+/
-
-/** 估算参数：英文朗读约 15 字符/秒；句最短 400ms；句间静音 120ms */
-const CHARS_PER_SECOND = 15
-const MIN_SENTENCE_MS = 400
-const GAP_MS = 120
+export {
+  buildSrt,
+  buildTtsTimeline,
+  estimateSentenceMs,
+  splitTtsSentences,
+  TTS_MAX_TEXT_LENGTH,
+  srtTime,
+  type TtsSentenceTiming,
+} from '../../core/tts/timeline'
+import {
+  buildSrt,
+  buildTtsTimeline,
+  estimateSentenceMs,
+  splitTtsSentences,
+  TTS_MAX_TEXT_LENGTH,
+  type TtsSentenceTiming,
+} from '../../core/tts/timeline'
 
 /** 字幕缓存上限（对齐契约⑦ LRU 500 条） */
 const SUBTITLE_CACHE_MAX = 500
-
-export interface TtsSentenceTiming {
-  index: number
-  text: string
-  startMs: number
-  endMs: number
-}
 
 export interface MockTtsOptions {
   /** 各阶段延迟的缩放系数（默认 1；测试可传 0 加速） */
@@ -50,56 +48,6 @@ export interface MockTtsOptions {
   onProgress?: (done: number, total: number) => void
   /** 测试钩子：覆盖延迟实现 */
   delayImpl?: (ms: number, signal?: AbortSignal) => Promise<void>
-}
-
-/**
- * 按 [.!?;:\n] 分句：标点归属前句；空白/纯标点片段丢弃。
- * 无标点时整段作为单句返回。
- */
-export function splitTtsSentences(text: string): string[] {
-  const out: string[] = []
-  let buf = ''
-  const push = (raw: string) => {
-    const s = raw.trim()
-    // 至少含一个字母/数字才算有效句（过滤纯标点碎片）
-    if (s && /[\p{L}\p{N}]/u.test(s)) out.push(s)
-  }
-  for (const ch of text) {
-    buf += ch
-    if (SENTENCE_SPLIT_RE.test(ch)) {
-      push(buf)
-      buf = ''
-    }
-  }
-  push(buf)
-  return out
-}
-
-/** 单句时长估算：按句长等比（chars / 15 秒），下限 MIN_SENTENCE_MS，再按语速缩放 */
-export function estimateSentenceMs(text: string, speed: number): number {
-  const base = Math.max(MIN_SENTENCE_MS, Math.round((text.length / CHARS_PER_SECOND) * 1000))
-  const spd = Math.max(0.5, Math.min(2, speed))
-  return Math.max(100, Math.round(base / spd))
-}
-
-/** 句级时间轴：逐句累计，句间留 GAP_MS 静音；总时长 = 末句 endMs */
-export function buildTtsTimeline(sentences: string[], speed: number): { timings: TtsSentenceTiming[]; durationMs: number } {
-  const timings: TtsSentenceTiming[] = []
-  let cursor = 0
-  sentences.forEach((text, i) => {
-    const dur = estimateSentenceMs(text, speed)
-    timings.push({ index: i, text, startMs: cursor, endMs: cursor + dur })
-    cursor += dur + GAP_MS
-  })
-  return { timings, durationMs: sentences.length > 0 ? cursor - GAP_MS : 0 }
-}
-
-/** 毫秒 → SRT 时间戳 —— 统一实现见 core/subtitle 的 formatSrtTimestamp（历史导出名保留兼容） */
-export { formatSrtTimestamp as srtTime } from '@/core/subtitle'
-
-/** 时间轴 → SRT 文本（契约⑦：序号 + 时间轴行 + 句文本；序列化统一走 core/subtitle 的 exportSrtRows） */
-export function buildSrt(timings: TtsSentenceTiming[]): string {
-  return exportSrtRows(timings.map((t) => ({ startMs: t.startMs, endMs: t.endMs, lines: [t.text] })))
 }
 
 /** 占位音 WAV：每句一个低音量正弦基频（按句序变化），句间静音；时长对齐时间轴 */

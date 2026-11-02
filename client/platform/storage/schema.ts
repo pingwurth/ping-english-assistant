@@ -29,6 +29,17 @@ export const RECORD_KEY_PREFIXES = {
   collection: 'collection:',
 } as const
 
+/**
+ * 随材料删除而级联清理的 records 前缀。`vocabentry:` 虽带 materialId，但词条本身
+ * 按产品约定跨材料保留；新增材料属主记录族时必须在这里登记，避免级联清理遗漏。
+ */
+export const MATERIAL_OWNED_RECORD_PREFIXES = [
+  RECORD_KEY_PREFIXES.progress,
+  RECORD_KEY_PREFIXES.favorite,
+  RECORD_KEY_PREFIXES.note,
+  RECORD_KEY_PREFIXES.training,
+] as const
+
 /** records store 的 key 前缀约定（类型前缀 + 业务 id） */
 export const RECORD_KEYS = {
   progress: (materialId: string) => `progress:${materialId}`,

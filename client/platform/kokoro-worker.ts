@@ -10,7 +10,7 @@
  */
 
 import type { KokoroTTS } from 'kokoro-js'
-import { splitTtsSentences, type TtsSentenceTiming } from '@/services/mock/tts'
+import { splitTtsSentences, type TtsSentenceTiming } from '@/core/tts/timeline'
 import type {
   KokoroSynthesisResult,
   KokoroWorkerRequest,

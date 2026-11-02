@@ -38,7 +38,7 @@ export const methodData: { id: Method; icon: typeof Cpu; title: string; desc: st
 
 /* ── LLM API 调用 ── */
 
-async function callLlmTranscribe(file: File, signal?: AbortSignal, configId?: string): Promise<{ text: string; segments: AsrTranscribeSegment[] }> {
+export async function callLlmTranscribe(file: File, signal?: AbortSignal, configId?: string): Promise<{ text: string; segments: AsrTranscribeSegment[] }> {
   const formData = new FormData()
   formData.append('audio', file)
   formData.append('lang', 'en')
@@ -60,7 +60,7 @@ async function callLlmTranscribe(file: File, signal?: AbortSignal, configId?: st
 
 /* ── Local faster-whisper API 调用 ── */
 
-async function callLocalTranscribe(file: File, signal?: AbortSignal): Promise<{ text: string; segments: AsrTranscribeSegment[] }> {
+export async function callLocalTranscribe(file: File, signal?: AbortSignal): Promise<{ text: string; segments: AsrTranscribeSegment[] }> {
   const formData = new FormData()
   formData.append('audio', file)
   formData.append('lang', 'en')
@@ -197,14 +197,31 @@ export function useTranscribe() {
     }
   }, [])
 
-  const executeTranscribe = useCallback(async (file: File, signal?: AbortSignal, configId?: string) => {
+  const executeTranscribe = useCallback(async (
+    file: File,
+    signal: AbortSignal | undefined,
+    configId: string | undefined,
+    engine: 'model' | 'local',
+  ) => {
     setStatus('running')
     setError('')
     setTranslateWarning('')
     setEditing(false)
 
     try {
-      const res = await callLlmTranscribe(file, signal, configId)
+      if (engine === 'local') {
+        const health = await checkLocalServerReady()
+        if (!health.connected) {
+          throw new Error(
+            'faster-whisper 服务未启动。请先运行:\n' +
+            '  cd server && ./start.sh --server transcribe\n\n' +
+            '或在设置中配置转写服务地址。',
+          )
+        }
+      }
+      const res = engine === 'local'
+        ? await callLocalTranscribe(file, signal)
+        : await callLlmTranscribe(file, signal, configId)
       const srtText = segmentsToSrt(res.segments)
       const { srt: finalSrt, result: finalResult } = await applyTranslation(res.segments, srtText, res.text, signal)
       setResult(finalResult)
@@ -227,10 +244,9 @@ export function useTranscribe() {
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
-    // For 'model' method, check if ASR config exists
     if (method === 'model') {
       // 闭包里的 asrConfigs 可能过期（配置对话框刚保存、刷新配置的 fetch 还在途）——
-      // 空时现查一次，避免"刚保存又弹出配置框、转写永不启动"
+      // 空时现查一次，避免“刚保存又弹出配置框、转写永不启动”
       let configs = asrConfigs
       if (configs.length === 0) configs = await loadAsrConfigs()
       if (configs.length === 0) {
@@ -238,44 +254,14 @@ export function useTranscribe() {
         setShowModelConfig(true)
         return
       }
-
       // executeTranscribe 的闭包可能仍持有旧的空 selectedAsrConfigId；显式传本次解析到的默认配置。
       const configId = selectedAsrConfigId || configs[0]?.id
-      await executeTranscribe(file, ctrl.signal, configId)
+      await executeTranscribe(file, ctrl.signal, configId, 'model')
       return
     }
 
-    // For 'local' method, call faster-whisper via API proxy
-    setStatus('running')
-    setError('')
-    setTranslateWarning('')
-    setEditing(false)
-
-    try {
-      // Health check: verify the server is running
-      const health = await checkLocalServerReady()
-      if (!health.connected) {
-        throw new Error(
-          'faster-whisper 服务未启动。请先运行:\n' +
-          '  cd server && ./start.sh --server transcribe\n\n' +
-          '或在设置中配置转写服务地址。',
-        )
-      }
-
-      const res = await callLocalTranscribe(file, ctrl.signal)
-      const srtText = segmentsToSrt(res.segments)
-      const { srt: finalSrt, result: finalResult } = await applyTranslation(res.segments, srtText, res.text, ctrl.signal)
-      setResult(finalResult)
-      setSrt(finalSrt)
-      setStatus('done')
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') return
-      const apiErr = toApiError(err)
-      if (apiErr.code === 'ABORTED') return
-      setError(apiErr.message)
-      setStatus('error')
-    }
-  }, [method, executeTranscribe, asrConfigs, applyTranslation, loadAsrConfigs])
+    await executeTranscribe(file, ctrl.signal, undefined, 'local')
+  }, [method, executeTranscribe, asrConfigs, loadAsrConfigs, selectedAsrConfigId])
 
   const handleModelConfigSaved = useCallback(() => {
     setShowModelConfig(false)
@@ -298,16 +284,8 @@ export function useTranscribe() {
     setPendingFile(null)
   }, [])
 
-  const reset = useCallback(() => {
-    abortRef.current?.abort()
-    setStatus('idle')
-    setResult('')
-    setSrt('')
-    setError('')
-    setEditing(false)
-    setTranslateWarning('')
-    setPendingFile(null)
-  }, [])
+  // 两者当前语义完全相同；保留两个导出名只为稳定调用方 API，避免两份状态复位逻辑漂移。
+  const reset = cancel
 
   const handleSrtChange = useCallback((value: string) => {
     setSrt(value)

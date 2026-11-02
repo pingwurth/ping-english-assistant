@@ -128,10 +128,29 @@ export function isSameOriginRequest(origin: string | null, host: string | null, 
   return true
 }
 
-/** 拒绝响应体（403）—— 不暴露接口细节 */
+/** 拒绝响应体（403）—— 不暴露接口细节；proxy 与 settings 路由保持同一形状 */
 export function forbiddenOriginResponse(): Response {
-  return new Response(JSON.stringify({ error: 'Forbidden: cross-origin request' }), {
+  return new Response(JSON.stringify({ code: 'FORBIDDEN_ORIGIN', message: 'Cross-origin BFF request is not allowed' }), {
     status: 403,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+export interface SameOriginGuardOptions {
+  /** proxy 可跳过 GET/HEAD/OPTIONS；敏感 settings 路由即使 GET 也必须校验 */
+  skipSafeMethods?: boolean
+}
+
+/** 单一 BFF 同源防护入口：可信 Host + Origin/Host 一致性；通过返回 null */
+export function sameOriginGuard(
+  request: Request,
+  options: SameOriginGuardOptions = {},
+): Response | null {
+  if (options.skipSafeMethods && ['GET', 'HEAD', 'OPTIONS'].includes(request.method.toUpperCase())) return null
+  const host = request.headers.get('host')
+  const effectiveHost = host ?? (request.url ? hostOf(request.url) : null)
+  if (!isTrustedRequestHost(effectiveHost)) return forbiddenOriginResponse()
+  const origin = request.headers.get('origin')
+  if (!origin) return null
+  return hostOf(origin) === effectiveHost ? null : forbiddenOriginResponse()
 }

@@ -17,7 +17,7 @@
  */
 
 import { encodeWav } from '@/core/audio/wav-encoder'
-import { buildSrt, splitTtsSentences, type TtsSentenceTiming } from '@/services/mock/tts'
+import { buildSrt, splitTtsSentences, type TtsSentenceTiming } from '@/core/tts/timeline'
 import type {
   KokoroLoadState,
   KokoroSynthesisResult,

@@ -55,7 +55,7 @@ export function summarize(results: SentenceResult[], durationMs: number): Sessio
 
 /** 格式化用时 mm:ss */
 export function formatElapsed(durationMs: number): string {
-  const totalSec = Math.max(0, Math.round(durationMs / 1000))
+  const totalSec = Math.max(0, Math.floor(durationMs / 1000))
   return `${String(Math.floor(totalSec / 60)).padStart(2, '0')}:${String(totalSec % 60).padStart(2, '0')}`
 }
 

@@ -174,21 +174,26 @@ export function putAllAtomic(writes: AtomicStoreWrites): Promise<void> {
   }))
 }
 
+interface PairedSnapshotRequests {
+  keys: IDBRequest<IDBValidKey[]>
+  values: IDBRequest<unknown[]>
+}
+
 /**
- * 同一 readonly 事务发 getAllKeys + getAll（可带 IDBKeyRange），按主键序 zip 成
- * [key, value] 对；成败以事务生命周期收口（见 tx() 注释）。getAllEntries 与
- * getAllEntriesByPrefix 共用。
+ * 同一 readonly 事务发 getAllKeys + getAll，按返回顺序 zip 成 [key, value]。
+ * 成败以事务生命周期收口（见 tx() 注释）；object store 与 index 查询共用。
  */
-function entriesSnapshot(store: StoreName, range?: IDBKeyRange): Promise<Array<[string, unknown]>> {
+function entriesSnapshotFromSource(
+  store: StoreName,
+  createRequests: (source: IDBObjectStore) => PairedSnapshotRequests,
+): Promise<Array<[string, unknown]>> {
   return openDb().then(
     (db) =>
       new Promise<Array<[string, unknown]>>((resolve, reject) => {
         if (!db) return resolve([])
         try {
-          const t = db.transaction(store, 'readonly')
-          const os = t.objectStore(store)
-          const keysReq = range ? os.getAllKeys(range) : os.getAllKeys()
-          const valuesReq = range ? os.getAll(range) : os.getAll()
+          const transaction = db.transaction(store, 'readonly')
+          const { keys: keysReq, values: valuesReq } = createRequests(transaction.objectStore(store))
           let keys: IDBValidKey[] = []
           let values: unknown[] = []
           let reqError: unknown
@@ -196,13 +201,20 @@ function entriesSnapshot(store: StoreName, range?: IDBKeyRange): Promise<Array<[
           valuesReq.onsuccess = () => { values = valuesReq.result }
           keysReq.onerror = () => { reqError = keysReq.error ?? new Error('idb') }
           valuesReq.onerror = () => { reqError = valuesReq.error ?? new Error('idb') }
-          t.oncomplete = () => resolve(keys.map((k, i) => [String(k), values[i]] as [string, unknown]))
-          t.onabort = () => reject(t.error ?? reqError ?? new Error('idb transaction aborted'))
+          transaction.oncomplete = () => resolve(keys.map((key, i) => [String(key), values[i]] as [string, unknown]))
+          transaction.onabort = () => reject(transaction.error ?? reqError ?? new Error('idb transaction aborted'))
         } catch (e) {
           reject(e)
         }
       }),
   )
+}
+
+function entriesSnapshot(store: StoreName, range?: IDBKeyRange): Promise<Array<[string, unknown]>> {
+  return entriesSnapshotFromSource(store, (source) => ({
+    keys: source.getAllKeys(range),
+    values: source.getAll(range),
+  }))
 }
 
 /** 单个 object store 的最小 KV API */
@@ -289,31 +301,11 @@ async function recordsByMaterial(materialId: string): Promise<Array<[string, unk
     )
   }
   try {
-    return await openDb().then(
-      (db) =>
-        new Promise<Array<[string, unknown]>>((resolve, reject) => {
-          if (!db) return resolve([])
-          try {
-            // 索引区间读：keys/values 同事务快照，事务生命周期收口（同 entriesSnapshot）
-            const t = db.transaction('records', 'readonly')
-            const idx = t.objectStore('records').index(RECORDS_MATERIAL_INDEX)
-            const range = IDBKeyRange.only(materialId)
-            const keysReq = idx.getAllKeys(range)
-            const valuesReq = idx.getAll(range)
-            let keys: IDBValidKey[] = []
-            let values: unknown[] = []
-            let reqError: unknown
-            keysReq.onsuccess = () => { keys = keysReq.result }
-            valuesReq.onsuccess = () => { values = valuesReq.result }
-            keysReq.onerror = () => { reqError = keysReq.error ?? new Error('idb') }
-            valuesReq.onerror = () => { reqError = valuesReq.error ?? new Error('idb') }
-            t.oncomplete = () => resolve(keys.map((k, i) => [String(k), values[i]] as [string, unknown]))
-            t.onabort = () => reject(t.error ?? reqError ?? new Error('idb transaction aborted'))
-          } catch (e) {
-            reject(e)
-          }
-        }),
-    )
+    const range = IDBKeyRange.only(materialId)
+    return await entriesSnapshotFromSource('records', (source) => ({
+      keys: source.index(RECORDS_MATERIAL_INDEX).getAllKeys(range),
+      values: source.index(RECORDS_MATERIAL_INDEX).getAll(range),
+    }))
   } catch (e) {
     // 读语义与 wrapRead 一致：失败回空集合，不影响其他操作
     console.error(`[IDB] read failed on "records" (byMaterial):`, e)

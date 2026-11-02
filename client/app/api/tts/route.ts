@@ -14,7 +14,7 @@ import {
   buildTtsTimeline,
   buildSrt,
   TTS_MAX_TEXT_LENGTH,
-} from '@/services/mock/tts'
+} from '@/core/tts/timeline'
 import {
   getDefaultModel,
   getDefaultVoice,

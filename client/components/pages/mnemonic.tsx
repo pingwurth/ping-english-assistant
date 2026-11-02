@@ -83,186 +83,170 @@ function BoldText({ text }: { text: string }) {
 
 // ─── 卡片组件 ───
 
-function CoreMeaningCard({ data }: { data?: MnemonicCard['core_meaning'] }) {
+function MnemonicSectionCard({
+  icon: Icon,
+  title,
+  hasData,
+  skeleton,
+  children,
+  contentClassName = 'space-y-3',
+}: {
+  icon: typeof BookOpen
+  title: string
+  hasData: boolean
+  skeleton: React.ReactNode
+  children: React.ReactNode
+  contentClassName?: string
+}) {
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <BookOpen className="size-4 text-primary" />
-          <CardTitle>核心含义</CardTitle>
+          <Icon className="size-4 text-primary" />
+          <CardTitle>{title}</CardTitle>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {data ? (
-          <>
-            <div className="text-base font-medium">{data.primary}</div>
-            {Array.isArray(data.extended) && data.extended.length > 0 && (
-              <div>
-                <div className="mb-1 text-xs font-medium text-muted-foreground">引申义</div>
-                <ul className="space-y-1">
-                  {data.extended.map((ext, i) => (
-                    <li key={i} className="text-sm text-muted-foreground">
-                      • {ext}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            <div className="rounded-lg bg-muted/50 px-3 py-2 text-sm italic text-muted-foreground">
-              {data.semantic_range}
-            </div>
-          </>
-        ) : (
-          <div className="space-y-2">
-            <div className="h-5 w-48 animate-pulse rounded bg-muted" />
-            <div className="h-4 w-72 animate-pulse rounded bg-muted" />
-            <div className="h-4 w-60 animate-pulse rounded bg-muted" />
-          </div>
-        )}
+      <CardContent className={contentClassName}>
+        {hasData ? children : skeleton}
       </CardContent>
     </Card>
+  )
+}
+
+function CoreMeaningCard({ data }: { data?: MnemonicCard['core_meaning'] }) {
+  return (
+    <MnemonicSectionCard icon={BookOpen} title="核心含义" hasData={!!data} skeleton={(
+      <div className="space-y-2">
+        <div className="h-5 w-48 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-72 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-60 animate-pulse rounded bg-muted" />
+      </div>
+    )}>
+      {data && (
+        <>
+          <div className="text-base font-medium">{data.primary}</div>
+          {Array.isArray(data.extended) && data.extended.length > 0 && (
+            <div>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">引申义</div>
+              <ul className="space-y-1">
+                {data.extended.map((ext, i) => (
+                  <li key={i} className="text-sm text-muted-foreground">• {ext}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="rounded-lg bg-muted/50 px-3 py-2 text-sm italic text-muted-foreground">
+            {data.semantic_range}
+          </div>
+        </>
+      )}
+    </MnemonicSectionCard>
   )
 }
 
 function PhoneticCard({ data }: { data?: MnemonicCard['phonetic_mnemonic'] }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <Mic className="size-4 text-primary" />
-          <CardTitle>发音助记</CardTitle>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {data ? (
-          <>
-            <div className="font-mono text-lg">{data.syllables}</div>
-            <div className="text-sm">{data.sound_shape}</div>
-            {Array.isArray(data.homophones_rhymes) && data.homophones_rhymes.length > 0 && (
-              <div>
-                <div className="mb-1 text-xs font-medium text-muted-foreground">谐音 / 押韵</div>
-                <div className="flex flex-wrap gap-2">
-                  {data.homophones_rhymes.map((w, i) => (
-                    <Badge key={i} variant="outline">{w}</Badge>
-                  ))}
-                </div>
+    <MnemonicSectionCard icon={Mic} title="发音助记" hasData={!!data} skeleton={(
+      <div className="space-y-2">
+        <div className="h-6 w-32 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-56 animate-pulse rounded bg-muted" />
+      </div>
+    )}>
+      {data && (
+        <>
+          <div className="font-mono text-lg">{data.syllables}</div>
+          <div className="text-sm">{data.sound_shape}</div>
+          {Array.isArray(data.homophones_rhymes) && data.homophones_rhymes.length > 0 && (
+            <div>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">谐音 / 押韵</div>
+              <div className="flex flex-wrap gap-2">
+                {data.homophones_rhymes.map((w, i) => <Badge key={i} variant="outline">{w}</Badge>)}
               </div>
-            )}
-          </>
-        ) : (
-          <div className="space-y-2">
-            <div className="h-6 w-32 animate-pulse rounded bg-muted" />
-            <div className="h-4 w-56 animate-pulse rounded bg-muted" />
-          </div>
-        )}
-      </CardContent>
-    </Card>
+            </div>
+          )}
+        </>
+      )}
+    </MnemonicSectionCard>
   )
 }
 
 function WordRootsCard({ data }: { data?: MnemonicCard['word_roots'] }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <Brain className="size-4 text-primary" />
-          <CardTitle>词根词缀</CardTitle>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {data ? (
-          <>
-            <div className="text-sm font-medium">{data.breakdown}</div>
-            {Array.isArray(data.root_family) && data.root_family.length > 0 && (
-              <div>
-                <div className="mb-1 text-xs font-medium text-muted-foreground">同根词家族</div>
-                <div className="space-y-1">
-                  {data.root_family.map((item, i) => (
-                    <div key={i} className="flex items-baseline gap-2 text-sm">
-                      <span className="font-medium">{item.word}</span>
-                      <span className="text-muted-foreground">{item.meaning}</span>
-                    </div>
-                  ))}
-                </div>
+    <MnemonicSectionCard icon={Brain} title="词根词缀" hasData={!!data} skeleton={(
+      <div className="space-y-2">
+        <div className="h-4 w-40 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-52 animate-pulse rounded bg-muted" />
+      </div>
+    )}>
+      {data && (
+        <>
+          <div className="text-sm font-medium">{data.breakdown}</div>
+          {Array.isArray(data.root_family) && data.root_family.length > 0 && (
+            <div>
+              <div className="mb-1 text-xs font-medium text-muted-foreground">同根词家族</div>
+              <div className="space-y-1">
+                {data.root_family.map((item, i) => (
+                  <div key={i} className="flex items-baseline gap-2 text-sm">
+                    <span className="font-medium">{item.word}</span>
+                    <span className="text-muted-foreground">{item.meaning}</span>
+                  </div>
+                ))}
               </div>
-            )}
-            {data.hook && (
-              <div className="rounded-lg border border-dashed border-primary/30 bg-primary/5 px-3 py-2 text-sm">
-                💡 {data.hook}
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="space-y-2">
-            <div className="h-4 w-40 animate-pulse rounded bg-muted" />
-            <div className="h-4 w-52 animate-pulse rounded bg-muted" />
-          </div>
-        )}
-      </CardContent>
-    </Card>
+            </div>
+          )}
+          {data.hook && (
+            <div className="rounded-lg border border-dashed border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+              💡 {data.hook}
+            </div>
+          )}
+        </>
+      )}
+    </MnemonicSectionCard>
   )
 }
 
 function ExamplesCard({ data }: { data?: MnemonicCard['examples'] }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <PenLine className="size-4 text-primary" />
-          <CardTitle>例句</CardTitle>
+    <MnemonicSectionCard icon={PenLine} title="例句" hasData={Array.isArray(data)} contentClassName="space-y-4" skeleton={(
+      <div className="space-y-3">
+        <div className="h-4 w-64 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-48 animate-pulse rounded bg-muted" />
+      </div>
+    )}>
+      {Array.isArray(data) && data.map((ex, i) => (
+        <div key={i} className="space-y-1">
+          <div className="text-sm">
+            <span className="mr-2 text-xs text-muted-foreground">{i + 1}.</span>
+            <BoldText text={ex.sentence} />
+          </div>
+          <div className="pl-5 text-sm text-muted-foreground">{ex.translation}</div>
+          {ex.usage_note && (
+            <div className="pl-5 text-xs text-muted-foreground/70">📌 {ex.usage_note}</div>
+          )}
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {Array.isArray(data) ? data.map((ex, i) => (
-          <div key={i} className="space-y-1">
-            <div className="text-sm">
-              <span className="mr-2 text-xs text-muted-foreground">{i + 1}.</span>
-              <BoldText text={ex.sentence} />
-            </div>
-            <div className="pl-5 text-sm text-muted-foreground">{ex.translation}</div>
-            {ex.usage_note && (
-              <div className="pl-5 text-xs text-muted-foreground/70">📌 {ex.usage_note}</div>
-            )}
-          </div>
-        )) : (
-          <div className="space-y-3">
-            <div className="h-4 w-64 animate-pulse rounded bg-muted" />
-            <div className="h-4 w-48 animate-pulse rounded bg-muted" />
-          </div>
-        )}
-      </CardContent>
-    </Card>
+      ))}
+    </MnemonicSectionCard>
   )
 }
 
 function CollocationsCard({ data }: { data?: MnemonicCard['collocations'] }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-4 text-primary" />
-          <CardTitle>词组搭配</CardTitle>
+    <MnemonicSectionCard icon={Sparkles} title="词组搭配" hasData={Array.isArray(data)} contentClassName="" skeleton={(
+      <div className="space-y-2">
+        <div className="h-4 w-48 animate-pulse rounded bg-muted" />
+        <div className="h-4 w-56 animate-pulse rounded bg-muted" />
+      </div>
+    )}>
+      {Array.isArray(data) && data.map((col, i) => (
+        <div key={i} className="space-y-0.5">
+          <div className="flex items-baseline gap-2">
+            <span className="text-sm font-medium">{col.phrase}</span>
+            <span className="text-sm text-muted-foreground">{col.meaning}</span>
+          </div>
+          <div className="pl-3 text-xs text-muted-foreground/70">例：{col.example}</div>
         </div>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {Array.isArray(data) ? data.map((col, i) => (
-            <div key={i} className="space-y-0.5">
-              <div className="flex items-baseline gap-2">
-                <span className="text-sm font-medium">{col.phrase}</span>
-                <span className="text-sm text-muted-foreground">{col.meaning}</span>
-              </div>
-              <div className="pl-3 text-xs text-muted-foreground/70">例：{col.example}</div>
-            </div>
-          )) : (
-            <div className="space-y-2">
-              <div className="h-4 w-48 animate-pulse rounded bg-muted" />
-              <div className="h-4 w-56 animate-pulse rounded bg-muted" />
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+      ))}
+    </MnemonicSectionCard>
   )
 }
 

@@ -61,6 +61,8 @@ export interface UseSentencePlayerOptions {
 export interface UseSentencePlayerResult {
   /** 就绪的 SentencePlayer（媒体未就绪为 null；重建期间短暂为 null） */
   player: SentencePlayer | null
+  /** 稳定 ref 镜像；事件回调读取最新实例，不由每个页面在渲染期手写赋值 */
+  playerRef: React.RefObject<SentencePlayer | null>
   /** 媒体 ObjectURL（无媒体为 null；页面 <audio src> 直接使用） */
   mediaUrl: string | null
 }
@@ -69,6 +71,7 @@ export function useSentencePlayer(materialId: string | undefined, options: UseSe
   const { mediaType, sentences, audioElement } = options
   const mediaUrl = useMediaObjectUrl(materialId)
   const [player, setPlayer] = useState<SentencePlayer | null>(null)
+  const playerRef = useRef<SentencePlayer | null>(null)
   // 回调走 ref：闭包读最新状态，且回调变化不触发引擎重建
   const onSetupRef = useRef(options.onSetup)
   onSetupRef.current = options.onSetup
@@ -78,6 +81,7 @@ export function useSentencePlayer(materialId: string | undefined, options: UseSe
   useEffect(() => {
     if (!mediaUrl) {
       setPlayer(null)
+      playerRef.current = null
       return
     }
     // audio 材料复用页面元素；video 材料内建（与四页历史行为一致）
@@ -85,6 +89,7 @@ export function useSentencePlayer(materialId: string | undefined, options: UseSe
     const controller = el ? new HtmlPlayerController('audio', el) : new HtmlPlayerController(mediaType)
     const sp = new SentencePlayer(controller, sentences)
     onSetupRef.current?.(sp, controller)
+    playerRef.current = sp
     setPlayer(sp)
     controller
       .load({ type: mediaType, src: mediaUrl })
@@ -93,10 +98,11 @@ export function useSentencePlayer(materialId: string | undefined, options: UseSe
     return () => {
       sp.destroy()
       controller.destroy()
+      playerRef.current = null
       setPlayer(null)
     }
     // eslint 不在仓内；audioElement 为 ref 对象，引用稳定
   }, [mediaUrl, mediaType, sentences, audioElement])
 
-  return { player, mediaUrl }
+  return { player, playerRef, mediaUrl }
 }

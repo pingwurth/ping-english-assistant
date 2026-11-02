@@ -8,6 +8,7 @@ import type { AsrModelConfig, AsrResult } from '../types'
 import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
 import { getDefaultModel } from '@/lib/service-endpoints'
+import { inferMimeType } from '../asr-audio'
 
 /**
  * MiMo ASR 转写
@@ -77,18 +78,4 @@ export async function transcribeMimo(
 
   // MiMo ASR 不返回时间戳，返回纯文本，由上层处理时间戳
   return { text: text.trim(), segments: [] }
-}
-
-/** Infer MIME type from filename */
-function inferMimeType(filename: string, fallback: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase()
-  const map: Record<string, string> = {
-    wav: 'audio/wav',
-    mp3: 'audio/mpeg',
-    m4a: 'audio/mp4',
-    ogg: 'audio/ogg',
-    flac: 'audio/flac',
-    webm: 'audio/webm',
-  }
-  return map[ext || ''] || fallback
 }

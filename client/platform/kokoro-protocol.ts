@@ -5,7 +5,7 @@
  * 把对方的实现也拖进自己的 bundle —— worker 里不该出现 DOM 相关代码。
  */
 
-import type { TtsSentenceTiming } from '@/services/mock/tts'
+import type { TtsSentenceTiming } from '@/core/tts/timeline'
 
 /** Kokoro q8 量化模型必需的非音色文件（与实际 transformers.js 加载清单一致） */
 export const KOKORO_MODEL_FILES = [

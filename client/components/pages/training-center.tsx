@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/c
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { getMaterialRecord } from '@/stores/material-store'
 import { recordsStore } from '@/platform/storage/idb'
+import { getLatestTrainingRecordsByMaterial } from '@/stores/training-record-store'
 import { setPref } from '@/platform/storage/prefs'
 import { getTrainingScope, setTrainingScope, type PrefTrainingScope } from '@/lib/pref-keys'
 import type { MaterialRecord } from '@/platform/storage/schema'
@@ -50,22 +51,11 @@ function TrainingCenter() {
       if (cancelled) return
       setRecord(rec ?? null)
       if (!rec) return
-      // 上次成绩：train: 记录中该材料各模式最新一条（createdAt 最大）；
-      // 收藏句数量：fav:{materialId}: 前缀。
-      // materialId 索引点查 + 主键前缀区间 —— 不再为单材料统计物化整个 records store
-      const [materialEntries, favEntries] = await Promise.all([
-        recordsStore.getEntriesByMaterial(materialId),
+      const [latest, favorites] = await Promise.all([
+        getLatestTrainingRecordsByMaterial(materialId),
         recordsStore.getAllEntriesByPrefix(`${RECORD_KEY_PREFIXES.favorite}${materialId}:`),
       ])
-      const latest: Partial<Record<TrainingMode, TrainingRecord>> = {}
-      for (const [k, v] of materialEntries) {
-        if (!k.startsWith(RECORD_KEY_PREFIXES.training)) continue
-        const r = v as TrainingRecord | undefined
-        if (!r || r.materialId !== materialId) continue
-        const prev = latest[r.mode]
-        if (!prev || r.createdAt > prev.createdAt) latest[r.mode] = r
-      }
-      if (!cancelled) { setLastByMode(latest); setFavCount(favEntries.length) }
+      if (!cancelled) { setLastByMode(latest); setFavCount(favorites.length) }
     })().catch(() => { if (!cancelled) setRecord(null) })
     return () => { cancelled = true }
   }, [materialId])

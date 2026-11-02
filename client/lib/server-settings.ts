@@ -113,45 +113,13 @@ async function mutateRaw<T>(fn: (raw: Record<string, unknown>) => T | Promise<T>
   })
 }
 
-/* ── legacy single-config (unchanged API contract) ────── */
+/* ── effective LLM config ───────────────────────────── */
 
-export async function readLlmSettings(): Promise<LlmSettings | null> {
-  const parsed = await readRaw()
-  const llm = parsed.llm as Record<string, unknown> | undefined
-  if (!llm || !llm.baseUrl || !llm.apiKey) return null
-  // Backward compat: migrate old model/endpoint → asrModel/asrEndpoint
-  if (llm.model && !llm.asrModel) llm.asrModel = llm.model
-  if (llm.endpoint && !llm.asrEndpoint) llm.asrEndpoint = llm.endpoint
-  delete llm.model
-  delete llm.endpoint
-  return llm as unknown as LlmSettings
-}
-
-export async function writeLlmSettings(settings: LlmSettings): Promise<void> {
-  await mutateRaw((raw) => {
-    raw.llm = settings
-  })
-}
-
-/**
- * 读取有效的 LLM 配置（优先 legacy `llm`，其次 `llmConfigs` 默认配置）
- *
- * 多模型配置系统将配置存在 `llmConfigs` 数组中，仅在设为默认时同步到 `llm`。
- * 此函数确保无论配置存储在哪，都能正确读取。
- */
+/** 读取当前默认 LLM 配置；旧版 `raw.llm` 由 readLlmConfigs 自动迁移后删除 */
 export async function readEffectiveLlmSettings(): Promise<LlmSettings | null> {
-  // 优先读 legacy `llm` key
-  const legacy = await readLlmSettings()
-  if (legacy) return legacy
-
-  // fallback: 读 llmConfigs 的默认配置
   const { configs, defaultId } = await readLlmConfigs()
   if (configs.length === 0) return null
-
-  const defaultConfig = defaultId
-    ? configs.find(c => c.id === defaultId)
-    : configs[0]
-
+  const defaultConfig = defaultId ? configs.find((config) => config.id === defaultId) : configs[0]
   return defaultConfig ? toLlmSettings(defaultConfig) : null
 }
 
@@ -167,39 +135,44 @@ export async function readLlmConfigs(): Promise<LlmConfigsResult> {
   return enqueueMutation(async () => {
     const raw = await readRaw()
     const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
-    const defaultId = (raw.defaultLlmConfigId as string | null) ?? null
-
-    // Auto-migrate: if no configs exist but legacy llm does, convert it
+    // Auto-migrate the last legacy single config once, then delete the shadow key.
+    // Spread + explicit old aliases avoid a hand-written full-field checklist that
+    // previously silently dropped mnemonic*/whisper* settings.
+    let changed = false
     if (configs.length === 0 && raw.llm) {
       const legacy = raw.llm as Record<string, unknown>
       if (legacy.baseUrl && legacy.apiKey) {
-        // 字段清单必须与 LlmSettings 全集一致：漏掉的键会在后续 setDefaultLlmConfig
-        // 回写 legacy 影子副本时被静默抹掉（曾漏 mnemonic*/whisper* 两对）
+        const { model, endpoint, ...rest } = legacy
         const migrated: LlmConfig = {
+          ...(rest as Omit<LlmSettings, 'baseUrl' | 'apiKey'>),
           id: generateConfigId(),
           name: String(legacy.provider || '默认配置'),
           provider: String(legacy.provider || ''),
           baseUrl: String(legacy.baseUrl || ''),
           apiKey: String(legacy.apiKey || ''),
-          asrModel: legacy.asrModel as string | undefined,
-          asrEndpoint: legacy.asrEndpoint as string | undefined,
-          ttsModel: legacy.ttsModel as string | undefined,
-          ttsEndpoint: legacy.ttsEndpoint as string | undefined,
-          translateModel: legacy.translateModel as string | undefined,
-          translateEndpoint: legacy.translateEndpoint as string | undefined,
-          mnemonicModel: legacy.mnemonicModel as string | undefined,
-          mnemonicEndpoint: legacy.mnemonicEndpoint as string | undefined,
-          whisperAlignUrl: legacy.whisperAlignUrl as string | undefined,
-          whisperTranscribeUrl: legacy.whisperTranscribeUrl as string | undefined,
+          asrModel: (legacy.asrModel ?? model) as string | undefined,
+          asrEndpoint: (legacy.asrEndpoint ?? endpoint) as string | undefined,
         }
-        raw.llmConfigs = [migrated]
+        configs.push(migrated)
+        raw.llmConfigs = configs
         raw.defaultLlmConfigId = migrated.id
-        await writeRaw(raw)
-        return { configs: [migrated], defaultId: migrated.id }
+        changed = true
       }
     }
 
-    return { configs, defaultId }
+    if (configs.length > 0) {
+      if (!raw.defaultLlmConfigId) {
+        raw.defaultLlmConfigId = configs[0]!.id
+        changed = true
+      }
+      if (raw.llm) {
+        delete raw.llm
+        changed = true
+      }
+    }
+    if (changed) await writeRaw(raw)
+
+    return { configs, defaultId: (raw.defaultLlmConfigId as string | null) ?? null }
   })
 }
 
@@ -212,11 +185,8 @@ export async function addLlmConfig(config: Omit<LlmConfig, 'id'>): Promise<strin
     configs.push(newConfig)
     raw.llmConfigs = configs
 
-    // If first config, make it the default and sync to legacy
-    if (configs.length === 1 || !raw.defaultLlmConfigId) {
-      raw.defaultLlmConfigId = id
-      raw.llm = toLlmSettings(newConfig)
-    }
+    // If first config or no default exists, make it the default.
+    if (configs.length === 1 || !raw.defaultLlmConfigId) raw.defaultLlmConfigId = id
 
     return id
   })
@@ -237,11 +207,6 @@ export async function updateLlmConfig(id: string, patch: Partial<LlmConfig>): Pr
     configs[idx] = { ...configs[idx], ...safePatch, id }
     raw.llmConfigs = configs
 
-    // Sync to legacy if this is the default
-    if (raw.defaultLlmConfigId === id) {
-      raw.llm = toLlmSettings(configs[idx]!)
-    }
-
     return true
   })
 }
@@ -260,14 +225,13 @@ export async function deleteLlmConfig(id: string): Promise<boolean> {
     if (raw.defaultLlmConfigId === id) {
       const newDefaultId = configs.length > 0 ? configs[0]!.id : null
       raw.defaultLlmConfigId = newDefaultId
-      raw.llm = newDefaultId ? toLlmSettings(configs[0]!) : undefined
     }
 
     return true
   })
 }
 
-/** Set a config as the default (syncs to legacy `llm`) */
+/** Set a config as the default */
 export async function setDefaultLlmConfig(id: string): Promise<boolean> {
   return mutateRaw((raw) => {
     const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
@@ -275,7 +239,6 @@ export async function setDefaultLlmConfig(id: string): Promise<boolean> {
     if (!config) return false
 
     raw.defaultLlmConfigId = id
-    raw.llm = toLlmSettings(config)
     return true
   })
 }
@@ -287,7 +250,7 @@ export async function readLlmConfigById(id: string): Promise<LlmSettings | null>
   return config ? toLlmSettings(config) : null
 }
 
-/** Strip id/name to produce a plain LlmSettings for legacy consumers */
+/** Strip identity fields to produce the service-layer settings shape */
 function toLlmSettings(config: LlmConfig): LlmSettings {
   const { id: _id, name: _name, ...settings } = config
   return settings

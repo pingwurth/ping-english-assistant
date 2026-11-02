@@ -27,6 +27,7 @@ import { isZipMagic } from '@/core/backup/zip'
 import { buildBackup, buildFullBackupZip, downloadBlob, downloadJsonBackup, importBackup, importZipBackup, prepareZipImport, type ImportSummary } from '@/platform/storage/backup'
 import { blobsStore, estimateUsage, materialsStore, recordsStore } from '@/platform/storage/idb'
 import { initMaterials, materialStore, removeMaterial } from '@/stores/material-store'
+import { getTrainingStats } from '@/stores/training-record-store'
 import { useStore } from '@/stores/store'
 import { DEFAULT_WHISPER_ALIGN_URL, DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
 import {
@@ -34,7 +35,6 @@ import {
   PREF_LOOPS, PREF_RATES, setDefaultLoop, setDefaultRate,
   type PrefLoop, type PrefRate,
 } from '@/lib/pref-keys'
-import type { TrainingRecord } from '@/types/training'
 
 /* ── helpers ─────────────────────────────────────────── */
 
@@ -57,25 +57,14 @@ function LearningStatsSection() {
 
   const refreshStats = useCallback(async () => {
     try {
-      // 单事务快照读取（原先 allKeys 全扫 + 每条 train: 记录独立读事务的 N+1）
-      const entries = await recordsStore.getAllEntries()
-      let trainCount = 0
-      let favCount = 0
-      let scoreSum = 0
-      let scoreCount = 0
-      for (const [k, v] of entries) {
-        if (k.startsWith(RECORD_KEY_PREFIXES.training)) {
-          trainCount++
-          const score = (v as TrainingRecord | null)?.score
-          if (typeof score === 'number') { scoreSum += score; scoreCount++ }
-        } else if (k.startsWith(RECORD_KEY_PREFIXES.favorite)) {
-          favCount++
-        }
-      }
+      const [training, favorites] = await Promise.all([
+        getTrainingStats(),
+        recordsStore.getAllEntriesByPrefix(RECORD_KEY_PREFIXES.favorite),
+      ])
       setStats({
-        trainCount,
-        avgScore: scoreCount > 0 ? Math.round(scoreSum / scoreCount) : 0,
-        favCount,
+        trainCount: training.count,
+        avgScore: training.averageScore,
+        favCount: favorites.length,
       })
     } catch { /* 统计失败不影响设置页 */ }
   }, [])

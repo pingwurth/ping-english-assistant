@@ -76,6 +76,30 @@
 - 门禁：client tsc 0 错 + 29 文件 283/283 + `next build` 通过；server 54/54
 - 遗留更新：第六节余 20 条（#32/#33/#36–#47/#49/#58–#62）
 
+**2026-11-02 批次 6（清理项收口 #32/#33/#36–#47/#49/#58–#62）**
+- #32 fixed：新增 `lib/llm/asr-audio.ts`，DashScope 原生时间戳与 WhisperX 对齐共用 `WordTimestamp`/`groupWordsToSegments`
+- #33 fixed：TTS 保存到设备改走 `lib/download.ts` 的 `downloadBlob`，删除页面内第 5 份 `<a download>` 拷贝
+- #36 fixed：`callLlmTranscribe`/`callLocalTranscribe` 从 transcribe-shared 导出，recording-review 复用同一条转写梯子并透传服务端可读错误
+- #37 fixed：MiMo/DashScope 共用 `asr-audio.ts` 的 `inferMimeType`
+- #38 fixed：`LlmError` 改继承 contracts 的 `ApiError`；`toApiError` 统一识别网络错误，`toLlmError` 只做 LLM 错误码映射
+- #39 fixed：`formatElapsed` 改为秒级截断并向 `player-parts.formatDuration` 转发，59900ms 统一显示 00:59；补边界测试
+- #40 fixed：删除 `raw.llm` 影子副本同步；旧 `llm` 首次读取自动迁移为默认 `llmConfigs` 后删除，CRUD 只写 configs/defaultId；POST 补齐 whisper 字段
+- #41 fixed：删除无调用方的 `/api/settings/llm` 死端点，LLM 配置唯一 API 收敛到 `/api/settings/llm-configs`
+- #42 fixed：ModelConfigDialog 的 8 个服务字段 state 收敛为 `Record<ServiceKind,{model,endpoint}>`，新增服务只补SERVICE_TYPES 与类型映射
+- #43 fixed：IDB object-store/index 双读统一走 `entriesSnapshotFromSource`，事务生命周期收口逻辑只剩一份
+- #44 fixed：mnemonic 五张卡片抽 `MnemonicSectionCard`，Card/CardHeader/skeleton 模板不再五处复制
+- #45 fixed：useTranscribe 的 `reset` 直接复用 `cancel`，两个导出名保留但状态复位实现唯一
+- #46 fixed：local/model 两条转写链统一到参数化 `executeTranscribe`，健康检查只保留 local 分支差异
+- #47 fixed：编号翻译严格/部分回填共用 `collectNumberedTranslations`，[N] 解析规则唯一
+- #49 fixed：api-guard 导出唯一 `sameOriginGuard(request)`；proxy 与 5 个 settings 路由复用，403 响应形状统一
+- #58 fixed：新增 material-store `putProgress()` 与 `shiftSentenceReferences()`；播放器删句不再逐家族直写 records/progress
+- #59 fixed：training-record-store 新增 `getTrainingStats()` / `getLatestTrainingRecordsByMaterial()`；设置页与训练中心不再解析 train: 记录内部形状
+- #60 fixed：schema 新增 `MATERIAL_OWNED_RECORD_PREFIXES` 作为材料属主记录唯一清单；removeMaterial 由清单驱动并保留 m-1/m-10 精确边界测试
+- #61 fixed：useSentencePlayer 返回稳定 `playerRef` 并在 effect 内维护，四个训练页删除渲染期手写 ref 镜像
+- #62 fixed：TTS 分句/时间轴/SRT 上限下沉 `core/tts/timeline.ts`；BFF、Kokoro、页面不再 import services/mock；mock 仅保留兼容 re-export
+- 门禁：client tsc 0 错 + 29 文件 283/283 + `next build` 通过（已删除 settings/llm 后路由清单 15/15）；server tsc 0 错 + 9 文件 54/54
+- 遗留：仅 #31 维持 skipped（原子导入 vs 外部 deflate 全量物化的有意取舍）
+
 ---
 
 ## 一、P1 安全 / 正确性（3）

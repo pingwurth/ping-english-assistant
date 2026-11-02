@@ -53,7 +53,9 @@ export function toApiError(err: unknown): ApiError {
     return new ApiError('ABORTED', '操作已取消', err)
   }
   if (err instanceof Error) {
-    return new ApiError('INTERNAL', err.message || '未知错误', err)
+    // 网络层错误是可预期故障，不应被误报成 INTERNAL；上层可按需映射自己的错误码。
+    const isNetworkError = err.message.includes('fetch failed') || err.message.includes('ECONNREFUSED')
+    return new ApiError(isNetworkError ? 'NETWORK_ERROR' : 'INTERNAL', isNetworkError ? `网络请求失败：${err.message}` : err.message || '未知错误', err)
   }
   return new ApiError('INTERNAL', String(err), err)
 }

@@ -13,6 +13,7 @@ import { useStore } from '@/stores/store'
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import type { Material, MaterialCollection } from '@/types/material'
+import { formatElapsed } from '@/core/training/scoring'
 import type { SubtitleMode, SubtitleSentence } from '@/types/subtitle'
 
 const sentences = seedSentences
@@ -25,10 +26,9 @@ const materialDisplayById: Record<string, { color: string; progress: number; las
   'movie': { color: 'bg-muted', progress: 100, last: '已完成' },
 }
 function getMaterialDisplay(id: string) { return materialDisplayById[id] ?? { color: 'bg-muted', progress: 0, last: '尚未开始' } }
-/** mm:ss 格式化（负数钳 0）—— 全应用唯一实现（原 7 份私有拷贝收敛于此，口径统一） */
+/** mm:ss 格式化：唯一实现在 core/training/scoring.ts（截断到秒，不四舍五入） */
 export function formatDuration(durationMs: number) {
-  const t = Math.max(0, durationMs)
-  return `${String(Math.floor(t / 60000)).padStart(2, '0')}:${String(Math.floor((t % 60000) / 1000)).padStart(2, '0')}`
+  return formatElapsed(durationMs)
 }
 
 /** "最近学习"文案（材料库 / 材料集详情共用） */

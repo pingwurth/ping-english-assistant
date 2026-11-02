@@ -21,8 +21,9 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { formatDuration } from '@/components/shared/player-parts'
-import { TTS_MAX_TEXT_LENGTH } from '@/services/mock/tts'
+import { TTS_MAX_TEXT_LENGTH } from '@/core/tts/timeline'
 import { writeTtsExport } from '@/lib/tts-export'
+import { downloadBlob } from '@/lib/download'
 import { translateTexts, detectDirection, mergeBilingualSrt } from '@/lib/translate'
 import { getTranslateEnabled, setTranslateEnabled } from '@/lib/pref-keys'
 import { selectServiceConfigs } from '@/lib/llm-configs'
@@ -354,12 +355,7 @@ function TTS() {
   const saveToDevice = () => {
     if (!gen) return
     const fileName = `ping-tts-${voice.id}-${dateStamp()}.wav`
-    const a = document.createElement('a')
-    a.href = gen.url
-    a.download = fileName
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    downloadBlob(fileName, gen.audio)
     setSavedName(fileName)
   }
 

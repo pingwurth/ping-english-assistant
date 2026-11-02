@@ -71,13 +71,11 @@ function ReadAloud() {
   const sentence = sentences[cursor]
 
   // 媒体与播放引擎：共享装配（句段播放 playRange 播一遍自动暂停）
-  const { player: enginePlayer, mediaUrl } = useSentencePlayer(record?.material.id, {
+  const { playerRef, mediaUrl } = useSentencePlayer(record?.material.id, {
     mediaType: record?.material.mediaType ?? 'audio',
     sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
     audioElement: audioRef,
   })
-  const playerRef = useRef<SentencePlayer | null>(null)
-  playerRef.current = enginePlayer
 
   // 录音器生命周期：挂载创建 + 到达 60s 上限自动收尾；卸载 destroy + 中止评分请求
   // （volume/计时高频更新由 LiveRecordingWave 自订阅承接，评审 #51）

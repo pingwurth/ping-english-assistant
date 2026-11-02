@@ -8,14 +8,7 @@ import {
   maskSecret,
   type LlmConfig,
 } from '@/lib/server-settings'
-import { isSameOriginRequest, forbiddenOriginResponse } from '@/lib/api-guard'
-
-/** settings.json 落盘含明文密钥，读写一律仅允许本机同源上下文（防 CSRF / DNS rebinding） */
-function guard(request: Request): Response | null {
-  return isSameOriginRequest(request.headers.get('origin'), request.headers.get('host'), request.url)
-    ? null
-    : forbiddenOriginResponse()
-}
+import { sameOriginGuard } from '@/lib/api-guard'
 
 function maskApiKey(config: LlmConfig): LlmConfig {
   return {
@@ -44,7 +37,7 @@ function getTtsVoices(config: LlmConfig) {
 }
 
 export async function GET(request: Request) {
-  const denied = guard(request)
+  const denied = sameOriginGuard(request)
   if (denied) return denied
   try {
     const { searchParams } = new URL(request.url)
@@ -74,11 +67,11 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const denied = guard(request)
+  const denied = sameOriginGuard(request)
   if (denied) return denied
   try {
     const body = await request.json()
-    const { name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, mnemonicModel, mnemonicEndpoint } = body
+    const { name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, mnemonicModel, mnemonicEndpoint, whisperAlignUrl, whisperTranscribeUrl } = body
 
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: 'Missing required fields: baseUrl, apiKey' }, { status: 400 })
@@ -97,6 +90,8 @@ export async function POST(request: Request) {
       translateEndpoint,
       mnemonicModel,
       mnemonicEndpoint,
+      whisperAlignUrl,
+      whisperTranscribeUrl,
     })
 
     return NextResponse.json({ id })
@@ -106,7 +101,7 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const denied = guard(request)
+  const denied = sameOriginGuard(request)
   if (denied) return denied
   try {
     const body = await request.json()
@@ -132,7 +127,7 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const denied = guard(request)
+  const denied = sameOriginGuard(request)
   if (denied) return denied
   try {
     const body = await request.json()

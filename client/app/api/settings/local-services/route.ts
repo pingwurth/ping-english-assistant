@@ -1,15 +1,9 @@
 import { NextResponse } from 'next/server'
 import { readLocalServices, writeLocalServices } from '@/lib/server-settings'
-import { isSameOriginRequest, forbiddenOriginResponse } from '@/lib/api-guard'
-
-function guard(request: Request): Response | null {
-  return isSameOriginRequest(request.headers.get('origin'), request.headers.get('host'), request.url)
-    ? null
-    : forbiddenOriginResponse()
-}
+import { sameOriginGuard } from '@/lib/api-guard'
 
 export async function GET(request: Request) {
-  const denied = guard(request)
+  const denied = sameOriginGuard(request)
   if (denied) return denied
   try {
     const services = await readLocalServices()
@@ -20,7 +14,7 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const denied = guard(request)
+  const denied = sameOriginGuard(request)
   if (denied) return denied
   try {
     const body = await request.json()

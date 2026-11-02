@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { readLlmSettings, readLocalServices } from '@/lib/server-settings'
+import { readEffectiveLlmSettings, readLocalServices } from '@/lib/server-settings'
 import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import {
   DEFAULT_WHISPER_TRANSCRIBE_URL,
@@ -26,7 +26,7 @@ async function getTranscribeUrl(): Promise<string> {
   try {
     const ls = await readLocalServices()
     if (ls.whisperTranscribeUrl) return ls.whisperTranscribeUrl
-    const settings = await readLlmSettings()
+    const settings = await readEffectiveLlmSettings()
     return settings?.whisperTranscribeUrl || DEFAULT_WHISPER_TRANSCRIBE_URL
   } catch {
     return DEFAULT_WHISPER_TRANSCRIBE_URL

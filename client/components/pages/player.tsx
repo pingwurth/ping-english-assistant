@@ -17,14 +17,14 @@ import {
   getMediaBlob,
   getProgress,
   putMaterialRecord,
-  shiftTrainingRecordsAfterDeletion,
+  putProgress,
+  shiftSentenceReferences,
   touchMaterial,
 } from '@/stores/material-store'
-import { favoriteSentenceIndexes, setFavorite, shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
-import { deleteSentenceNote, listNotes, saveSentenceNote, shiftNotesAfterDeletion } from '@/stores/note-store'
-import { shiftVocabEntriesAfterDeletion, updateFrequencies } from '@/stores/vocab-store'
-import { recordsStore } from '@/platform/storage/idb'
-import { RECORD_KEYS, type MaterialRecord } from '@/platform/storage/schema'
+import { favoriteSentenceIndexes, setFavorite } from '@/stores/favorite-store'
+import { deleteSentenceNote, listNotes, saveSentenceNote } from '@/stores/note-store'
+import { updateFrequencies } from '@/stores/vocab-store'
+import type { MaterialRecord } from '@/platform/storage/schema'
 import { HtmlPlayerController } from '@/platform/html-player'
 import { SentencePlayer } from '@/core/player/sentence-player'
 import { getDefaultLoop, getDefaultRate } from '@/lib/pref-keys'
@@ -315,7 +315,7 @@ function Player() {
         playedSentenceIndexes: [...merged].sort((a, b) => a - b),
         updatedAt: Date.now(),
       }
-      await recordsStore.put(RECORD_KEYS.progress(materialId), entry)
+      await putProgress(entry)
     } catch { /* 存储失败静默：进度仅影响材料库百分比 */ }
   }
 
@@ -493,11 +493,8 @@ function Player() {
       subtitleData: data,
     }
     await putMaterialRecord(updatedRecord)
-    // ② 句序相关 records 全部平移；每次写 key 前先删旧 key，避免独立 IDB 事务顺序不确定。
-    await shiftNotesAfterDeletion(materialId, index)
-    await shiftFavoritesAfterDeletion(materialId, index)
-    await shiftTrainingRecordsAfterDeletion(materialId, index)
-    await shiftVocabEntriesAfterDeletion(materialId, index)
+    // ② 句序相关持久化记录统一由 store 平移（含进度，防止任何家族漏同步）。
+    const shiftedProgress = await shiftSentenceReferences(materialId, index)
     await updateFrequencies(updated.flatMap((sentence) => sentence.words), materialId)
     setFavSet((prev) => {
       const next = new Set<number>()
@@ -507,19 +504,8 @@ function Player() {
       }
       return next
     })
-    // ③ 已播进度平移（内存 + 已落盘的 progress 记录），否则统计虚高/指向错句
-    const prog = await getProgress(materialId)
-    if (prog) {
-      const shifted = prog.playedSentenceIndexes
-        .filter((i) => i !== index)
-        .map((i) => (i > index ? i - 1 : i))
-      await recordsStore.put(RECORD_KEYS.progress(materialId), { ...prog, playedSentenceIndexes: shifted })
-      playedRef.current.indexes = new Set(shifted)
-    } else {
-      playedRef.current.indexes = new Set(
-        [...playedRef.current.indexes].filter((i) => i !== index).map((i) => (i > index ? i - 1 : i)),
-      )
-    }
+    // ③ 已播进度在内存中同步为 store 返回的持久化结果。
+    playedRef.current.indexes = new Set(shiftedProgress?.playedSentenceIndexes ?? [])
     setNoteMap((prev) => {
       const next: Record<number, string> = {}
       for (const [k, v] of Object.entries(prev)) {

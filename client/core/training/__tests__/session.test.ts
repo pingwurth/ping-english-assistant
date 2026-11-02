@@ -180,6 +180,7 @@ describe('scoring.summarize / formatElapsed', () => {
     expect(formatElapsed(0)).toBe('00:00')
     expect(formatElapsed(65000)).toBe('01:05')
     expect(formatElapsed(3594000)).toBe('59:54')
+    expect(formatElapsed(59900)).toBe('00:59') // 与播放器统一：向截断，不四舍五入
     expect(formatElapsed(-1000)).toBe('00:00')
   })
 })

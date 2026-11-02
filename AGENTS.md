@@ -16,15 +16,15 @@ All commands run from `client/`:
 
 ```bash
 pnpm install          # install deps (pnpm is the package manager, not npm)
-pnpm test             # vitest run — tests core/ and services/mock/ only (node env)
+pnpm test             # vitest run (node env; core/services/platform/lib/stores/app-api unit tests)
 pnpm dev              # next dev — localhost:3000
 pnpm build            # next build
 ```
 
 No typecheck script — use `npx tsc --noEmit` or rely on Next.js build-time checks.
 
-Tests are **core-layer unit tests only** (vitest, node environment). No browser/React tests exist.
-Test files live inside `__tests__/` dirs co-located with source: `core/subtitle/__tests__/`, `core/training/__tests__/`, `core/audio/__tests__/`, `services/mock/__tests__/`, `services/api/__tests__/`.
+Tests are **node-environment unit tests only** (vitest). No browser/React component tests exist.
+Test files live inside `__tests__/` dirs co-located with source across `core/**`, `services/**`, `platform/**`, `lib/**`, `stores/**`, and `app/api/**`.
 
 Backend commands (not part of the `client/` workflow):
 
@@ -86,7 +86,7 @@ Custom lightweight stores using `createStore` + `useStore` (React `useSyncExtern
 
 Next.js Route Handlers keep cloud API keys out of the browser. They read `~/.ping-eng/settings.json` (`lib/server-settings.ts`, plain JSON file — no database) and forward upstream, passing per-request credentials through a multipart `creds` field for the SOE proxy.
 
-- `app/api/` — `settings/{llm,llm-configs,soe,kokoro,local-services}`, `soe/{evaluate,health}`, `transcribe`, `transcribe/local`, `tts`, `translate`, `mnemonic`, `models`, `hf/[...path]`
+- `app/api/` — `settings/{llm-configs,soe,kokoro,local-services}`, `soe/{evaluate,health}`, `transcribe`, `transcribe/local`, `tts`, `translate`, `mnemonic`, `models`, `hf/[...path]`
 - `lib/llm/` — LangChain `ChatOpenAI` factory + ASR/TTS/translate/mnemonic services; providers `dashscope` (Qwen) / `mimo`, unknown providers fall back to OpenAI-compatible
 - `lib/service-endpoints.ts` — **the only place allowed to hold endpoint paths / default models / default service URLs**; never hardcode a baseUrl elsewhere
 

@@ -8,6 +8,7 @@ import type { AsrModelConfig, AsrResult, AsrSegment } from '../types'
 import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
 import { getDefaultModel } from '@/lib/service-endpoints'
+import { groupWordsToSegments, inferMimeType, type WordTimestamp } from '../asr-audio'
 
 interface DashScopeWord {
   begin_time: number
@@ -16,11 +17,6 @@ interface DashScopeWord {
   punctuation?: string
 }
 
-interface WordTimestamp {
-  word: string
-  start: number // seconds
-  end: number // seconds
-}
 
 /**
  * DashScope ASR 转写
@@ -140,60 +136,4 @@ function inferAudioFormat(filename: string): string {
     wma: 'wma', wmv: 'wmv',
   }
   return map[ext || ''] || 'mp3'
-}
-
-/** Infer MIME type from filename */
-function inferMimeType(filename: string, fallback: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase()
-  const map: Record<string, string> = {
-    wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4',
-    ogg: 'audio/ogg', flac: 'audio/flac', webm: 'audio/webm',
-  }
-  return map[ext || ''] || fallback
-}
-
-/** 词级时间戳 → 句子级 segments */
-function groupWordsToSegments(words: WordTimestamp[]): AsrSegment[] {
-  if (words.length === 0) return []
-
-  const segments: AsrSegment[] = []
-  const sentenceEnders = /[.!?]/
-  const clauseBreaks = /[,;:]/
-  let currentWords: WordTimestamp[] = []
-
-  for (const word of words) {
-    currentWords.push(word)
-    const cleanWord = word.word.trim()
-    const isSentenceEnd = sentenceEnders.test(cleanWord)
-    const isLongClause = clauseBreaks.test(cleanWord) && currentWords.length >= 8
-
-    if (isSentenceEnd || isLongClause) {
-      segments.push(buildSegment(currentWords))
-      currentWords = []
-    }
-  }
-
-  if (currentWords.length > 0) {
-    if (segments.length > 0 && currentWords.length <= 3) {
-      const last = segments[segments.length - 1]
-      const merged = buildSegment(currentWords)
-      segments[segments.length - 1] = {
-        startMs: last.startMs,
-        endMs: merged.endMs,
-        text: `${last.text} ${merged.text}`,
-      }
-    } else {
-      segments.push(buildSegment(currentWords))
-    }
-  }
-
-  return segments
-}
-
-function buildSegment(words: WordTimestamp[]): AsrSegment {
-  return {
-    startMs: Math.round((words[0]?.start ?? 0) * 1000),
-    endMs: Math.round((words[words.length - 1]?.end ?? 0) * 1000),
-    text: words.map(w => w.word.trim()).join(' ').trim(),
-  }
 }

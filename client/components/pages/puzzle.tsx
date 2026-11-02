@@ -50,13 +50,11 @@ function Puzzle() {
   }, [record, scope])
 
   // 媒体与播放引擎：共享装配（Blob→ObjectURL + HtmlPlayerController/SentencePlayer 生命周期）
-  const { player: enginePlayer, mediaUrl } = useSentencePlayer(record?.material.id, {
+  const { playerRef, mediaUrl } = useSentencePlayer(record?.material.id, {
     mediaType: record?.material.mediaType ?? 'audio',
     sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
     audioElement: audioRef,
   })
-  const playerRef = useRef<SentencePlayer | null>(null)
-  playerRef.current = enginePlayer
 
   const sentence = session ? currentSentence(session) : undefined
   const queue = session?.queue

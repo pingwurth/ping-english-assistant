@@ -50,6 +50,20 @@ const providerLabel = (v: string) => PROVIDERS.find(p => p.value === v)?.label |
 
 type ServiceKind = 'asr' | 'tts' | 'translate' | 'mnemonic'
 
+interface ServiceFieldState {
+  model: string
+  endpoint: string
+}
+
+type ServiceFieldsState = Record<ServiceKind, ServiceFieldState>
+
+const emptyServiceFields = (): ServiceFieldsState => ({
+  asr: { model: '', endpoint: '' },
+  tts: { model: '', endpoint: '' },
+  translate: { model: '', endpoint: '' },
+  mnemonic: { model: '', endpoint: '' },
+})
+
 const SERVICE_STYLES: Record<ServiceKind, { accent: string; softBg: string; mutedBg: string; borderColor: string }> = {
   asr:       { accent: '#2563eb', softBg: '#eff4ff', mutedBg: '#dbeafe', borderColor: '#bfdbfe' },
   tts:       { accent: '#7c3aed', softBg: '#f5f0ff', mutedBg: '#ede4ff', borderColor: '#d8b4fe' },
@@ -150,14 +164,7 @@ function ModelConfigDialog({
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
-  const [asrModel, setAsrModel] = useState('')
-  const [asrEndpoint, setAsrEndpoint] = useState('')
-  const [ttsModel, setTtsModel] = useState('')
-  const [ttsEndpoint, setTtsEndpoint] = useState('')
-  const [translateModel, setTranslateModel] = useState('')
-  const [translateEndpoint, setTranslateEndpoint] = useState('')
-  const [mnemonicModel, setMnemonicModel] = useState('')
-  const [mnemonicEndpoint, setMnemonicEndpoint] = useState('')
+  const [serviceFields, setServiceFields] = useState<ServiceFieldsState>(emptyServiceFields)
   const [models, setModels] = useState<string[]>([])
   const [fetchingModels, setFetchingModels] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -174,14 +181,12 @@ function ModelConfigDialog({
       setName(editingConfig.name || '')
       setBaseUrl(editingConfig.baseUrl || '')
       setApiKey('')
-      setAsrModel(editingConfig.asrModel || '')
-      setAsrEndpoint(editingConfig.asrEndpoint || '')
-      setTtsModel(editingConfig.ttsModel || '')
-      setTtsEndpoint(editingConfig.ttsEndpoint || '')
-      setTranslateModel(editingConfig.translateModel || '')
-      setTranslateEndpoint(editingConfig.translateEndpoint || '')
-      setMnemonicModel(editingConfig.mnemonicModel || '')
-      setMnemonicEndpoint(editingConfig.mnemonicEndpoint || '')
+      setServiceFields({
+        asr: { model: editingConfig.asrModel || '', endpoint: editingConfig.asrEndpoint || '' },
+        tts: { model: editingConfig.ttsModel || '', endpoint: editingConfig.ttsEndpoint || '' },
+        translate: { model: editingConfig.translateModel || '', endpoint: editingConfig.translateEndpoint || '' },
+        mnemonic: { model: editingConfig.mnemonicModel || '', endpoint: editingConfig.mnemonicEndpoint || '' },
+      })
 
       const enabled = new Set<ServiceKind>()
       if (editingConfig.asrModel) enabled.add('asr')
@@ -203,14 +208,7 @@ function ModelConfigDialog({
       setName('')
       setBaseUrl('')
       setApiKey('')
-      setAsrModel('')
-      setAsrEndpoint('')
-      setTtsModel('')
-      setTtsEndpoint('')
-      setTranslateModel('')
-      setTranslateEndpoint('')
-      setMnemonicModel('')
-      setMnemonicEndpoint('')
+      setServiceFields(emptyServiceFields())
       setEnabledServices(new Set())
     }
     setModels([])
@@ -256,14 +254,10 @@ function ModelConfigDialog({
         provider,
         baseUrl: baseUrl.trim(),
         ...((!isEdit || apiKey.trim()) ? { apiKey: apiKey.trim() } : {}),
-        asrModel: enabledServices.has('asr') ? (asrModel || null) : null,
-        asrEndpoint: enabledServices.has('asr') ? (asrEndpoint.trim() || null) : null,
-        ttsModel: enabledServices.has('tts') ? (ttsModel || null) : null,
-        ttsEndpoint: enabledServices.has('tts') ? (ttsEndpoint.trim() || null) : null,
-        translateModel: enabledServices.has('translate') ? (translateModel || null) : null,
-        translateEndpoint: enabledServices.has('translate') ? (translateEndpoint.trim() || null) : null,
-        mnemonicModel: enabledServices.has('mnemonic') ? (mnemonicModel || null) : null,
-        mnemonicEndpoint: enabledServices.has('mnemonic') ? (mnemonicEndpoint.trim() || null) : null,
+        ...SERVICE_TYPES.flatMap(({ kind }) => [
+          [`${kind}Model`, enabledServices.has(kind) ? (serviceFields[kind].model || null) : null],
+          [`${kind}Endpoint`, enabledServices.has(kind) ? (serviceFields[kind].endpoint.trim() || null) : null],
+        ]),
       }
       const url = '/api/settings/llm-configs'
       const res = isEdit
@@ -281,33 +275,20 @@ function ModelConfigDialog({
     } finally {
       setSaving(false)
     }
-  }, [name, provider, baseUrl, apiKey, asrModel, asrEndpoint, ttsModel, ttsEndpoint, translateModel, translateEndpoint, mnemonicModel, mnemonicEndpoint, enabledServices, isEdit, editingConfig, onOpenChange, onSave, onSaved])
+  }, [name, provider, baseUrl, apiKey, serviceFields, enabledServices, isEdit, editingConfig, onOpenChange, onSave, onSaved])
 
   const handleProviderChange = (newProvider: string) => {
     setProvider(newProvider)
     setModels([])
     setBaseUrl('')
     setApiKey('')
-    setAsrModel('')
-    setAsrEndpoint('')
-    setTtsModel('')
-    setTtsEndpoint('')
-    setTranslateModel('')
-    setTranslateEndpoint('')
-    setMnemonicModel('')
-    setMnemonicEndpoint('')
-    if (newProvider === 'mimo') {
-      setTtsEndpoint(getDefaultEndpoint('mimo', 'tts'))
-      setAsrEndpoint(getDefaultEndpoint('mimo', 'asr'))
-      setTranslateEndpoint(getDefaultEndpoint('mimo', 'translate'))
-      setMnemonicEndpoint(getDefaultEndpoint('mimo', 'mnemonic'))
+    const nextFields = emptyServiceFields()
+    if (newProvider === 'mimo' || newProvider === 'dashscope') {
+      for (const { kind } of SERVICE_TYPES) {
+        nextFields[kind].endpoint = getDefaultEndpoint(newProvider, kind)
+      }
     }
-    if (newProvider === 'dashscope') {
-      setTtsEndpoint(getDefaultEndpoint('dashscope', 'tts'))
-      setAsrEndpoint(getDefaultEndpoint('dashscope', 'asr'))
-      setTranslateEndpoint(getDefaultEndpoint('dashscope', 'translate'))
-      setMnemonicEndpoint(getDefaultEndpoint('dashscope', 'mnemonic'))
-    }
+    setServiceFields(nextFields)
     if (newProvider === 'local') {
       setBaseUrl(DEFAULT_LOCAL_MODEL_URL)
     }
@@ -326,38 +307,16 @@ function ModelConfigDialog({
       next.delete(kind)
       return next
     })
-    if (kind === 'asr') { setAsrModel(''); setAsrEndpoint('') }
-    if (kind === 'tts') { setTtsModel(''); setTtsEndpoint('') }
-    if (kind === 'translate') { setTranslateModel(''); setTranslateEndpoint('') }
-    if (kind === 'mnemonic') { setMnemonicModel(''); setMnemonicEndpoint('') }
+    setServiceFields(prev => ({ ...prev, [kind]: { model: '', endpoint: '' } }))
   }
 
-  const getModelValue = (kind: ServiceKind) => {
-    if (kind === 'asr') return asrModel
-    if (kind === 'tts') return ttsModel
-    if (kind === 'mnemonic') return mnemonicModel
-    return translateModel
-  }
-
+  const getModelValue = (kind: ServiceKind) => serviceFields[kind].model
   const setModelValue = (kind: ServiceKind, value: string) => {
-    if (kind === 'asr') setAsrModel(value)
-    if (kind === 'tts') setTtsModel(value)
-    if (kind === 'mnemonic') setMnemonicModel(value)
-    if (kind === 'translate') setTranslateModel(value)
+    setServiceFields(prev => ({ ...prev, [kind]: { ...prev[kind], model: value } }))
   }
-
-  const getEndpointValue = (kind: ServiceKind) => {
-    if (kind === 'asr') return asrEndpoint
-    if (kind === 'tts') return ttsEndpoint
-    if (kind === 'mnemonic') return mnemonicEndpoint
-    return translateEndpoint
-  }
-
+  const getEndpointValue = (kind: ServiceKind) => serviceFields[kind].endpoint
   const setEndpointValue = (kind: ServiceKind, value: string) => {
-    if (kind === 'asr') setAsrEndpoint(value)
-    if (kind === 'tts') setTtsEndpoint(value)
-    if (kind === 'mnemonic') setMnemonicEndpoint(value)
-    if (kind === 'translate') setTranslateEndpoint(value)
+    setServiceFields(prev => ({ ...prev, [kind]: { ...prev[kind], endpoint: value } }))
   }
 
   const pendingServices = SERVICE_TYPES.filter(s => !enabledServices.has(s.kind))

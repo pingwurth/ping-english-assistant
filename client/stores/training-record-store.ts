@@ -101,3 +101,65 @@ export async function sweepTrainingRetention(): Promise<number> {
   console.info(`[training-record] retention sweep deleted ${toDelete.length} stale train: records`)
   return toDelete.length
 }
+
+/** 全局训练统计（设置页学习统计使用；不反序列化无关 records） */
+export interface TrainingStats {
+  count: number
+  averageScore: number
+}
+
+export async function getTrainingStats(): Promise<TrainingStats> {
+  const entries = await recordsStore.getAllEntriesByPrefix(RECORD_KEY_PREFIXES.training)
+  let scoreSum = 0
+  let scoreCount = 0
+  for (const [, value] of entries) {
+    const score = (value as TrainingRecord | null)?.score
+    if (typeof score === 'number') {
+      scoreSum += score
+      scoreCount++
+    }
+  }
+  return {
+    count: entries.length,
+    averageScore: scoreCount > 0 ? Math.round(scoreSum / scoreCount) : 0,
+  }
+}
+
+/** 每个训练模式在该材料下的最新一条记录（训练中心“上次成绩”） */
+export async function getLatestTrainingRecordsByMaterial(
+  materialId: string,
+): Promise<Partial<Record<TrainingRecord['mode'], TrainingRecord>>> {
+  const entries = await recordsStore.getEntriesByMaterial(materialId)
+  const latest: Partial<Record<TrainingRecord['mode'], TrainingRecord>> = {}
+  for (const [key, value] of entries) {
+    if (!key.startsWith(RECORD_KEY_PREFIXES.training)) continue
+    const record = value as TrainingRecord | undefined
+    if (!record || record.materialId !== materialId) continue
+    const previous = latest[record.mode]
+    if (!previous || record.createdAt > previous.createdAt) latest[record.mode] = record
+  }
+  return latest
+}
+
+/** 删句后平移单句听写明细中的 sentenceIndex；被删句的记录删除。 */
+export async function shiftTrainingRecordsAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
+  const entries = await recordsStore.getEntriesByMaterial(materialId)
+  for (const [key, value] of entries) {
+    if (!key.startsWith(RECORD_KEY_PREFIXES.training)) continue
+    const record = value as TrainingRecord | undefined
+    if (!record || record.mode !== 'dictation') continue
+
+    const detail = record.detail as { sentenceIndex?: unknown }
+    if (typeof detail.sentenceIndex !== 'number') continue
+    if (detail.sentenceIndex === deletedIndex) {
+      await recordsStore.delete(key)
+      continue
+    }
+    if (detail.sentenceIndex > deletedIndex) {
+      await recordsStore.put(key, {
+        ...record,
+        detail: { ...record.detail, sentenceIndex: detail.sentenceIndex - 1 },
+      } satisfies TrainingRecord)
+    }
+  }
+}

@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ApiError } from '@/services'
 import type { DiffToken } from '@/core/training/dictation-diff'
+import { callLlmTranscribe, callLocalTranscribe } from '@/components/shared/transcribe-shared'
 
 /**
  * 录音转文字（契约①口径，走 BFF 转发）：本机 faster-whisper 优先
@@ -21,28 +22,19 @@ import type { DiffToken } from '@/core/training/dictation-diff'
  * 带启动指引的错误。响应体一致：{ text, durationMs, segments }。
  */
 export async function transcribeRecording(blob: Blob, signal?: AbortSignal): Promise<string> {
-  const attempt = async (url: string): Promise<string> => {
-    const form = new FormData()
-    form.append('audio', blob, 'recording.wav')
-    form.append('lang', 'en')
-    const res = await fetch(url, { method: 'POST', body: form, signal })
-    if (!res.ok) throw new Error(`${url} → ${res.status}`)
-    const data = (await res.json()) as { text?: string }
-    return data.text?.trim() ?? ''
-  }
-  /** 中止向上抛（供调用方静默处理）；其余失败（如服务未启动）不拦截，走兜底 */
+  const file = blob instanceof File ? blob : new File([blob], 'recording.wav', { type: blob.type || 'audio/wav' })
   const guardAbort = (err: unknown): void => {
     if ((err instanceof DOMException && err.name === 'AbortError') || signal?.aborted) {
       throw new ApiError('ABORTED', '操作已取消')
     }
   }
   try {
-    return await attempt('/api/transcribe/local')
+    return (await callLocalTranscribe(file, signal)).text.trim()
   } catch (err) {
     guardAbort(err)
   }
   try {
-    return await attempt('/api/transcribe')
+    return (await callLlmTranscribe(file, signal)).text.trim()
   } catch (err) {
     guardAbort(err)
     throw new Error('语音转写失败：请先启动本机转写服务（cd server && ./start.sh --server transcribe），或在设置中配置转写模型。')

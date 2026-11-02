@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById, readLocalServices } from '@/lib/server-settings'
 import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import { parseWavDurationMs } from '@/lib/wav-duration'
+import { groupWordsToSegments, type WordTimestamp } from '@/lib/llm/asr-audio'
 import { transcribe, getAsrProviderType, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { AsrModelConfig, AsrSegment } from '@/lib/llm'
 import {
@@ -22,11 +23,6 @@ import {
 // WhisperX forced alignment
 // ---------------------------------------------------------------------------
 
-interface WordTimestamp {
-  word: string
-  start: number // seconds
-  end: number // seconds
-}
 
 /** Call local WhisperX alignment service to get word-level timestamps */
 async function alignWithWhisperX(
@@ -197,45 +193,7 @@ export async function POST(request: Request) {
       const words = await alignWithWhisperX(audioFile, result.text.trim(), alignUrl)
 
       if (words && words.length > 0) {
-        // WhisperX alignment succeeded — group words into sentence segments
-        const sentenceEnders = /[.!?]/
-        const clauseBreaks = /[,;:]/
-        const segments: AsrSegment[] = []
-        let currentWords: WordTimestamp[] = []
-
-        for (const word of words) {
-          currentWords.push(word)
-          const cleanWord = word.word.trim()
-          const isSentenceEnd = sentenceEnders.test(cleanWord)
-          const isLongClause = clauseBreaks.test(cleanWord) && currentWords.length >= 8
-
-          if (isSentenceEnd || isLongClause) {
-            segments.push({
-              startMs: Math.round((currentWords[0]?.start ?? 0) * 1000),
-              endMs: Math.round((currentWords[currentWords.length - 1]?.end ?? 0) * 1000),
-              text: currentWords.map(w => w.word.trim()).join(' ').trim(),
-            })
-            currentWords = []
-          }
-        }
-
-        if (currentWords.length > 0) {
-          if (segments.length > 0 && currentWords.length <= 3) {
-            const last = segments[segments.length - 1]
-            segments[segments.length - 1] = {
-              startMs: last.startMs,
-              endMs: Math.round((currentWords[currentWords.length - 1]?.end ?? 0) * 1000),
-              text: `${last.text} ${currentWords.map(w => w.word.trim()).join(' ').trim()}`,
-            }
-          } else {
-            segments.push({
-              startMs: Math.round((currentWords[0]?.start ?? 0) * 1000),
-              endMs: Math.round((currentWords[currentWords.length - 1]?.end ?? 0) * 1000),
-              text: currentWords.map(w => w.word.trim()).join(' ').trim(),
-            })
-          }
-        }
-
+        const segments = groupWordsToSegments(words)
         console.log(`[Transcribe] WhisperX alignment: ${words.length} words → ${segments.length} segments`)
         result = { text: result.text.trim(), segments }
       } else {

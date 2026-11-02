@@ -167,7 +167,7 @@ function Shadowing() {
   }
 
   // 媒体与播放引擎：共享装配（全文连播：timeupdate 驱动进度，ended 延迟 2s 触发收尾）
-  const { player: enginePlayer, mediaUrl } = useSentencePlayer(record?.material.id, {
+  const { player: enginePlayer, playerRef, mediaUrl } = useSentencePlayer(record?.material.id, {
     mediaType: record?.material.mediaType ?? 'audio',
     sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
     audioElement: audioRef,
@@ -180,8 +180,6 @@ function Shadowing() {
       setDurationMs(controller.getDurationMs() || record?.material.durationMs || 0)
     },
   })
-  const playerRef = useRef<SentencePlayer | null>(null)
-  playerRef.current = enginePlayer
   // 引擎重建/卸载时清掉待触发的收尾定时器（对应原装配 effect 的 cleanup）
   useEffect(() => () => { clearEndGrace() }, [enginePlayer])
 
