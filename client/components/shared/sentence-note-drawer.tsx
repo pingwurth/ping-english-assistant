@@ -4,11 +4,11 @@
  * 形态：左侧开口（盖住媒体区，右侧字幕列表保持可见），右缘拖拽调宽（双击复位）；
  *       编辑/预览上下布局，中间分隔条拖拽调预览高度（双击复位，编辑器保底高度）。
  * 行为：内容受控（调用方负责持久化，抽屉本身不落盘）；打开期间锚定目标句不随播放切走；
- *       Esc / 点遮罩 / 完成 关闭；Markdown 支持 **粗** ==高亮== `码` - 列表 > 引用 | 表格。
+ *       Esc / 点遮罩 / 完成 关闭；Markdown 支持 **粗** ==高亮== `码` $公式$ - 列表 > 引用 | 表格 --- 分割线 ::: center 居中。
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { Bold, Check, Code, Highlighter, List, Pencil, Play, StickyNote, Table as TableIcon, Trash2, X } from 'lucide-react'
+import { AlignCenter, Bold, Check, Code, Highlighter, List, Minus, Pencil, Play, Sigma, StickyNote, Table as TableIcon, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownText } from '@/components/shared/markdown-text'
@@ -19,12 +19,16 @@ import type { SubtitleSentence } from '@/types/subtitle'
 const DEFAULT_WIDTH_RATIO = 0.44
 const MIN_WIDTH = 360
 const MAX_WIDTH_RATIO = 0.85
-/** 预览区高度：默认 220px，最小 96px；上界由"编辑器保底 ~180px"动态夹紧 */
-const DEFAULT_PREVIEW_H = 220
+/** 预览区高度：初始按 编辑器:预览 = 1:2 计算（双击分隔条复位同款），最小 96px；
+ *  上界由"编辑器保底 ~180px"动态夹紧——短视口时保底优先于 1:2 比例 */
+const FALLBACK_PREVIEW_H = 220
 const MIN_PREVIEW_H = 96
 const MIN_EDITOR_H = 180
+/** 分隔条竖向占位：h-2 + my-2（上下各 8px） */
+const SEPARATOR_H = 24
 
-const MD_PLACEHOLDER = '记点什么…（支持 Markdown：**粗** ==高亮== `代码` - 列表 > 引用 | 表格）'
+const MD_PLACEHOLDER = '记点什么…（支持 Markdown：**粗** ==高亮== `代码` $公式$ - 列表 > 引用 | 表格 --- 分割线 居中）'
+const CENTER_SNIPPET = '::: center\n居中文本\n:::'
 const TABLE_SNIPPET = '| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n|  |  |  |'
 
 function defaultWidth(): number {
@@ -37,36 +41,67 @@ function maxWidth(): number {
   return Math.round(window.innerWidth * MAX_WIDTH_RATIO)
 }
 
-/** 工具条 + 受控 textarea；wrapSelection 包选中文本，insertBlock 在光标处插整块（表格） */
+/** 主体内容盒高度：clientHeight 含 p-5 上下 padding，扣除后才是编辑器+分隔条+预览的分配空间 */
+function contentHeightOf(el: HTMLDivElement | null): number {
+  if (!el) return 0
+  const cs = getComputedStyle(el)
+  return el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
+}
+
+/**
+ * 工具条 + 受控 textarea；wrapSelection 包选中文本，insertBlock 在光标处插整块（表格）。
+ * 工具条 mousedown 阻止默认：焦点不离开编辑器——否则失焦状态下受控赋值会重置滚动位置
+ * （跳顶/跳底），且 wrapSelection/insertBlock 里仍备份恢复 scrollTop 作保险。
+ */
 function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const ref = useRef<HTMLTextAreaElement | null>(null)
   const wrapSelection = (before: string, after = before) => {
     const el = ref.current
     if (!el) return
     const { selectionStart: s, selectionEnd: e } = el
+    const st = el.scrollTop
     const sel = value.slice(s, e) || before.trim()
     const next = value.slice(0, s) + before + sel + after + value.slice(e)
     onChange(next)
-    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + before.length, s + before.length + sel.length) })
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + before.length, s + before.length + sel.length); el.scrollTop = st })
   }
   const insertBlock = (text: string) => {
     const el = ref.current
     if (!el) return
-    const s = el.selectionStart
+    const { selectionStart: s, selectionEnd: e } = el
+    const st = el.scrollTop
     const before = value.slice(0, s)
+    // 光标（选区）之后的内容必须拼回，否则插入即截断；行尾原有的 \n 与插入块自带的
+    // 收尾 \n 会叠成空行（连续两空行 → spacer），故吃掉开头一个
+    const after = value.slice(e).replace(/^\n/, '')
     const prefix = before && !before.endsWith('\n') ? '\n\n' : ''
-    const next = before + prefix + text + '\n'
+    const next = before + prefix + text + '\n' + after
     onChange(next)
-    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(next.length, next.length) })
+    // 光标落在插入块末尾、后续内容之前
+    const caret = before.length + prefix.length + text.length + 1
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(caret, caret); el.scrollTop = st })
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1.5">
-      <div className="flex items-center gap-0.5 text-muted-foreground" aria-label="格式工具条">
+      <div className="flex items-center gap-0.5 text-muted-foreground" aria-label="格式工具条" onMouseDown={(e) => e.preventDefault()}>
         <Button variant="ghost" size="icon-xs" aria-label="加粗" title="加粗" onClick={() => wrapSelection('**')}><Bold /></Button>
         <Button variant="ghost" size="icon-xs" aria-label="高亮" title="高亮" onClick={() => wrapSelection('==')}><Highlighter /></Button>
         <Button variant="ghost" size="icon-xs" aria-label="行内代码" title="行内代码" onClick={() => wrapSelection('`')}><Code /></Button>
+        <Button variant="ghost" size="icon-xs" aria-label="公式" title="行内公式 $..$（独立成块的公式用 $$ 围栏）" onClick={() => wrapSelection('$')}><Sigma /></Button>
         <Button variant="ghost" size="icon-xs" aria-label="列表" title="列表" onClick={() => wrapSelection('- ', '')}><List /></Button>
         <Button variant="ghost" size="icon-xs" aria-label="插入表格" title="插入 3×2 表格" onClick={() => insertBlock(TABLE_SNIPPET)}><TableIcon /></Button>
+        <Button variant="ghost" size="icon-xs" aria-label="插入分割线" title="插入水平分割线 ---" onClick={() => insertBlock('---')}><Minus /></Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="居中"
+          title="居中：选中文本包裹 ::: center 容器，未选中插入模板"
+          onClick={() => {
+            const el = ref.current
+            if (el && el.selectionStart !== el.selectionEnd) wrapSelection('::: center\n', '\n:::')
+            else insertBlock(CENTER_SNIPPET)
+          }}
+        ><AlignCenter /></Button>
         <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground/70">
           {value.trim() ? <><Check className="size-3 text-primary" aria-hidden />自动保存</> : 'Markdown'}
         </span>
@@ -102,11 +137,25 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
   const [width, setWidth] = useState(defaultWidth)
   const [draggingW, setDraggingW] = useState(false)
   const widthDrag = useRef<{ startX: number; startW: number } | null>(null)
-  // 预览高度（分隔条拖拽）
-  const [previewH, setPreviewH] = useState(DEFAULT_PREVIEW_H)
+  // 预览高度（分隔条拖拽）；null = 尚未初始化，首次打开时按 1:2 测量设定
+  const [previewH, setPreviewH] = useState<number | null>(null)
   const [draggingH, setDraggingH] = useState(false)
   const heightDrag = useRef<{ startY: number; startH: number } | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
+
+  /** 默认预览高：编辑器:预览 = 1:2（内容盒扣分隔条后按 1/3、2/3 分），再被
+   *  [MIN_PREVIEW_H, 可用高 - 编辑器保底] 夹紧——短视口保底优先于比例 */
+  const defaultPreviewH = () => {
+    const bodyH = contentHeightOf(bodyRef.current)
+    if (!bodyH) return FALLBACK_PREVIEW_H
+    const usable = bodyH - SEPARATOR_H
+    return Math.round(Math.max(MIN_PREVIEW_H, Math.min((usable * 2) / 3, usable - MIN_EDITOR_H)))
+  }
+
+  // 首次打开按实测高度设定初始比例；此后保留用户拖拽值，双击分隔条才重算复位
+  useEffect(() => {
+    if (open && previewH == null) setPreviewH(defaultPreviewH())
+  }, [open, previewH])
 
   // Esc 关闭（抽屉打开时才监听）
   useEffect(() => {
@@ -151,27 +200,27 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
             tabIndex={0}
             className="-mx-2 my-2 h-2 shrink-0 cursor-row-resize rounded-full transition-colors hover:bg-primary/25 data-[dragging=true]:bg-primary/50"
             data-dragging={draggingH ? 'true' : undefined}
-            onDoubleClick={() => setPreviewH(DEFAULT_PREVIEW_H)}
+            onDoubleClick={() => setPreviewH(defaultPreviewH())}
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId)
-              heightDrag.current = { startY: e.clientY, startH: previewH }
+              heightDrag.current = { startY: e.clientY, startH: previewH ?? defaultPreviewH() }
               setDraggingH(true)
             }}
             onPointerMove={(e) => {
               const d = heightDrag.current
               if (!d) return
-              const bodyH = bodyRef.current?.clientHeight ?? 0
-              const max = Math.max(MIN_PREVIEW_H, bodyH - MIN_EDITOR_H)
+              const bodyH = contentHeightOf(bodyRef.current)
+              const max = Math.max(MIN_PREVIEW_H, bodyH - SEPARATOR_H - MIN_EDITOR_H)
               setPreviewH(Math.max(MIN_PREVIEW_H, Math.min(max, d.startH - (e.clientY - d.startY))))
             }}
             onPointerUp={() => { heightDrag.current = null; setDraggingH(false) }}
           />
-          <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border bg-muted/30" style={{ height: `${previewH}px` }}>
+          <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border bg-muted/30" style={{ height: `${previewH ?? FALLBACK_PREVIEW_H}px` }}>
             <p className="border-b bg-muted/60 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">实时预览</p>
             <div className="min-h-0 flex-1 overflow-auto p-3">
               {content.trim()
                 ? <MarkdownText src={content} />
-                : <p className="text-sm text-muted-foreground">上方开始输入，这里实时显示 Markdown 渲染效果（支持表格）</p>}
+                : <p className="text-sm text-muted-foreground">上方开始输入，这里实时显示 Markdown 渲染效果（支持表格与公式）</p>}
             </div>
           </div>
         </div>
