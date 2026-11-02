@@ -725,7 +725,10 @@ export function MnemonicPage() {
 
             {card && (
               <>
+                {/* key=词条 id：同路由跳转不卸载组件（r3 复审回归）——autoTriedRef/useState(initial)
+                    都是挂载期状态，跨词条复用会让 autoLoad 只在首个词条生效、练习题显示上一词条缓存 */}
                 <AssociationCard
+                  key={entry.id}
                   entryId={entry.id}
                   word={entry.text}
                   meaning={card.core_meaning.primary}
@@ -734,6 +737,7 @@ export function MnemonicPage() {
                 />
 
                 <ExercisesSection
+                  key={entry.id}
                   entryId={entry.id}
                   word={entry.text}
                   meaning={card.core_meaning.primary}

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Fastify 无状态后端：SOE 发音评分代理（契约②）。真源：docs/系统架构设计.md §3.2、docs/发音评分技术选型报告.md",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.3.0"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

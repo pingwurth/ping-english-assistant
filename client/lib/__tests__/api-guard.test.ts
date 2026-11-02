@@ -39,12 +39,26 @@ describe('可信 Host', () => {
     expect(fresh.isTrustedRequestHost('example.com:4000')).toBe(false)
   })
 
-  it('同源请求要求 Host 可信且 Origin Host 一致', () => {
+  it('ALLOWED_HOSTS 尾随斜杠被容忍（r3 复审 #4），带路径片段仍拒绝并告警', async () => {
+    vi.stubEnv('PING_ENG_ALLOWED_HOSTS', 'box.example.com/')
+    vi.resetModules()
+    const fresh = await import('@/lib/api-guard')
+    expect(fresh.isTrustedRequestHost('box.example.com')).toBe(true)
+    expect(fresh.isTrustedRequestHost('box.example.com:3000')).toBe(true)
+  })
+
+  it('sameOriginGuard：Host 可信 + Origin/Host 一致才放行；Host 头缺失回落请求 URL', () => {
     const lan = '192.168.110.50:3000'
-    expect(api.isSameOriginRequest(`http://${lan}`, lan, `http://${lan}/api`)).toBe(true)
-    expect(api.isSameOriginRequest(null, lan, `http://${lan}/api`)).toBe(true)
-    expect(api.isSameOriginRequest('http://evil.example', 'evil.example', 'http://evil.example/api')).toBe(false)
-    expect(api.isSameOriginRequest(`http://${lan}`, lan.replace('3000', '4000'), `http://${lan}/api`)).toBe(false)
+    const ok = new Request(`http://${lan}/api`, { headers: { host: lan, origin: `http://${lan}` } })
+    expect(api.sameOriginGuard(ok)).toBeNull()
+    // 无 Host 头（undici 测试构造）：回落到 request.url 的 host，与路由同源
+    expect(api.sameOriginGuard(new Request(`http://${lan}/api`, {}))).toBeNull()
+    // 不可信 Host：DNS rebinding 下 Origin==Host 也拒
+    const evil = new Request('http://evil.example/api', { headers: { host: 'evil.example', origin: 'http://evil.example' } })
+    expect(api.sameOriginGuard(evil)?.status).toBe(403)
+    // Origin host 与 Host 不一致（端口不同）
+    const portMismatch = new Request(`http://${lan}/api`, { headers: { host: lan, origin: 'http://192.168.110.50:4000' } })
+    expect(api.sameOriginGuard(portMismatch)?.status).toBe(403)
   })
 })
 

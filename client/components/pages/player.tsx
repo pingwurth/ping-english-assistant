@@ -504,8 +504,20 @@ function Player() {
       }
       return next
     })
-    // ③ 已播进度在内存中同步为 store 返回的持久化结果。
-    playedRef.current.indexes = new Set(shiftedProgress?.playedSentenceIndexes ?? [])
+    // ③ 已播进度在内存中同步为 store 返回的持久化结果；store 无落盘记录（返回
+    // undefined，如播放不足 PROGRESS_FLUSH_MS 还没写过 progress:）时就地平移内存
+    // 集合——r3 复审回归：原写法在该分支把已播集合清空，脏标记使其后 flush 写不回，
+    // 已播标记永久丢失。
+    if (shiftedProgress) {
+      playedRef.current.indexes = new Set(shiftedProgress.playedSentenceIndexes)
+    } else {
+      const next = new Set<number>()
+      for (const i of playedRef.current.indexes) {
+        if (i === index) continue
+        next.add(i > index ? i - 1 : i)
+      }
+      playedRef.current.indexes = next
+    }
     setNoteMap((prev) => {
       const next: Record<number, string> = {}
       for (const [k, v] of Object.entries(prev)) {

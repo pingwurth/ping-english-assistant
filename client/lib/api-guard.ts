@@ -26,22 +26,28 @@ function parseHost(host: string): { hostname: string; port?: string } | null {
   }
   const colon = host.lastIndexOf(':')
   if (colon >= 0 && host.indexOf(':') === colon) {
-    return { hostname: host.slice(0, colon), port: host.slice(colon + 1) }
+    const hostname = host.slice(0, colon)
+    if (hostname.includes('/')) return null // Host 头/配置值里不可能合法出现路径分隔符
+    return { hostname, port: host.slice(colon + 1) }
   }
   if (colon >= 0) return null // 未包方括号的 IPv6 Host 不合法
+  if (host.includes('/')) return null
   return { hostname: host }
 }
 
 function parseConfiguredHost(value: string): { hostname: string; port?: string } | null {
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+  // 容忍尾随斜杠（r3 复审 #4）：'box.example.com/' 原先被解析成带 '/' 的 hostname，
+  // 白名单永不命中且无任何提示——正是 #12 要消除的「fail-closed 但不可排障」陷阱
+  const trimmed = value.replace(/\/+$/, '')
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
     try {
       // 允许用户按直觉配置 https://box.example.com:3000；显式端口会被保留。
-      return parseHost(new URL(value).host)
+      return parseHost(new URL(trimmed).host)
     } catch {
       return null
     }
   }
-  return parseHost(value)
+  return parseHost(trimmed)
 }
 
 const EXPLICIT_HOSTS: HostAllowance[] = (process.env.PING_ENG_ALLOWED_HOSTS || '')
@@ -111,21 +117,6 @@ export function isTrustedRequestHost(host: string | null): boolean {
     (allowed) => allowed.hostname.toLowerCase() === parsed.hostname.toLowerCase() &&
       (allowed.port === undefined || allowed.port === parsed.port),
   )
-}
-
-/**
- * 判断请求是否来自可信同源上下文。
- * @param origin 请求的 Origin 头（可能为 null）
- * @param host   请求的 Host 头
- */
-export function isSameOriginRequest(origin: string | null, host: string | null, selfUrl: string): boolean {
-  // Host 是第一道边界：仅 Origin==Host 挡不住 DNS rebinding。
-  // Host 头缺失时（HTTP/1.1 必带，仅测试构造的 Request / 极端客户端）回落到请求自身 URL 的 host，
-  // 与服务端路由所用的是同一来源，不构成放宽。
-  const effectiveHost = host ?? (selfUrl ? hostOf(selfUrl) : null)
-  if (!isTrustedRequestHost(effectiveHost)) return false
-  if (origin) return hostOf(origin) === effectiveHost
-  return true
 }
 
 /** 拒绝响应体（403）—— 不暴露接口细节；proxy 与 settings 路由保持同一形状 */

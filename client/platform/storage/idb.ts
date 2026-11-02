@@ -103,7 +103,7 @@ function openDb(): Promise<IDBDatabase | null> {
 
 function tx<T>(store: StoreName, mode: IDBTransactionMode, fn: (os: IDBObjectStore) => IDBRequest): Promise<T> {
   return openDb().then(db => new Promise<T>((resolve, reject) => {
-    if (!db) return reject(new Error('memory'))
+    if (!db) return reject(new Error('本地数据库不可用（IndexedDB 打开失败，已降级内存模式），本次操作未执行'))
     try {
       const t = db.transaction(store, mode)
       let result: T | undefined
@@ -149,7 +149,14 @@ export function putAllAtomic(writes: AtomicStoreWrites): Promise<void> {
   }
 
   return openDb().then(db => new Promise<void>((resolve, reject) => {
-    if (!db) return reject(new Error('memory'))
+    // 同步 useMemory 检查之后 open 才失败翻转降级（r3 复审 #6）：写入按降级设计
+    // 落内存兜底，而不是以裸字符串 'memory' 拒绝把整次导入丢掉
+    if (!db) {
+      for (const name of names) {
+        for (const [key, value] of writes[name]!) mem(name).set(key, value)
+      }
+      return resolve()
+    }
     let reqError: unknown
     let transaction: IDBTransaction | null = null
     try {
