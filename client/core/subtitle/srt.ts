@@ -30,22 +30,39 @@ export function parseSrt(text: string): RawBlock[] {
   const flush = () => {
     if (group.length === 0) return
     const firstLine = groupStartLine
-    const timingIdx = group.findIndex((l) => parseSrtTimingLine(l) != null)
-    const content = group.filter((l) => l.trim().length > 0)
-    if (timingIdx < 0) {
-      if (content.length > 0) throw new SubtitleParseError('时间戳格式无法识别', firstLine)
+    if (!group.some((l) => parseSrtTimingLine(l) != null)) {
+      if (group.some((l) => l.trim().length > 0)) throw new SubtitleParseError('时间戳格式无法识别', firstLine)
       group = []
       return
     }
-    const timing = parseSrtTimingLine(group[timingIdx])
-    if (!timing) throw new SubtitleParseError('时间戳格式无法识别', firstLine + timingIdx)
-    // 时间轴之前的行只允许是序号（缺失时按出现顺序补号，此处直接忽略）。
-    // 报错行号指向真正的杂行（在未过滤空行的原始切片上找），而非块首行
-    const beforeRaw = group.slice(0, timingIdx)
-    const badOffset = beforeRaw.findIndex((l) => l.trim().length > 0 && !PURE_INDEX_RE.test(l.trim()))
-    if (badOffset >= 0) throw new SubtitleParseError('时间戳前出现无法识别的内容', firstLine + badOffset)
-    const textLines = group.slice(timingIdx + 1).map((l) => l.trim()).filter(Boolean)
-    if (textLines.length > 0) blocks.push({ startMs: timing.startMs, endMs: timing.endMs, lines: textLines, lineNo: firstLine })
+    // 块间缺失空行（手编/拼接错误的 SRT 常见）：文本区再次出现时间轴行
+    // （或「序号+时间轴」组合）时按下一块边界切分，而不是把后续块的序号与
+    // 时间轴吞进上一块文本后静默丢失（评审 #17）。
+    let i = 0
+    while (i < group.length) {
+      const timing = parseSrtTimingLine(group[i])
+      if (timing == null) {
+        // 时间轴之前的行只允许是序号（含游离序号，直接忽略）；
+        // 报错行号指向真正的杂行，而非块首行
+        if (PURE_INDEX_RE.test(group[i].trim())) { i++; continue }
+        throw new SubtitleParseError('时间戳前出现无法识别的内容', firstLine + i)
+      }
+      const blockLine = firstLine + i
+      i++
+      const textLines: string[] = []
+      while (i < group.length) {
+        if (parseSrtTimingLine(group[i]) != null) break // 下一块时间轴（缺空行拼接）
+        if (
+          PURE_INDEX_RE.test(group[i].trim()) &&
+          i + 1 < group.length &&
+          parseSrtTimingLine(group[i + 1]) != null
+        ) break // 下一块的序号+时间轴
+        const t = group[i].trim()
+        if (t) textLines.push(t)
+        i++
+      }
+      if (textLines.length > 0) blocks.push({ startMs: timing.startMs, endMs: timing.endMs, lines: textLines, lineNo: blockLine })
+    }
     group = []
   }
 

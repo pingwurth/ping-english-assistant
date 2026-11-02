@@ -171,7 +171,14 @@ function Player() {
       setRecord(rec)
       setDurationMs(rec.material.durationMs)
       void touchMaterial(materialId)
-      const blob = await getMediaBlob(materialId)
+      // 媒体/收藏/笔记/进度互不依赖（评审 #54：原五连串行事务各付一次
+      // IDB 往返；并发后收藏/笔记/续播位置合计早数十 ms 展示）
+      const [blob, favIndexes, notes, progress] = await Promise.all([
+        getMediaBlob(materialId),
+        favoriteSentenceIndexes(materialId),
+        listNotes(materialId),
+        getProgress(materialId),
+      ])
       if (cancelled) return
       if (blob) {
         objectUrl = URL.createObjectURL(blob); setMediaUrl(objectUrl)
@@ -183,16 +190,11 @@ function Player() {
         setMediaFile(null)
       }
       // 收藏集合：records store 中 fav:{materialId}:* 前缀
-      const favIndexes = await favoriteSentenceIndexes(materialId)
-      if (cancelled) return
       setFavSet(new Set(favIndexes))
       // 句子笔记：records store 中 note:{materialId}:* 前缀
-      const notes = await listNotes(materialId)
-      if (cancelled) return
       setNoteMap(Object.fromEntries(notes.map((n) => [n.sentenceIndex, n.content])))
       // 恢复上次播放位置
-      const progress = await getProgress(materialId)
-      if (cancelled || !progress) return
+      if (!progress) return
       playedRef.current.indexes = new Set(progress.playedSentenceIndexes)
       setResumePositionMs(progress.lastPositionMs)
     })().catch(() => { if (!cancelled) setNotFound(true) })
@@ -409,10 +411,14 @@ function Player() {
   const toggleFavorite = async (sentenceIndex: number) => {
     const has = favSet.has(sentenceIndex)
     await setFavorite(materialId, sentenceIndex, !has)
-    const nextSet = new Set(favSet)
-    if (has) nextSet.delete(sentenceIndex)
-    else nextSet.add(sentenceIndex)
-    setFavSet(nextSet)
+    // 函数式更新（评审 #30）：两次收藏在 IDB 往返窗口内交错时，
+    // 后到者不得用渲染闭包里的旧 favSet 覆盖前者的结果
+    setFavSet((prev) => {
+      const nextSet = new Set(prev)
+      if (nextSet.has(sentenceIndex)) nextSet.delete(sentenceIndex)
+      else nextSet.add(sentenceIndex)
+      return nextSet
+    })
   }
 
   /** 将已解析的字幕数据应用到当前材料：持久化 + 更新生词频率 + 刷新 UI */

@@ -8,7 +8,7 @@
  * - Portal 渲染到 body，fixed 定位
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { BookPlus, Check } from 'lucide-react'
 import { hasText, initVocab } from '@/stores/vocab-store'
@@ -59,6 +59,11 @@ export function WordBubble({ items, materialId, selectionContainerRef }: WordBub
 
   const isAlreadyAdded = bubble ? hasText(bubble.text) : false
 
+  // 预归一化（评审 #52）：原先每次 selectionchange（rAF 节流后仍 ~60Hz）对全部句子
+  // 现场跑三次正则做包含匹配——2000 句字幕拖选时每 tick 数十万次主线程字符串处理；
+  // 归一化结果只随 items 变化重算，事件回调里只剩 includes
+  const normalizedItems = useMemo(() => items.map((s) => normalize(s.textEn)), [items])
+
   const clearBubble = useCallback(() => {
     setBubble(null)
     setAddedBookName(null)
@@ -81,11 +86,11 @@ export function WordBubble({ items, materialId, selectionContainerRef }: WordBub
     const anchorNode = sel.anchorNode
     if (!anchorNode || !container.contains(anchorNode)) return
 
-    // 遍历所有句子，找 textEn 包含选中文本的那个
+    // 遍历所有句子，找 textEn 包含选中文本的那个（归一化文本已预计算）
     let matched: SubtitleSentence | null = null
-    for (const s of items) {
-      if (normalize(s.textEn).includes(normalized)) {
-        matched = s
+    for (let i = 0; i < normalizedItems.length; i++) {
+      if (normalizedItems[i]!.includes(normalized)) {
+        matched = items[i]!
         break
       }
     }
@@ -104,7 +109,7 @@ export function WordBubble({ items, materialId, selectionContainerRef }: WordBub
       y: rect.top - 8,
     })
     setAddedBookName(null)
-  }, [items, selectionContainerRef])
+  }, [items, normalizedItems, selectionContainerRef])
 
   // 监听 selectionchange — rAF 节流
   useEffect(() => {

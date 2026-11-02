@@ -49,8 +49,13 @@ async function loadGroups(): Promise<FavoriteGroup[]> {
     else byMaterial.set(favorite.materialId, [favorite])
   }
   const groups: FavoriteGroup[] = []
-  for (const [materialId, favorites] of byMaterial) {
-    const record = await getMaterialRecord(materialId)
+  const materialIds = [...byMaterial.keys()]
+  // 各材料记录互不依赖：并发读替代逐材料串行事务（评审 #55：20 份材料
+  // 的收藏首屏原先要 20 次线性叠加的 IDB 往返，每次都结构化克隆整条记录）
+  const records = await Promise.all(materialIds.map((id) => getMaterialRecord(id)))
+  materialIds.forEach((materialId, i) => {
+    const favorites = byMaterial.get(materialId)!
+    const record = records[i]
     const sentences = record?.subtitleData?.sentences ?? []
     groups.push({
       materialId,
@@ -59,7 +64,7 @@ async function loadGroups(): Promise<FavoriteGroup[]> {
         .map((favorite) => ({ favorite, sentence: sentences[favorite.sentenceIndex] }))
         .sort((a, b) => a.favorite.sentenceIndex - b.favorite.sentenceIndex),
     })
-  }
+  })
   return groups
 }
 

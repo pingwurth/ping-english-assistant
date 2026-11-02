@@ -50,9 +50,9 @@ function splitTableRow(line: string): string[] {
   return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim())
 }
 
-/** 分隔行判定：所有单元格都是 :---: / --- / :--- 形态 */
+/** 分隔行判定：所有单元格都是 :---: / --- / - / :-: 形态（GFM 允许单短横，评审 #28） */
 function isSeparatorRow(cells: string[]): boolean {
-  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c))
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c))
 }
 
 /** 解析笔记 Markdown 为块级结构；空串返回空数组 */

@@ -17,6 +17,7 @@ import {
   generateMnemonicExercises,
   evaluateSentence,
   LlmError,
+  toLlmErrorResponse,
 } from '@/lib/llm'
 import type { ChatModelConfig } from '@/lib/llm'
 
@@ -249,19 +250,7 @@ export async function POST(request: Request) {
 
     if (error instanceof LlmError) {
       console.error('[Mnemonic] LlmError:', error.code, error.message)
-      const statusMap: Record<string, number> = {
-        API_KEY_MISSING: 400,
-        BASE_URL_MISSING: 400,
-        MODEL_NOT_CONFIGURED: 400,
-        RESPONSE_EMPTY: 502,
-        RESPONSE_FORMAT_ERROR: 502,
-        UPSTREAM_ERROR: 502,
-        REQUEST_TIMEOUT: 504,
-      }
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: statusMap[error.code] || 502 },
-      )
+      return toLlmErrorResponse(error)
     }
 
     console.error('[Mnemonic] API error:', error)

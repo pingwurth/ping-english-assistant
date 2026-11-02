@@ -197,7 +197,10 @@ start_both() {
         echo "错误：对齐服务启动失败（已退出）。请检查上方 align_server.py 的输出。"
         exit 1
     fi
-    exec python3 transcribe_server.py "${EXTRA_ARGS[@]}"
+    # 前台转写进程死掉（崩溃/被 kill）时回收后台对齐进程（评审 #26）：
+    # 原先 exec 会连 trap 一起替换掉，孤儿 uvicorn 占着 8765 端口与显存生根
+    trap 'kill "$ALIGN_PID" 2>/dev/null' EXIT
+    python3 transcribe_server.py "${EXTRA_ARGS[@]}"
 }
 
 start_soe() {
@@ -222,7 +225,9 @@ start_all() {
             exit 1
         fi
     done
-    exec pnpm start
+    # 前台 SOE 代理死掉时回收两个后台 Python 进程（评审 #26，理由同 start_both）
+    trap 'kill "$ALIGN_PID" "$TRANSCRIBE_PID" 2>/dev/null' EXIT
+    pnpm start
 }
 
 case "$SERVER_MODE" in

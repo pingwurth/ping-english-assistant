@@ -8,6 +8,7 @@ import type { TtsModelConfig, TtsResult } from '../types'
 import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
 import { getDefaultModel, getDefaultVoice } from '@/lib/service-endpoints'
+import { parseWavDurationWithFallback } from '@/lib/wav-duration'
 
 /**
  * MiMo TTS 语音合成
@@ -15,6 +16,7 @@ import { getDefaultModel, getDefaultVoice } from '@/lib/service-endpoints'
 export async function generateTtsMimo(
   text: string,
   config: TtsModelConfig,
+  signal?: AbortSignal,
 ): Promise<TtsResult> {
   const model = config.model || getDefaultModel('mimo', 'tts')
   const voice = config.voice || getDefaultVoice('mimo')
@@ -41,6 +43,7 @@ export async function generateTtsMimo(
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify(requestBody),
+    signal,
   })
 
   if (!res.ok) {
@@ -63,27 +66,8 @@ export async function generateTtsMimo(
   // slice 出精确视图：小 payload（≤4KB）时 Node 从 8KB 池分配，直接取 .buffer 会带出池内垃圾
   const buf = Buffer.from(base64, 'base64')
   const audioBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  const durationMs = parseWavDuration(audioBuffer)
+  // 24kHz mono 16-bit = 48kB/s：头解析失败时的字节率估算兜底
+  const durationMs = parseWavDurationWithFallback(audioBuffer, 24_000 * 2)
 
   return { audioBuffer, durationMs }
-}
-
-/** 从 WAV ArrayBuffer 解析时长 */
-function parseWavDuration(buf: ArrayBuffer): number {
-  if (buf.byteLength < 44) return 0
-  const view = new DataView(buf)
-  const sampleRate = view.getUint32(24, true)
-  const channels = view.getUint16(22, true)
-  const dataSize = view.getUint32(40, true)
-  if (!sampleRate || !channels || !dataSize) return 0
-
-  const durationMs = Math.round((dataSize / (sampleRate * channels * 2)) * 1000)
-
-  if (durationMs > 300_000) {
-    console.warn(`parseWavDuration: suspicious duration ${durationMs}ms, falling back to byte-based estimate`)
-    const estimatedBytesPerSecond = 24000 * 1 * 2
-    return Math.round((buf.byteLength / estimatedBytesPerSecond) * 1000)
-  }
-
-  return durationMs
 }

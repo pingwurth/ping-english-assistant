@@ -45,3 +45,25 @@ export function throwIfAborted(signal?: AbortSignal): void {
     throw new LlmError('ABORTED', '操作已取消')
   }
 }
+
+/**
+ * LlmError → BFF 统一 JSON 错误响应（评审 #48）。
+ * 此前 translate/mnemonic 各自手写 statusMap、transcribe/tts 一律 500，同一
+ * 「API Key 未配置」在不同路由返回不同状态码，客户端按状态码区分「去配置」
+ * 还是「重试」时行为不一致。新增 LlmError code 或路由只需改这一处。
+ */
+export function toLlmErrorResponse(error: LlmError): Response {
+  const statusMap: Record<string, number> = {
+    API_KEY_MISSING: 400,
+    BASE_URL_MISSING: 400,
+    MODEL_NOT_CONFIGURED: 400,
+    RESPONSE_EMPTY: 502,
+    RESPONSE_FORMAT_ERROR: 502,
+    UPSTREAM_ERROR: 502,
+    REQUEST_TIMEOUT: 504,
+  }
+  return new Response(JSON.stringify({ error: error.message, code: error.code }), {
+    status: statusMap[error.code] ?? 502,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}

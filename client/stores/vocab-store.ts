@@ -54,10 +54,31 @@ async function ensureDefaultBook(): Promise<void> {
 }
 
 let initPromise: Promise<void> | null = null
-/** 初始化：确保默认生词本 + 首次加载 */
+/** 初始化：确保默认生词本 + 首次加载 + mnemonic 孤儿清扫 */
 export function initVocab(): Promise<void> {
-  initPromise ??= (async () => { await ensureDefaultBook(); await refresh() })()
+  initPromise ??= (async () => { await ensureDefaultBook(); await refresh(); await sweepOrphanMnemonics() })()
   return initPromise
+}
+
+/**
+ * 启动清扫：词条被删后遗留的 mnemonic:{entryId} 缓存（评审 #20 兜底）。
+ * 词条 id 是 UUID 不会复现，孤儿不清理则每次备份导出/导入都搬运死数据。
+ */
+async function sweepOrphanMnemonics(): Promise<void> {
+  const mnemonicEntries = await recordsStore.getAllEntriesByPrefix(RECORD_KEY_PREFIXES.mnemonic)
+  if (mnemonicEntries.length === 0) return
+  const liveIds = new Set(vocabStore.get().entries.map((e) => e.id))
+  const orphans = mnemonicEntries.filter(([key]) => !liveIds.has(key.slice(RECORD_KEY_PREFIXES.mnemonic.length)))
+  if (orphans.length === 0) return
+  await Promise.all(orphans.map(([key]) => recordsStore.delete(key)))
+}
+
+/** 删除词条及其从属记录（mnemonic 缓存），不留下备份反复搬运的孤儿数据 */
+function deleteEntryRecords(entry: VocabEntry): Promise<void[]> {
+  return Promise.all([
+    recordsStore.delete(RECORD_KEYS.vocabEntry(entry.id)),
+    recordsStore.delete(RECORD_KEYS.mnemonic(entry.id)),
+  ])
 }
 
 // ─── 生词本 CRUD ───
@@ -77,7 +98,7 @@ export async function createBook(name: string): Promise<VocabBook> {
   return book
 }
 
-/** 删除生词本（同时删除该本下所有词条）。不允许删除默认生词本。 */
+/** 删除生词本（同时删除该本下所有词条及其 mnemonic 缓存）。不允许删除默认生词本。 */
 export async function removeBook(bookId: string): Promise<void> {
   if (bookId === DEFAULT_BOOK_ID) return
   await initVocab()
@@ -85,7 +106,7 @@ export async function removeBook(bookId: string): Promise<void> {
   // 删除该本下所有词条
   const { entries } = vocabStore.get()
   const toDelete = entries.filter((e) => e.bookId === bookId)
-  await Promise.all(toDelete.map((e) => recordsStore.delete(RECORD_KEYS.vocabEntry(e.id))))
+  await Promise.all(toDelete.map(deleteEntryRecords))
   await refresh()
 }
 
@@ -121,10 +142,12 @@ export async function addEntry(entry: Omit<VocabEntry, 'id' | 'addedAt' | 'frequ
   return newEntry
 }
 
-/** 删除词条 */
+/** 删除词条（连带清理其 mnemonic 缓存，评审 #20） */
 export async function removeEntry(entryId: string): Promise<void> {
   await initVocab()
-  await recordsStore.delete(RECORD_KEYS.vocabEntry(entryId))
+  const entry = vocabStore.get().entries.find((e) => e.id === entryId)
+  if (entry) await deleteEntryRecords(entry)
+  else await recordsStore.delete(RECORD_KEYS.vocabEntry(entryId))
   await refresh()
 }
 
@@ -143,13 +166,13 @@ export function getEntriesByBook(bookId: string): VocabEntry[] {
   return vocabStore.get().entries.filter((e) => e.bookId === bookId)
 }
 
-/** 清空指定生词本下的所有词条 */
+/** 清空指定生词本下的所有词条（连带 mnemonic 缓存） */
 export async function clearEntriesByBook(bookId: string): Promise<void> {
   await initVocab()
   const { entries } = vocabStore.get()
   const toDelete = entries.filter((e) => e.bookId === bookId)
   if (toDelete.length === 0) return
-  await Promise.all(toDelete.map((e) => recordsStore.delete(RECORD_KEYS.vocabEntry(e.id))))
+  await Promise.all(toDelete.map(deleteEntryRecords))
   await refresh()
 }
 

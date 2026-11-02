@@ -20,6 +20,7 @@ import { blobsStore, materialsStore, recordsStore } from '@/platform/storage/idb
 import { RECORD_KEYS, RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import { seedMaterials, seedSentences } from '@/data/seed'
 import { createStore } from '@/stores/store'
+import { updateFrequencies } from '@/stores/vocab-store'
 
 export interface MaterialStoreState {
   ready: boolean
@@ -188,6 +189,9 @@ export async function removeMaterial(id: string): Promise<void> {
     recordsStore.delete(RECORD_KEYS.progress(id)), // 不存在时 delete 为幂等 no-op
     ...keys.map((k) => recordsStore.delete(k)),
   ])
+  // 生词词频撤账：回收该材料对 frequency 的贡献（评审 #19，否则删除材料后词频永久虚高，
+  // 违反 types/vocabulary.ts「frequency = materialCounts 各值之和」不变量）
+  await updateFrequencies([], id)
   dropRecord(id)
 }
 

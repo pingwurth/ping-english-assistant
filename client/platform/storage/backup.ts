@@ -12,8 +12,8 @@
 
 import { BACKUP_APP_ID, BACKUP_FORMAT_VERSION, parseBackupJson, planImport, type ImportStrategy, type MediaManifestEntry, type ParsedBackup } from '@/core/backup/backup-format'
 import { createZipWriter, crc32, indexZip, readEntry, type RangeReader, type ZipEntryInfo, type ZipIndex } from '@/core/backup/zip'
-import { blobsStore, estimateUsage, materialsStore, recordsStore } from '@/platform/storage/idb'
-import { exportAllPrefs, hasPref, setPref } from '@/platform/storage/prefs'
+import { blobsStore, estimateUsage, materialsStore, putAllAtomic, recordsStore } from '@/platform/storage/idb'
+import { exportAllPrefs, stagePrefs, type StagedPrefs } from '@/platform/storage/prefs'
 import type { MaterialRecord } from '@/platform/storage/schema'
 
 export interface ImportSummary {
@@ -78,11 +78,13 @@ export async function buildFullBackupZip(): Promise<{ filename: string; blob: Bl
   const parts = await collectBackupParts()
 
   // 清单阶段：只遍历 material ids（tts:/transcribe: 临时 blob 永不进包）；
-  // 只保留 Blob 句柄不读内容，清单元信息取自 material 元数据 + blob.type
+  // 只保留 Blob 句柄不读内容，清单元信息取自 material 元数据 + blob.type。
+  // 句柄并发获取替代逐条串行事务（评审 #56）
+  const blobs = await Promise.all(parts.materials.map((m) => blobsStore.get<Blob>(m.material.id)))
   const collected: Array<{ id: string; blob: Blob; entry: MediaManifestEntry }> = []
-  for (const m of parts.materials) {
-    const b = await blobsStore.get<Blob>(m.material.id)
-    if (!b) continue // 无媒体材料（如轻量导入而来）只走元数据，不进清单
+  parts.materials.forEach((m, i) => {
+    const b = blobs[i]
+    if (!b) return // 无媒体材料（如轻量导入而来）只走元数据，不进清单
     collected.push({
       id: m.material.id,
       blob: b,
@@ -94,7 +96,7 @@ export async function buildFullBackupZip(): Promise<{ filename: string; blob: Bl
         size: b.size,
       },
     })
-  }
+  })
 
   const payload = {
     app: BACKUP_APP_ID,
@@ -145,37 +147,77 @@ export function downloadJsonBackup(filename: string, json: string): void {
   downloadBlob(filename, new Blob([json], { type: 'application/json;charset=utf-8' }))
 }
 
-/** materials / records / prefs 按冲突策略写回，返回分类计数（两条导入链共用） */
+/** 备份中三个 IDB store 的写入计划（同一事务提交，避免半导入） */
+interface IdbImportPlan {
+  materials: ReadonlyArray<readonly [string, unknown]>
+  records: ReadonlyArray<readonly [string, unknown]>
+  blobs: ReadonlyArray<readonly [string, unknown]>
+  materialsSkipped: number
+  recordsSkipped: number
+}
+
+async function planIdbImport(
+  backup: ParsedBackup,
+  strategy: ImportStrategy,
+  mediaWrites?: ReadonlyArray<readonly [string, Blob]>,
+  mediaSkipped = 0,
+): Promise<IdbImportPlan & { mediaSkipped: number }> {
+  const [existingMaterialIds, existingRecordKeys] = await Promise.all([
+    materialsStore.allKeys(),
+    recordsStore.allKeys(),
+  ])
+  const matPlan = planImport(
+    backup.materials.map((m) => ({ key: m.id, value: m.value })),
+    new Set(existingMaterialIds),
+    strategy,
+  )
+  const recPlan = planImport(
+    Object.entries(backup.records).map(([key, value]) => ({ key, value })),
+    new Set(existingRecordKeys),
+    strategy,
+  )
+  return {
+    materials: matPlan.toWrite.map((e) => [e.key, e.value] as const),
+    records: recPlan.toWrite.map((e) => [e.key, e.value] as const),
+    blobs: mediaWrites ?? [],
+    materialsSkipped: matPlan.skipped,
+    recordsSkipped: recPlan.skipped,
+    mediaSkipped,
+  }
+}
+
+/**
+ * localStorage prefs 先写入并保留恢复点，随后 IDB 三个 store 单事务提交；
+ * IDB 失败时恢复 prefs，尽量逼近跨存储原子导入。
+ */
 async function applyParsedBackup(
   backup: ParsedBackup,
   strategy: ImportStrategy,
-): Promise<Pick<ImportSummary, 'materialsWritten' | 'materialsSkipped' | 'recordsWritten' | 'recordsSkipped' | 'prefsWritten' | 'prefsSkipped'>> {
-  const { materials, records, prefs } = backup
-
-  const existingMaterialIds = new Set(await materialsStore.allKeys())
-  const existingRecordKeys = new Set(await recordsStore.allKeys())
-
-  const matPlan = planImport(materials.map((m) => ({ key: m.id, value: m.value })), existingMaterialIds, strategy)
-  const recPlan = planImport(Object.entries(records).map(([key, value]) => ({ key, value })), existingRecordKeys, strategy)
-
-  await Promise.all(matPlan.toWrite.map((e) => materialsStore.put(e.key, e.value)))
-  await Promise.all(recPlan.toWrite.map((e) => recordsStore.put(e.key, e.value)))
-
-  let prefsWritten = 0
-  let prefsSkipped = 0
-  for (const [key, value] of Object.entries(prefs)) {
-    if (strategy === 'skipExisting' && hasPref(key)) { prefsSkipped++; continue }
-    setPref(key, value)
-    prefsWritten++
+  mediaWrites?: ReadonlyArray<readonly [string, Blob]>,
+  mediaSkipped = 0,
+): Promise<Pick<ImportSummary, 'materialsWritten' | 'materialsSkipped' | 'recordsWritten' | 'recordsSkipped' | 'prefsWritten' | 'prefsSkipped' | 'mediaSkipped'>> {
+  const plan = await planIdbImport(backup, strategy, mediaWrites, mediaSkipped)
+  // 先同步写 prefs 并保留恢复点，再提交 IDB。IDB 失败时恢复 prefs；
+  // 两边没有跨 API 事务，这是进程内可做到的最接近原子提交。
+  const prefs = stagePrefs(backup.prefs, strategy === 'skipExisting')
+  try {
+    await putAllAtomic({
+      materials: plan.materials,
+      records: plan.records,
+      blobs: plan.blobs,
+    })
+  } catch (err) {
+    prefs.rollback()
+    throw err
   }
-
   return {
-    materialsWritten: matPlan.toWrite.length,
-    materialsSkipped: matPlan.skipped,
-    recordsWritten: recPlan.toWrite.length,
-    recordsSkipped: recPlan.skipped,
-    prefsWritten,
-    prefsSkipped,
+    materialsWritten: plan.materials.length,
+    materialsSkipped: plan.materialsSkipped,
+    recordsWritten: plan.records.length,
+    recordsSkipped: plan.recordsSkipped,
+    prefsWritten: prefs.written,
+    prefsSkipped: prefs.skipped,
+    mediaSkipped: plan.mediaSkipped,
   }
 }
 
@@ -186,7 +228,7 @@ async function applyParsedBackup(
 export async function importBackup(json: string, strategy: ImportStrategy): Promise<ImportSummary> {
   const parsed = parseBackupJson(json)
   if (!parsed.ok) throw new Error(parsed.error)
-  return { ...(await applyParsedBackup(parsed.backup, strategy)), mediaWritten: 0, mediaSkipped: 0, mediaMissing: 0 }
+  return { ...(await applyParsedBackup(parsed.backup, strategy)), mediaWritten: 0, mediaMissing: 0 }
 }
 
 /** Blob → RangeReader（slice 惰性读取，zip 索引只需几次小切片） */
@@ -251,28 +293,22 @@ export async function importZipBackup(file: Blob, strategy: ImportStrategy): Pro
     throw new Error(`存储空间不足：需写入约 ${Math.round(plannedBytes / 1048576)} MB 媒体，请先清理空间或改用轻量备份导入`)
   }
 
-  // 完整性预检：待写入的 STORE 媒体条目先流式校验 CRC（deflate 条目 readEntry 内已校验）。
-  // 必须在任何写入之前 —— 否则材料已落库、媒体写一半才报损坏，留下半导入状态。
-  for (const e of mediaPlan.toWrite) {
-    const info = index.byName.get(`media/${e.key}`)
-    if (info?.method === 0) await verifyStoreEntryCrc(file, info, `media/${e.key}`)
-  }
-
-  // 先写材料/记录/设置，再写媒体（媒体永不落单）
-  const base = await applyParsedBackup(parsed, strategy)
-
-  let mediaWritten = 0
+  // 完整性预检 + Blob 构造全部发生在任何 IDB 写入之前；deflate 条目 readEntry 内已校验 CRC。
+  // 随后 materials/records/blobs 走同一个 IndexedDB 事务，任一写失败整体回滚。
+  const mediaWrites: Array<[string, Blob]> = []
   let mediaMissing = missingInIndex
   for (const e of mediaPlan.toWrite) {
     const info = index.byName.get(`media/${e.key}`)
-    if (!info) { mediaMissing++; continue } // 清单有而 zip 无对应条目：计数跳过
+    if (!info) continue // openBackupZip 已统计缺失条目；这里不做重复计数
     const mime = e.value.mime || (e.value.mediaType === 'video' ? 'video/mp4' : 'audio/mpeg')
-    const blob = info.method === 0
-      ? file.slice(info.dataOffset, info.dataOffset + info.uncompressedSize, mime) // STORE 零拷贝主路径（slice 第 3 参保 MIME，播放器复播依赖 blob.type）
-      : new Blob([await readEntry(reader, info)], { type: mime }) // 外部工具重打包的 deflate 条目兜底
-    await blobsStore.put(e.key, blob)
-    mediaWritten++
+    if (info.method === 0) {
+      await verifyStoreEntryCrc(file, info, `media/${e.key}`)
+      mediaWrites.push([e.key, file.slice(info.dataOffset, info.dataOffset + info.uncompressedSize, mime)])
+    } else {
+      mediaWrites.push([e.key, new Blob([await readEntry(reader, info)], { type: mime })])
+    }
   }
 
-  return { ...base, mediaWritten, mediaSkipped: mediaPlan.skipped, mediaMissing }
+  const base = await applyParsedBackup(parsed, strategy, mediaWrites, mediaPlan.skipped)
+  return { ...base, mediaWritten: mediaWrites.length, mediaMissing }
 }

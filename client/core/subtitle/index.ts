@@ -76,11 +76,15 @@ export function parseSubtitle(text: string, format?: 'srt' | 'lrc', knownDuratio
 /** 将 SubtitleSentence[] 导出为 SRT 格式文本 */
 export function exportSrt(sentences: SubtitleSentence[]): string {
   return exportSrtRows(
-    sentences.map((s) => ({
-      startMs: s.startMs,
-      endMs: s.endMs,
-      lines: s.textZh ? [s.textEn, s.textZh] : [s.textEn],
-    })),
+    sentences
+      .filter((s) => s.textEn.trim().length > 0 || (s.textZh ?? '').trim().length > 0)
+      .map((s) => ({
+        startMs: s.startMs,
+        endMs: s.endMs,
+        // textEn 为空的纯中文句：绝不导出块内空行——再导入时块会被空行截断，
+        // 触发「时间戳格式无法识别」且内容丢失（评审 #15）。双方都空的句子跳过。
+        lines: [s.textEn, s.textZh ?? ''].filter((l) => l.trim().length > 0),
+      })),
   )
 }
 

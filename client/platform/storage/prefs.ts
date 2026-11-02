@@ -49,3 +49,57 @@ export function hasPref(key: string): boolean {
     return localStorage.getItem(PREFIX + key) != null
   } catch { return false }
 }
+
+/**
+ * 备份导入专用：先写入一组 prefs，并返回失败时可用的恢复句柄。
+ * localStorage 不能参与 IndexedDB 事务；备份层在 IDB 写入失败时调用 rollback()。
+ */
+export interface StagedPrefs {
+  written: number
+  skipped: number
+  rollback: () => void
+}
+
+export function stagePrefs(
+  prefs: Record<string, unknown>,
+  skipExisting: boolean,
+): StagedPrefs {
+  if (typeof localStorage === 'undefined') {
+    return { written: 0, skipped: Object.keys(prefs).length, rollback: () => {} }
+  }
+
+  const touched: Array<{ key: string; previous: string | null }> = []
+  let written = 0
+  let skipped = 0
+  try {
+    for (const [key, value] of Object.entries(prefs)) {
+      const storageKey = PREFIX + key
+      if (skipExisting && localStorage.getItem(storageKey) != null) {
+        skipped++
+        continue
+      }
+      const previous = localStorage.getItem(storageKey)
+      if (!setPref(key, value)) throw new Error(`无法写入设置项：${key}`)
+      touched.push({ key, previous })
+      written++
+    }
+  } catch (err) {
+    rollbackTouchedPrefs(touched)
+    throw err
+  }
+
+  return {
+    written,
+    skipped,
+    rollback: () => rollbackTouchedPrefs(touched),
+  }
+}
+
+function rollbackTouchedPrefs(touched: Array<{ key: string; previous: string | null }>): void {
+  for (const item of touched.reverse()) {
+    try {
+      if (item.previous === null) localStorage.removeItem(PREFIX + item.key)
+      else localStorage.setItem(PREFIX + item.key, item.previous)
+    } catch { /* 尽力恢复；调用方保留原错误以让导入失败可见 */ }
+  }
+}

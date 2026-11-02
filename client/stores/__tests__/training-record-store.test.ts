@@ -94,3 +94,32 @@ describe('sweepTrainingRetention 启动清扫', () => {
     expect(ids[ids.length - 1]).toBe('id-104')
   })
 })
+
+describe('appendReportTrainingRecord 跟读/背诵报告', () => {
+  it('ASR 空结果不写入 0 分训练记录', async () => {
+    await store.appendReportTrainingRecord('recitation', 'm-empty', '', 'one two three')
+    await store.appendReportTrainingRecord('shadowing', 'm-empty', '   ', 'one two three')
+    expect(await idb.recordsStore.getAllEntriesByPrefix('train:')).toEqual([])
+  })
+
+  it('根据 transcript 与目标全文生成并保存 ReportDetail', async () => {
+    await store.appendReportTrainingRecord(
+      'shadowing',
+      'm-report',
+      'one two five four extra',
+      'one two three four',
+    )
+    const entries = await idb.recordsStore.getAllEntriesByPrefix('train:')
+    expect(entries).toHaveLength(1)
+    const record = entries[0]![1] as TrainingRecord
+    expect(record.mode).toBe('shadowing')
+    expect(record.scope).toEqual({ type: 'all' })
+    expect(record.detail).toMatchObject({
+      total: 68,
+      completeness: 75,
+      accuracy: 60,
+      fluency: 60,
+    })
+    expect(record.score).toBe(68)
+  })
+})

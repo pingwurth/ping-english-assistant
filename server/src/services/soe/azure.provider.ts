@@ -16,7 +16,7 @@
 import { ERR, apiError } from '../../lib/api-error'
 import type { Env } from '../../config/env'
 import { mapAzureToContract, type AzurePronResponse } from './soe-mapper'
-import { isSoeRetryable } from './soe-retry'
+import { withSoeRetry } from './soe-retry'
 import type { SoeEvaluateResponse, SoeInput, SoeProvider } from './soe-provider'
 
 /** 无语音/未识别的状态 → 4xx 语义（用户没说话，非上游故障） */
@@ -38,18 +38,8 @@ export function createAzureSoeProvider(env: Env): SoeProvider {
     }
     const pronHeader = Buffer.from(JSON.stringify(params), 'utf8').toString('base64')
 
-    const attempts = env.SOE_RETRY + 1
-    let lastErr: unknown
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        return await callOnce(input, pronHeader, signal)
-      } catch (err) {
-        lastErr = err
-        // 重试判定见 soe-retry.ts：429/5xx/连接层错误重试，401/403/400/超时不重试
-        if (attempt === attempts || !isSoeRetryable(err)) throw err
-      }
-    }
-    throw lastErr // 不可达（attempts≥1），取悦类型系统
+    // 重试判定与退避见 soe-retry.ts（评审 #34：三 provider 重试循环收敛为 withSoeRetry）
+    return withSoeRetry(env, () => callOnce(input, pronHeader, signal), signal)
   }
 
   const callOnce = async (input: SoeInput, pronHeader: string, signal?: AbortSignal): Promise<SoeEvaluateResponse> => {
@@ -72,8 +62,15 @@ export function createAzureSoeProvider(env: Env): SoeProvider {
       })
     } catch (err) {
       if (signal?.aborted) throw err // 调用方取消：原样上抛
+      // AbortSignal.timeout 触发的是 TimeoutError，才是真超时（不重试）；
+      // 其余（ECONNRESET/DNS 抖动等 'fetch failed'）是连接层瞬断，映射为
+      // SOE_UPSTREAM_ERROR + reason 走 soe-retry 自动重试——与 tencent/iflytek
+      // 口径一致（评审 #21：原一律 UPSTREAM_TIMEOUT 被短路判死且误导排障）
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw apiError(ERR.UPSTREAM_TIMEOUT, '评分上游请求超时', { reason: err.message })
+      }
       const reason = err instanceof Error ? err.message : String(err)
-      throw apiError(ERR.UPSTREAM_TIMEOUT, '评分上游请求超时或网络不可达', { reason })
+      throw apiError(ERR.SOE_UPSTREAM_ERROR, '评分上游网络错误（连接失败/中断）', { reason })
     }
 
     if (res.status === 200) {

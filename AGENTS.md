@@ -60,7 +60,7 @@ Browser-specific implementations:
 - `html-player.ts` — `HtmlPlayerController` (HTMLAudioElement/HTMLVideoElement, seek calibration, rAF progress)
 - `recorder.ts` — `WebRecorder` (getUserMedia → MediaRecorder → 16kHz WAV via OfflineAudioContext)
 - `kokoro-tts.ts` / `kokoro-worker.ts` / `kokoro-protocol.ts` — Kokoro-82M TTS running in a Web Worker (`kokoro-js` + `@huggingface/transformers`)
-- `storage/idb.ts` — **hand-written Promise-based IndexedDB wrapper (the `idb` package is NOT used)**; three stores `materials` / `blobs` / `records`, `DB_VERSION = 2`, falls back to an in-memory Map on SSR/private-mode/transaction failure instead of throwing
+- `storage/idb.ts` — **hand-written Promise-based IndexedDB wrapper (the `idb` package is NOT used)**; three stores `materials` / `blobs` / `records`, `DB_VERSION = 3` (`records.materialId` index); only an unavailable DB open falls back to memory — per-operation transaction failures do not silently switch the whole app
 - `storage/schema.ts` — `MaterialRecord` shape + `RECORD_KEYS` key-prefix conventions
 - `storage/prefs.ts` — localStorage preference adapter
 - `storage/backup.ts` — export/import (pairs with `core/backup/` + `fflate` zip)
@@ -122,6 +122,6 @@ Next.js Route Handlers keep cloud API keys out of the browser. They read `~/.pin
 - Player seek has drift compensation (SEEK_DRIFT_THRESHOLD_MS = 300ms) — don't remove this
 - When forwarding to the Fastify SOE proxy, **append text fields (`refText`/`evalMode`/`provider`/`creds`) before `audio`** — `@fastify/multipart`'s `req.file()` only guarantees fields preceding the file part
 - `records` store is shared across business types by key prefix; deleting by prefix is dangerous (`progress:` must match exactly, otherwise `m-1` also hits `m-10`). See `removeMaterial()` in `stores/material-store.ts` for the correct pattern
-- `~/.ping-eng/settings.json` stores plaintext API keys and the single-config endpoint `GET /api/settings/llm-configs?id=` intentionally returns them unmasked (local-only app); list responses mask to `slice(0,8) + '***'`
+- `~/.ping-eng/settings.json` stores plaintext API keys; both list and single-config GET responses mask keys, and update paths treat an unchanged mask as “keep the stored real key”
 - `next.config.mjs` sets `allowedDevOrigins: ['192.168.110.*']` — required for phone-over-LAN H5 debugging; update it when the network segment changes
 - `client/package.json` also ships Vercel AI SDK (`ai`, `@ai-sdk/openai`), but the LLM path actually uses **LangChain** (`@langchain/openai` in `lib/llm/factory.ts`) — don't mix the two stacks

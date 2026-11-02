@@ -103,6 +103,8 @@ export class WebRecorder {
   private maxTimer: number | null = null
   private startedAt = 0
   private elapsedMs = 0
+  /** start() 代际号：cancel()/destroy() 递增，使权限弹窗期间作废的 start 不再续建录音栈 */
+  private startGeneration = 0
   private listeners: { [E in keyof RecorderEvents]?: Set<RecorderEvents[E]> } = {}
 
   /** §2.3 start(options?)：申请麦克风权限并开始录音 */
@@ -121,9 +123,18 @@ export class WebRecorder {
     this.chunks = []
     this.elapsedMs = 0
     this.state = 'starting'
+    const generation = ++this.startGeneration
 
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } })
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } })
+      // 权限弹窗期间 cancel()/destroy() 已作废本次 start（评审 #14）：
+      // getUserMedia 仍可能 resolve——立即归还麦克风，绝不续建录音栈，
+      // 否则僵尸采集最长 maxDurationMs 且事件发给已卸载组件。
+      if (generation !== this.startGeneration) {
+        for (const track of stream.getTracks()) track.stop()
+        return
+      }
+      this.stream = stream
     } catch (err) {
       this.state = 'idle'
       const e = err as { name?: string }
@@ -216,8 +227,9 @@ export class WebRecorder {
     }
   }
 
-  /** §2.3 cancel()：丢弃录音并释放资源 */
+  /** §2.3 cancel()：丢弃录音并释放资源（含作废未决的 start()） */
   cancel(): void {
+    this.startGeneration++
     this.cleanupTimers()
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       try {

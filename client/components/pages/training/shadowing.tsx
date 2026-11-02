@@ -31,6 +31,7 @@ import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-playe
 import { useSentencePlayer } from '@/lib/use-sentence-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
+import { appendReportTrainingRecord } from '@/stores/training-record-store'
 import { toApiError } from '@/services'
 import type { SubtitleSentence } from '@/types/subtitle'
 import { RecordingReview, transcribeRecording, useRecordingReplayUrl } from './recording-review'
@@ -69,24 +70,73 @@ function OriginalTextCard({ sentences, activeIdx }: { sentences: SubtitleSentenc
   )
 }
 
+/**
+ * 录音面板进度行（评审 #51）：自订阅 player 的 10Hz timeupdate 与 recorder 的
+ * 200ms 计时，高频更新只重渲染本行 —— 原先 setPlayMs/setRecMs 每次都带动整页
+ * （含全句原文卡 OriginalTextCard）reconcile。范本同 player.tsx LiveControlBar。
+ */
+function LivePlayProgress({
+  player,
+  recorder,
+  durationMs,
+  paused,
+  active,
+}: {
+  player: SentencePlayer | null
+  recorder: WebRecorder | null
+  durationMs: number
+  paused: boolean
+  active: boolean
+}) {
+  const [playMs, setPlayMs] = useState(0)
+  const [recMs, setRecMs] = useState(0)
+
+  useEffect(() => {
+    if (!player) return
+    setPlayMs(player.getCurrentTimeMs())
+    player.on('timeupdate', setPlayMs)
+    return () => { player.off('timeupdate', setPlayMs) }
+  }, [player])
+
+  useEffect(() => {
+    if (!active || !recorder) {
+      setRecMs(0)
+      return
+    }
+    setRecMs(recorder.getElapsedMs())
+    const timer = window.setInterval(() => setRecMs(recorder.getElapsedMs()), 200)
+    return () => window.clearInterval(timer)
+  }, [active, recorder])
+
+  const pct = durationMs > 0 ? Math.min(100, Math.round((playMs / durationMs) * 100)) : 0
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">{paused ? '⏸ 已暂停' : '▶ 播放中'} {formatDuration(playMs)} / {formatDuration(durationMs)}</span>
+        <span className={`font-mono ${paused ? 'text-muted-foreground' : 'text-destructive'}`}>{paused ? '⏸ 录音已暂停' : `● 录音中 ${formatDuration(recMs)}`}</span>
+      </div>
+      <Progress value={pct} />
+    </div>
+  )
+}
+
 function Shadowing() {
   const { record, loading } = useTrainingMaterial()
 
   const [phase, setPhase] = useState<Phase>('intro')
   const [transcript, setTranscript] = useState('')
-  const [playMs, setPlayMs] = useState(0)
   const [durationMs, setDurationMs] = useState(0)
-  const [recMs, setRecMs] = useState(0)
   const [activeIdx, setActiveIdx] = useState(-1)
   const [paused, setPaused] = useState(false)
   const [permDenied, setPermDenied] = useState(false)
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
+  /** recorder 实例同步给 LivePlayProgress 自订阅（评审 #51：计时不再进本组件 state） */
+  const [recorder, setRecorder] = useState<WebRecorder | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null)
   const recorderRef = useRef<WebRecorder | null>(null)
-  const timerRef = useRef<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const finishingRef = useRef(false)
   const finishRef = useRef<() => Promise<void>>(async () => {})
@@ -94,6 +144,8 @@ function Shadowing() {
   const endGraceTimerRef = useRef<number | null>(null)
   /** 最近一次录音：供"重新转写"重试（不重新录音） */
   const lastBlobRef = useRef<Blob | null>(null)
+  /** 同一段录音转写/重试成功后只写一条训练记录 */
+  const reportSavedRef = useRef(false)
   const { recordingUrl, setRecordingUrlFromBlob } = useRecordingReplayUrl()
 
   const sentences = record?.subtitleData?.sentences ?? []
@@ -120,7 +172,6 @@ function Shadowing() {
     sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
     audioElement: audioRef,
     onSetup: (sp) => {
-      sp.on('timeupdate', (ms) => setPlayMs(ms))
       sp.on('sentencechange', (i) => setActiveIdx(i))
       sp.on('ended', finishAfterGrace)
     },
@@ -135,26 +186,22 @@ function Shadowing() {
   useEffect(() => () => { clearEndGrace() }, [enginePlayer])
 
   // 录音器生命周期：挂载创建；到达 60s 上限自动收尾；卸载 destroy + 中止转写请求
+  // （timeupdate/计时高频更新由 LivePlayProgress 自订阅承接，评审 #51）
   useEffect(() => {
     if (record) setDurationMs(record.material.durationMs)
     const rec = createRecorder()
     recorderRef.current = rec
+    setRecorder(rec)
     rec.on('maxreach', () => { void finishRef.current() })
     const abort = new AbortController()
     abortRef.current = abort
     return () => {
-      if (timerRef.current !== null) window.clearInterval(timerRef.current)
-      timerRef.current = null
       abort.abort()
       rec.destroy()
       recorderRef.current = null
+      setRecorder(null)
     }
   }, [record])
-
-  const clearTimer = () => {
-    if (timerRef.current !== null) window.clearInterval(timerRef.current)
-    timerRef.current = null
-  }
 
   /** 开始跟读：先起录音（拿麦克风权限），再同步起播放 */
   const begin = async () => {
@@ -170,14 +217,11 @@ function Shadowing() {
       else setError(err instanceof Error ? err.message : '录音启动失败')
       return
     }
-    setRecMs(0)
-    setPlayMs(0)
     setActiveIdx(-1)
     setTranscript('')
     setRecordingUrlFromBlob(null)
     setPaused(false)
-    clearTimer()
-    timerRef.current = window.setInterval(() => setRecMs(rec.getElapsedMs()), 200)
+    reportSavedRef.current = false
     const sp = playerRef.current
     if (sp) { sp.seekTo(0); void sp.play() }
     setPhase('recording')
@@ -208,6 +252,11 @@ function Shadowing() {
     try {
       const text = await transcribeRecording(blob, abortRef.current?.signal)
       setTranscript(text)
+      if (!reportSavedRef.current && record && text.trim()) {
+        reportSavedRef.current = true
+        void appendReportTrainingRecord('shadowing', record.material.id, text, fullEn)
+          .catch((err) => console.warn('[shadowing] 训练记录保存失败:', err))
+      }
       setPhase('result')
     } catch (err) {
       if (toApiError(err).code === 'ABORTED' || abortRef.current?.signal.aborted) return
@@ -223,7 +272,6 @@ function Shadowing() {
     if (finishingRef.current || !rec || !record || (recState !== 'recording' && recState !== 'paused')) return
     finishingRef.current = true
     clearEndGrace() // 已在收尾：取消挂起的延迟自动收尾
-    clearTimer()
     setPaused(false)
     playerRef.current?.pause()
     setPhase('transcribing')
@@ -246,7 +294,6 @@ function Shadowing() {
   /** 放弃本次录音（不转写） */
   const abandon = () => {
     clearEndGrace()
-    clearTimer()
     playerRef.current?.pause()
     recorderRef.current?.cancel()
     setPhase('intro')
@@ -267,7 +314,6 @@ function Shadowing() {
   }
 
   const currentSentence = activeIdx >= 0 ? sentences[activeIdx] : undefined
-  const playPct = durationMs > 0 ? Math.min(100, Math.round((playMs / durationMs) * 100)) : 0
 
   return (
     <Shell back>
@@ -308,13 +354,7 @@ function Shadowing() {
         {phase === 'recording' && (
           <Card>
             <CardContent className="flex flex-col gap-5 p-6 md:p-8">
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">{paused ? '⏸ 已暂停' : '▶ 播放中'} {formatDuration(playMs)} / {formatDuration(durationMs)}</span>
-                  <span className={`font-mono ${paused ? 'text-muted-foreground' : 'text-destructive'}`}>{paused ? '⏸ 录音已暂停' : `● 录音中 ${formatDuration(recMs)}`}</span>
-                </div>
-                <Progress value={playPct} />
-              </div>
+              <LivePlayProgress player={enginePlayer} recorder={recorder} durationMs={durationMs} paused={paused} active={phase === 'recording'} />
               {!mediaUrl && <p className="rounded-xl bg-muted p-3 text-left text-xs text-muted-foreground">演示材料无音频——仅录音，无原音跟播。导入真实材料后即可边播边录。</p>}
               <div className="flex flex-col gap-2">
                 <OriginalTextCard sentences={sentences} activeIdx={activeIdx} />

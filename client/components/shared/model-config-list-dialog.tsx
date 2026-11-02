@@ -232,7 +232,7 @@ function ModelConfigDialog({
       const res = await fetch('/api/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, baseUrl: baseUrl.trim(), apiKey: apiKey.trim() }),
+        body: JSON.stringify({ provider, baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), configId: isEdit ? editingConfig!.id : undefined }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '获取模型列表失败')
@@ -242,7 +242,7 @@ function ModelConfigDialog({
     } finally {
       setFetchingModels(false)
     }
-  }, [provider, baseUrl, apiKey])
+  }, [provider, baseUrl, apiKey, isEdit, editingConfig])
 
   const handleSave = useCallback(async () => {
     if (!name.trim()) { setError('请填写配置名称'); return }

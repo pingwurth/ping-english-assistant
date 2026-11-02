@@ -28,6 +28,27 @@ function deterministicRng(values: number[]): () => number {
   return () => values[i++ % values.length]
 }
 
+describe('shuffle 防正序开局（评审 #27）', () => {
+  const makeSentence = (words: string[]): SubtitleSentence => ({
+    index: 0, startMs: 0, endMs: 1000, textEn: words.join(' '), textZh: null, words,
+  })
+
+  it('病态 rng（恒产生 j===i 的序列）也不给出正序开局', () => {
+    // rng 恒 0.999…：每趟 j===i，洗牌结果恒等于输入——重洗后兜底首尾对调
+    const pathological = () => 0.999999
+    const state = initGridState(makeSentence(['a', 'b', 'c']), ['d'], pathological)
+    const texts = state.grid.map((c) => c.text)
+    expect(texts).not.toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it('正常 rng 下重洗不破坏结构（grid 长度与答案定位不变）', () => {
+    const words = Array.from({ length: 12 }, (_, i) => `w${i}`)
+    const state = initGridState(makeSentence(words), [], deterministicRng([0.3, 0.7, 0.1, 0.9, 0.5, 0.2, 0.8, 0.4, 0.6, 0.25, 0.75]))
+    expect(state.grid).toHaveLength(GRID_SIZE)
+    expect(state.grid[state.answerIndex]!.text).toBe('w0')
+  })
+})
+
 describe('initGridState', () => {
   it('目标句 ≥9 词时，grid 有 GRID_SIZE 格，答案在其中', () => {
     const words = Array.from({ length: 12 }, (_, i) => `w${i}`)

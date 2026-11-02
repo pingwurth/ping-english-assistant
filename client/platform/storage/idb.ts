@@ -21,9 +21,6 @@ const STORES: StoreName[] = ['materials', 'blobs', 'records']
 /** v3：records 按值上 materialId 建的索引名（train: 记录键不含 materialId） */
 const RECORDS_MATERIAL_INDEX = 'material'
 
-/** onblocked 后等待旧版本连接释放的上限，超时才降级内存 */
-const BLOCKED_TIMEOUT_MS = 10_000
-
 /** 内存兜底（SSR、无 indexedDB、或打开彻底失败时启用） */
 const memoryFallback = new Map<StoreName, Map<string, unknown>>()
 let useMemory = typeof indexedDB === 'undefined'
@@ -34,6 +31,21 @@ function mem(store: StoreName): Map<string, unknown> {
 }
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
+
+/** 版本升级被旧标签页阻塞时的 UI 通知（订阅即回放当前状态） */
+const idbBlockedListeners = new Set<(blocked: boolean) => void>()
+let idbBlocked = false
+export function subscribeIdbBlocked(listener: (blocked: boolean) => void): () => void {
+  listener(idbBlocked)
+  idbBlockedListeners.add(listener)
+  return () => { idbBlockedListeners.delete(listener) }
+}
+function setIdbBlocked(value: boolean): void {
+  if (idbBlocked === value) return
+  idbBlocked = value
+  idbBlockedListeners.forEach((listener) => listener(value))
+}
+
 function openDb(): Promise<IDBDatabase | null> {
   if (useMemory) return Promise.resolve(null)
   dbPromise ??= new Promise<IDBDatabase | null>((resolve) => {
@@ -59,13 +71,28 @@ function openDb(): Promise<IDBDatabase | null> {
           records.createIndex(RECORDS_MATERIAL_INDEX, 'materialId', { unique: false })
         }
       }
-      req.onsuccess = () => { settled = true; resolve(req.result) }
+      req.onsuccess = () => {
+        settled = true
+        setIdbBlocked(false)
+        const db = req.result
+        // 未来版本升级要求当前连接让路时主动释放，避免把新标签页永久 blocked。
+        db.onversionchange = () => {
+          console.warn('[IDB] database version changed in another tab; closing and reloading this tab')
+          db.close()
+          // 不能继续缓存已关闭连接；自动刷新加载与新 schema 匹配的代码。
+          dbPromise = null
+          if (typeof location !== 'undefined') location.reload()
+        }
+        resolve(db)
+      }
       req.onerror = () => fallbackToMemory('open failed', req.error)
       // blocked = 另一标签页持旧版本连接：先等它退出而不是立刻放弃
       // （立刻降级会让本页"丢库"并在内存里积累永远不会落盘的写入）
       req.onblocked = () => {
-        console.warn(`[IDB] open blocked by another tab; waiting up to ${BLOCKED_TIMEOUT_MS / 1000}s`)
-        setTimeout(() => fallbackToMemory('open still blocked after timeout'), BLOCKED_TIMEOUT_MS)
+        // 版本升级被旧标签页阻塞时保持 open 请求待决，绝不能降级内存：
+        // 旧连接关闭后本请求会继续完成；若这里超时切内存，本页后续写入会假成功且刷新即丢。
+        console.warn('[IDB] open blocked by another tab; waiting for that tab to close before continuing')
+        setIdbBlocked(true)
       }
     } catch (e) {
       fallbackToMemory('open threw', e)
@@ -95,6 +122,53 @@ function tx<T>(store: StoreName, mode: IDBTransactionMode, fn: (os: IDBObjectSto
       }
     } catch (e) {
       console.error(`[IDB] transaction threw on "${store}" (${mode}):`, e)
+      reject(e)
+    }
+  }))
+}
+
+/** 原子批量写入的输入：至少一个 store；键必须由调用方按各业务 schema 生成 */
+export type AtomicStoreWrites = Partial<Record<StoreName, ReadonlyArray<readonly [string, unknown]>>>
+
+/**
+ * 跨多个 object store 的原子 put：备份导入必须把 materials/records/blobs 作为
+ * 一个提交单元，避免任一写失败后留下半导入状态。所有请求在同一 readwrite 事务内
+ * 同步发出，Promise 以事务 complete/abort 收口。
+ */
+export function putAllAtomic(writes: AtomicStoreWrites): Promise<void> {
+  const names = Object.keys(writes).filter((name): name is StoreName =>
+    (STORES as readonly string[]).includes(name) && (writes[name as StoreName]?.length ?? 0) > 0,
+  )
+  if (names.length === 0) return Promise.resolve()
+
+  if (useMemory) {
+    for (const name of names) {
+      for (const [key, value] of writes[name]!) mem(name).set(key, value)
+    }
+    return Promise.resolve()
+  }
+
+  return openDb().then(db => new Promise<void>((resolve, reject) => {
+    if (!db) return reject(new Error('memory'))
+    let reqError: unknown
+    let transaction: IDBTransaction | null = null
+    try {
+      transaction = db.transaction(names, 'readwrite')
+      for (const name of names) {
+        const os = transaction.objectStore(name)
+        for (const [key, value] of writes[name]!) {
+          const request = os.put(value, key)
+          request.onerror = () => { reqError = request.error ?? reqError }
+        }
+      }
+      transaction.oncomplete = () => resolve()
+      transaction.onabort = () => {
+        console.error(`[IDB] atomic import transaction aborted (${names.join(',')}):`, transaction!.error ?? reqError)
+        reject(transaction!.error ?? reqError ?? new Error('idb atomic transaction aborted'))
+      }
+    } catch (e) {
+      console.error('[IDB] atomic import transaction threw:', e)
+      try { transaction?.abort() } catch { /* 已结束则忽略 */ }
       reject(e)
     }
   }))

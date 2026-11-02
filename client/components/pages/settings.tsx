@@ -271,10 +271,11 @@ function BackupSection() {
     let alive = true
     void (async () => {
       const ids = await materialsStore.allKeys()
+      // 每条只读 .size 却各付一次事务开销：并发读（评审 #56）
+      const blobs = await Promise.all(ids.map((id) => blobsStore.get<Blob>(id)))
       let count = 0
       let bytes = 0
-      for (const id of ids) {
-        const b = await blobsStore.get<Blob>(id)
+      for (const b of blobs) {
         if (b) { count++; bytes += b.size }
       }
       if (alive) setMediaInfo({ count, bytes })

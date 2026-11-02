@@ -95,3 +95,53 @@ describe('通用 KV 行为在 v3 schema 上不回归', () => {
     expect(await idb.recordsStore.allKeys()).toEqual([])
   })
 })
+
+/** 打开并保留一个 v2 连接，用于模拟旧标签页阻塞 v3 升级 */
+async function openV2Connection(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('ping-english-assistant', 2)
+    req.onupgradeneeded = () => {
+      for (const s of STORES) if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s)
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+describe('版本升级 blocked 与跨 store 原子写', () => {
+  it('旧标签页长期阻塞 v3 时不能降级内存；关闭旧连接后继续升级', { timeout: 12_000 }, async () => {
+    const oldDb = await openV2Connection()
+    const opened = idb.materialsStore.allKeys()
+    await new Promise((resolve) => setTimeout(resolve, 10_500))
+
+    expect(idb.isMemoryFallback()).toBe(false)
+    let settled = false
+    void opened.then(() => { settled = true })
+    expect(settled).toBe(false)
+
+    oldDb.close()
+    await expect(opened).resolves.toEqual([])
+    expect(idb.isMemoryFallback()).toBe(false)
+  })
+
+  it('putAllAtomic：任一写失败时同事务内其他 store 的写也回滚', async () => {
+    const promise = idb.putAllAtomic({
+      materials: [['should-rollback', { material: { id: 'should-rollback' } }]],
+      records: [['bad', () => 'functions are not cloneable']],
+    })
+    await expect(promise).rejects.toThrow()
+    expect(await idb.materialsStore.get('should-rollback')).toBeUndefined()
+    expect(await idb.recordsStore.get('bad')).toBeUndefined()
+  })
+
+  it('putAllAtomic：materials/records/blobs 可一次提交', async () => {
+    await idb.putAllAtomic({
+      materials: [['m-1', { material: { id: 'm-1' } }]],
+      records: [['progress:m-1', { materialId: 'm-1' }]],
+      blobs: [['m-1', { fake: 'blob' }]],
+    })
+    expect(await idb.materialsStore.get('m-1')).toBeDefined()
+    expect(await idb.recordsStore.get('progress:m-1')).toBeDefined()
+    expect(await idb.blobsStore.get('m-1')).toBeDefined()
+  })
+})

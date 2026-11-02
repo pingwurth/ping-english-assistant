@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { MicPermissionOverlay, ScorePanel } from '@/components/shared/score-panel'
 import { RecordButton } from '@/components/shared/record-button'
-import { WaveBars } from '@/components/shared/wave-bars'
+import { LiveRecordingWave } from '@/components/shared/wave-bars'
 import { formatDuration } from '@/components/shared/player-parts'
 import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { makeRecordId, sentencesInScope } from '@/core/training/session'
@@ -47,18 +47,17 @@ function ReadAloud() {
   const [cursor, setCursor] = useState(0)
   const [phase, setPhase] = useState<Phase>('idle')
   const [result, setResult] = useState<SoeEvaluateResponse | null>(null)
-  const [elapsed, setElapsed] = useState(0)
-  const [level, setLevel] = useState(0)
   const [permDenied, setPermDenied] = useState(false)
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [totals, setTotals] = useState<number[]>([])
+  /** recorder 实例同步给 LiveRecordingWave 自订阅（评审 #51：volume/计时不再进本组件 state） */
+  const [recorder, setRecorder] = useState<WebRecorder | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null)
   const recorderRef = useRef<WebRecorder | null>(null)
-  const timerRef = useRef<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   /** 每句只写一条 train: 记录（首次评分时），沿用批次 C 约定 */
   const writtenRef = useRef<Set<number>>(new Set())
@@ -80,26 +79,29 @@ function ReadAloud() {
   const playerRef = useRef<SentencePlayer | null>(null)
   playerRef.current = enginePlayer
 
-  // 录音器生命周期：挂载创建 + volume 监听 + 到达 60s 上限自动收尾；卸载 destroy + 中止评分请求
+  // 录音器生命周期：挂载创建 + 到达 60s 上限自动收尾；卸载 destroy + 中止评分请求
+  // （volume/计时高频更新由 LiveRecordingWave 自订阅承接，评审 #51）
   useEffect(() => {
     const rec = createRecorder()
     recorderRef.current = rec
-    rec.on('volume', (l) => setLevel(l))
+    setRecorder(rec)
     rec.on('maxreach', () => { void stopRef.current() })
     const abort = new AbortController()
     abortRef.current = abort
     return () => {
-      if (timerRef.current !== null) window.clearInterval(timerRef.current)
-      timerRef.current = null
       abort.abort()
       rec.destroy()
       recorderRef.current = null
+      setRecorder(null)
     }
   }, [])
 
   // 切换句子：重置本句阶段与展示
+  const resetSentenceState = () => {
+    setPhase('idle'); setResult(null); setError(null); setRecordingUrlFromBlob(null)
+  }
   useEffect(() => {
-    setPhase('idle'); setResult(null); setError(null); setElapsed(0); setLevel(0); setRecordingUrlFromBlob(null)
+    resetSentenceState()
   }, [cursor])
 
   const playOriginal = () => {
@@ -123,14 +125,11 @@ function ReadAloud() {
     setResult(null)
     setRecordingUrlFromBlob(null)
     setPhase('recording')
-    setElapsed(0)
-    timerRef.current = window.setInterval(() => setElapsed(rec.getElapsedMs()), 100)
   }
 
   const stopRecording = async () => {
     const rec = recorderRef.current
     if (!rec || rec.getState() !== 'recording' || !sentence || !record) return
-    if (timerRef.current !== null) { window.clearInterval(timerRef.current); timerRef.current = null }
     setPhase('scoring')
     try {
       const audio = await rec.stop()
@@ -139,7 +138,6 @@ function ReadAloud() {
       const res = await soe.evaluate(audio.blob, sentence.textEn, 'sentence', abortRef.current?.signal)
       setResult(res)
       setPhase('scored')
-      setLevel(0)
       // 每句首评写一条 train: 记录（批次 C 类型与 key 约定）
       if (!writtenRef.current.has(sentence.index)) {
         writtenRef.current.add(sentence.index)
@@ -169,7 +167,9 @@ function ReadAloud() {
   const restart = () => {
     writtenRef.current = new Set()
     setTotals([])
-    setRecordingUrlFromBlob(null) // 单句材料 restart 时 cursor 不变，效果不会重跑，这里补清
+    // 单句材料 restart 时 cursor 恒 0，[cursor] 重置效果不会重跑（评审 #23：
+    // 残留 'scored' 相位与旧 ScorePanel 会让小结在已评分句上显示 0 分）
+    resetSentenceState()
     setDone(false)
     setCursor(0)
   }
@@ -207,10 +207,12 @@ function ReadAloud() {
             <RecordButton recording={phase === 'recording'} setRecording={onRecordToggle} />
           )}
 
-          <div className="flex w-full flex-col items-center gap-2">
-            <WaveBars level={level} active={phase === 'recording'} />
-            <p className="font-mono text-sm text-muted-foreground">{phase === 'recording' ? `${formatMs(elapsed)} · 录音中` : phase === 'scored' ? '查看评分，或再读一次' : '准备好后开始录音'}</p>
-          </div>
+          <LiveRecordingWave
+            recorder={recorder}
+            active={phase === 'recording'}
+            formatMs={formatMs}
+            idleText={phase === 'scored' ? '查看评分，或再读一次' : '准备好后开始录音'}
+          />
 
           {error && <p className="text-sm text-destructive">{error}</p>}
           {result && <ScorePanel result={result} />}

@@ -17,7 +17,7 @@ import { ApiError, ERR, apiError } from '../../lib/api-error'
 import type { Env } from '../../config/env'
 import { mapTencentToContract, type TencentSoeResponse } from './soe-mapper'
 import { buildTencentSoeWsUrl } from './tencent-ws-auth'
-import { isSoeRetryable } from './soe-retry'
+import { withSoeRetry } from './soe-retry'
 import type { SoeEvaluateResponse, SoeInput, SoeProvider } from './soe-provider'
 
 /** OEN 录音模式整段音频上限：60s @16kHz/16bit/mono ≈ 1.92MB */
@@ -57,19 +57,9 @@ export function createTencentSoeProvider(env: Env): SoeProvider {
       })
     }
 
-    const attempts = env.SOE_RETRY + 1
-    let lastErr: unknown
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        // 每次重试独立会话：重新生成 timestamp/nonce/voice_id/签名/连接
-        return await sessionOnce(input, signal)
-      } catch (err) {
-        lastErr = err
-        // 重试判定见 soe-retry.ts：429/5xx/连接层错误重试，鉴权等确定性失败与超时不重试
-        if (attempt === attempts || !isSoeRetryable(err)) throw err
-      }
-    }
-    throw lastErr // 不可达（attempts≥1），取悦类型系统
+    // 每次重试独立会话：重新生成 timestamp/nonce/voice_id/签名/连接；
+    // 重试判定与退避见 soe-retry.ts（评审 #34：三 provider 重试循环收敛为 withSoeRetry）
+    return withSoeRetry(env, () => sessionOnce(input, signal), signal)
   }
 
   const sessionOnce = async (input: SoeInput, signal?: AbortSignal): Promise<SoeEvaluateResponse> => {

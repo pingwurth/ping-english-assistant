@@ -16,7 +16,7 @@ import type { Env } from '../../config/env'
 import { mapIflytekToContract } from './soe-mapper'
 import { parseIflytekResultXml } from './iflytek-xml'
 import { buildIflytekWsUrl } from './iflytek-auth'
-import { isSoeRetryable } from './soe-retry'
+import { abortableSleep, withSoeRetry } from './soe-retry'
 import { stripWavHeader } from './wav-pcm'
 import type { SoeEvaluateResponse, SoeInput, SoeProvider } from './soe-provider'
 
@@ -37,36 +37,13 @@ function isAuthCode(code: number): boolean {
   return (code >= 10160 && code <= 10165) || code === 10105 || code === 10106
 }
 
-/** 可中止 sleep：signal 中止时立刻 reject（让发送循环解开） */
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    const onAbort = (): void => {
-      clearTimeout(timer)
-      reject(signal.reason ?? new Error('aborted'))
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-}
+/** 可中止 sleep 已上移 soe-retry.ts 共用（评审 #34，与重试退避同一实现） */
 
 export function createIflytekSoeProvider(env: Env): SoeProvider {
   const evaluate = async (input: SoeInput, signal?: AbortSignal): Promise<SoeEvaluateResponse> => {
-    const attempts = env.SOE_RETRY + 1
-    let lastErr: unknown
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        // 每次重试独立会话：重新生成 date/签名/连接
-        return await sessionOnce(input, signal)
-      } catch (err) {
-        lastErr = err
-        // 重试判定见 soe-retry.ts：429/5xx/连接层错误重试，鉴权等确定性失败与超时不重试
-        if (attempt === attempts || !isSoeRetryable(err)) throw err
-      }
-    }
-    throw lastErr // 不可达（attempts≥1），取悦类型系统
+    // 每次重试独立会话：重新生成 date/签名/连接；
+    // 重试判定与退避见 soe-retry.ts（评审 #34：三 provider 重试循环收敛为 withSoeRetry）
+    return withSoeRetry(env, () => sessionOnce(input, signal), signal)
   }
 
   const sessionOnce = async (input: SoeInput, signal?: AbortSignal): Promise<SoeEvaluateResponse> => {

@@ -41,12 +41,23 @@ export function splitTargets(sentence: SubtitleSentence): string[] {
   return grouped
 }
 
-/** Fisher-Yates 洗牌（rng 注入；结果恰与正序相同时再洗一次，避免"无需拼"的开局） */
+/**
+ * Fisher-Yates 洗牌（rng 注入）。兑现注释承诺（评审 #27）：结果恰与正序相同时
+ * 重洗，避免"无需拼"的开局——原先只做单趟，2 格 grid 有 50% 概率正序开局。
+ * 重洗上限 8 次防病态 rng（恒等序列）死循环；仍恒等则首尾对调兜底。
+ */
 function shuffle<T>(list: T[], rng: Rng): T[] {
   const arr = [...list]
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1))
-    ;[arr[i], arr[j]] = [arr[j]!, arr[i]!]
+  const sameAsInput = () => arr.every((v, i) => v === list[i])
+  let attempt = 0
+  do {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1))
+      ;[arr[i], arr[j]] = [arr[j]!, arr[i]!]
+    }
+  } while (arr.length > 1 && sameAsInput() && ++attempt < 8)
+  if (arr.length > 1 && sameAsInput()) {
+    ;[arr[0], arr[arr.length - 1]] = [arr[arr.length - 1]!, arr[0]!]
   }
   return arr
 }

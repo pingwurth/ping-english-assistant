@@ -18,12 +18,14 @@ import { generateTtsDashScope } from './providers/dashscope-tts'
  *
  * @param text     待合成文本
  * @param config   TTS 配置
+ * @param signal   可选中止信号（客户端取消 / 路由层超时，评审 #24）
  * @returns        音频 buffer 和时长
  * @throws         LlmError 合成失败时抛出
  */
 export async function generateTts(
   text: string,
   config: TtsModelConfig,
+  signal?: AbortSignal,
 ): Promise<TtsResult> {
   if (!text.trim()) {
     throw new LlmError('RESPONSE_EMPTY', '文本不能为空，无法合成语音')
@@ -36,14 +38,14 @@ export async function generateTts(
 
   switch (provider) {
     case 'mimo':
-      return generateTtsMimo(text, config)
+      return generateTtsMimo(text, config, signal)
 
     case 'dashscope':
-      return generateTtsDashScope(text, config)
+      return generateTtsDashScope(text, config, signal)
 
     default:
       // 未知 provider 回退到 OpenAI-compatible（与 ASR/chat 的 fallback 口径一致）
       console.log(`[TTS] Unknown provider "${provider}", falling back to OpenAI-compatible MiMo`)
-      return generateTtsMimo(text, config)
+      return generateTtsMimo(text, config, signal)
   }
 }

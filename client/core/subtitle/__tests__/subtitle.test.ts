@@ -126,6 +126,33 @@ describe('parseSubtitle SRT', () => {
     const data = parseSubtitle('00:00:00,000 --> 00:00:01,000\nHello', 'srt')
     expect(data.format).toBe('srt')
   })
+
+  it('块间缺失空行：后续块的序号+时间轴不被吞进上一块文本（评审 #17）', () => {
+    const text = ['1', '00:00:01,000 --> 00:00:02,000', 'First', '2', '00:00:03,000 --> 00:00:04,000', 'Second'].join('\n')
+    const data = parseSubtitle(text)
+    expect(data.sentences).toHaveLength(2)
+    expect(data.sentences[0]).toMatchObject({ startMs: 1000, textEn: 'First' })
+    expect(data.sentences[1]).toMatchObject({ startMs: 3000, textEn: 'Second' })
+    expect(data.sentences[1]!.words).toEqual(['Second']) // 时间轴不再混入词表
+  })
+
+  it('块间缺失空行且后续块无序号：时间轴行即下一块起点', () => {
+    const text = ['00:00:01,000 --> 00:00:02,000', 'First', '00:00:03,000 --> 00:00:04,000', 'Second'].join('\n')
+    const data = parseSubtitle(text)
+    expect(data.sentences.map((s) => s.textEn)).toEqual(['First', 'Second'])
+  })
+
+  it('exportSrt 纯中文句（textEn 空）不产生块内空行，导出可再解析（评审 #15）', () => {
+    // 多行全中 → splitBilingual 得 textEn=''、textZh=原文（单行中文会进 textEn，不构成本缺陷）
+    const data = parseSubtitle(['1', '00:00:01,000 --> 00:00:02,000', '你好', '世界'].join('\n'))
+    expect(data.sentences[0]!.textEn).toBe('')
+    expect(data.sentences[0]!.textZh).toBe('你好\n世界')
+    const exported = exportSrt(data.sentences)
+    expect(exported).not.toMatch(/-->.+\n\n/) // 块内无空行
+    const again = parseSubtitle(exported)
+    expect(again.sentences).toHaveLength(1)
+    expect(again.sentences[0]).toMatchObject({ startMs: 1000, endMs: 2000, textZh: '你好\n世界' })
+  })
 })
 
 describe('parseSubtitle LRC', () => {
@@ -164,6 +191,23 @@ describe('parseSubtitle LRC', () => {
   it('BOM + CRLF 兼容', () => {
     const data = parseSubtitle('\uFEFF' + lrc.replace(/\n/g, '\r\n'))
     expect(data.sentences).toHaveLength(3)
+  })
+
+  it('行中段 [xx:yy] 括注是歌词内容，不被剥离（评审 #18）', () => {
+    const blocks = parseLrc('[00:10.00]the answer [my:note] is here')
+    expect(blocks[0]!.lines[0]).toBe('the answer [my:note] is here')
+  })
+
+  it('行首元数据标签与时间标签混合时头部整段剥离', () => {
+    const blocks = parseLrc('[00:10.00][offset:+500]mixed tags here')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]!.lines[0]).toBe('mixed tags here')
+  })
+
+  it('增强型 LRC（A2）逐词时间标签 <mm:ss.xx> 剥离，不污染词表（评审 #16）', () => {
+    const data = parseSubtitle('[00:12.30] <00:13.50>you <00:14.00>know the way')
+    expect(data.sentences[0]!.textEn).toBe('you know the way')
+    expect(data.sentences[0]!.words).toEqual(['you', 'know', 'the', 'way'])
   })
 })
 

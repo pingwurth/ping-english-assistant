@@ -12,6 +12,8 @@
  */
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
+import { reportDetailFromText } from '@/core/training/scoring'
+import { makeRecordId } from '@/core/training/session'
 import type { TrainingRecord } from '@/types/training'
 
 /** 每「材料 × 模式」保留的最近训练记录条数上限（含刚写入的一条） */
@@ -29,6 +31,30 @@ export async function appendTrainingRecord(record: TrainingRecord): Promise<void
   } catch (e) {
     console.warn('[training-record] retention prune failed:', e)
   }
+}
+
+/**
+ * 影子跟读/全文背诵转写成功后的统一落库入口。
+ * 每次录音只由调用方标记一次；重新转写同一段录音不会重复写 train: 记录。
+ */
+export function appendReportTrainingRecord(
+  mode: 'shadowing' | 'recitation',
+  materialId: string,
+  transcript: string,
+  target: string,
+): Promise<void> {
+  // ASR 空结果代表无效/静音尝试，不应覆盖训练中心的真实“上次成绩”。
+  if (!transcript.trim()) return Promise.resolve()
+  const detail = reportDetailFromText(transcript, target)
+  return appendTrainingRecord({
+    id: makeRecordId(),
+    materialId,
+    mode,
+    scope: { type: 'all' },
+    score: detail.total,
+    detail,
+    createdAt: Date.now(),
+  })
 }
 
 /** 把 [key, value] 记录对按「材料 × 模式」分组，返回超出保留上限、应删除的键 */

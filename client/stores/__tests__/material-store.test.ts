@@ -68,6 +68,7 @@ describe('removeMaterial 级联删除', () => {
     expect(await blobsStore.get('m-10')).toBeDefined()
 
     // records：m-1 全清、m-10 全在、无关前缀（collection/vocab/seeded 标记）不受牵连
+    // vocabbook:default 由 removeMaterial → updateFrequencies → initVocab 首载写入
     const keys = (await recordsStore.allKeys()).sort()
     expect(keys).toEqual([
       'fav:m-10:0',
@@ -76,6 +77,7 @@ describe('removeMaterial 级联删除', () => {
       'progress:m-10',
       'train:r2',
       'vocabentry:v1',
+      'vocabbook:default',
       'collection:c1',
     ].sort())
 
@@ -90,6 +92,23 @@ describe('removeMaterial 级联删除', () => {
     await recordsStore.put(RECORD_KEYS.progress('ghost'), { lastPositionMs: 0 })
     await expect(ms.removeMaterial('nonexistent')).resolves.toBeUndefined()
     expect(await recordsStore.get(RECORD_KEYS.progress('ghost'))).toBeDefined()
+  })
+
+  it('删除材料回收生词词频贡献（评审 #19）：frequency 与 materialCounts 撤账', async () => {
+    await ms.initMaterials()
+    await ms.putMaterialRecord({ material: makeMaterial('m-1'), subtitleData: null } satisfies MaterialRecord)
+    await ms.putMaterialRecord({ material: makeMaterial('m-2'), subtitleData: null } satisfies MaterialRecord)
+    const { recordsStore } = idb
+    await recordsStore.put(RECORD_KEYS.vocabEntry('v1'), {
+      id: 'v1', text: 'apple', context: 'an apple', materialId: 'm-1', sentenceIndex: 0,
+      bookId: 'default', addedAt: 1, frequency: 7, materialCounts: { 'm-1': 5, 'm-2': 2 },
+    } satisfies import('@/types/vocabulary').VocabEntry)
+
+    await ms.removeMaterial('m-1')
+
+    const entry = (await recordsStore.get(RECORD_KEYS.vocabEntry('v1'))) as import('@/types/vocabulary').VocabEntry
+    expect(entry.frequency).toBe(2) // 只剩 m-2 的贡献
+    expect(entry.materialCounts).toEqual({ 'm-2': 2 })
   })
 })
 

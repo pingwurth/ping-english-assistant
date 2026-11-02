@@ -8,6 +8,7 @@ import type { TtsModelConfig, TtsResult } from '../types'
 import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
 import { getDefaultModel, getDefaultVoice } from '@/lib/service-endpoints'
+import { parseWavDurationWithFallback } from '@/lib/wav-duration'
 
 /**
  * DashScope TTS 语音合成
@@ -15,6 +16,7 @@ import { getDefaultModel, getDefaultVoice } from '@/lib/service-endpoints'
 export async function generateTtsDashScope(
   text: string,
   config: TtsModelConfig,
+  signal?: AbortSignal,
 ): Promise<TtsResult> {
   const model = config.model || getDefaultModel('dashscope', 'tts')
   const voice = config.voice || getDefaultVoice('dashscope')
@@ -48,6 +50,7 @@ export async function generateTtsDashScope(
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify(requestBody),
+    signal,
   })
 
   if (!res.ok) {
@@ -75,41 +78,22 @@ export async function generateTtsDashScope(
     // 会把池内垃圾一起带给上层编码成坏 WAV
     const buf = Buffer.from(audioBase64, 'base64')
     const audioBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-    const durationMs = parseWavDuration(audioBuffer)
+    // 24kHz mono 16-bit = 48kB/s：头解析失败时的字节率估算兜底
+    const durationMs = parseWavDurationWithFallback(audioBuffer, 24_000 * 2)
     return { audioBuffer, durationMs }
   }
 
   // 旧格式：音频 URL
   const audioUrl: string | undefined = result?.output?.audio?.url
   if (audioUrl) {
-    const audioRes = await fetch(audioUrl)
+    const audioRes = await fetch(audioUrl, { signal })
     if (!audioRes.ok) {
       throw new LlmError('UPSTREAM_ERROR', `音频下载失败 (${audioRes.status})`)
     }
     const audioBuffer = await audioRes.arrayBuffer()
-    const durationMs = parseWavDuration(audioBuffer)
+    const durationMs = parseWavDurationWithFallback(audioBuffer, 24_000 * 2)
     return { audioBuffer, durationMs }
   }
 
   throw new LlmError('RESPONSE_EMPTY', 'TTS 响应中未返回音频数据')
-}
-
-/** 从 WAV ArrayBuffer 解析时长 */
-function parseWavDuration(buf: ArrayBuffer): number {
-  if (buf.byteLength < 44) return 0
-  const view = new DataView(buf)
-  const sampleRate = view.getUint32(24, true)
-  const channels = view.getUint16(22, true)
-  const dataSize = view.getUint32(40, true)
-  if (!sampleRate || !channels || !dataSize) return 0
-
-  const durationMs = Math.round((dataSize / (sampleRate * channels * 2)) * 1000)
-
-  if (durationMs > 300_000) {
-    console.warn(`parseWavDuration: suspicious duration ${durationMs}ms, falling back to byte-based estimate`)
-    const estimatedBytesPerSecond = 24000 * 1 * 2
-    return Math.round((buf.byteLength / estimatedBytesPerSecond) * 1000)
-  }
-
-  return durationMs
 }

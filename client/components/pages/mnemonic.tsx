@@ -12,7 +12,7 @@
 
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -281,23 +281,32 @@ function AssociationCard({
 }) {
   const [data, setData] = useState<Association | undefined>(initial)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const generate = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const result = await services.mnemonic.generateAssociation(word, meaning)
       setData(result)
       await saveAssociation(entryId, result)
+    } catch {
+      // 失败进入 error 态，由用户手动重试；不再向上抛出 unhandled rejection
+      setError('生成联想失败，请重试')
     } finally {
       setLoading(false)
     }
   }, [entryId, word, meaning])
 
+  // autoLoad 只自动发起一次（评审 P1：loading 放进依赖 + 失败无哨兵
+  // 会让 effect 随 loading 翻转无限重试，风暴式轰击 LLM 后端）
+  const autoTriedRef = useRef(false)
   useEffect(() => {
-    if (autoLoad && !data && !loading) {
-      generate()
+    if (!autoTriedRef.current && autoLoad && !data) {
+      autoTriedRef.current = true
+      void generate()
     }
-  }, [autoLoad, data, loading, generate])
+  }, [autoLoad, data, generate])
 
   return (
     <Card>
@@ -317,19 +326,22 @@ function AssociationCard({
             <div className="text-xs text-muted-foreground">✅ {data.why_it_works}</div>
           </div>
         ) : (
-          <Button variant="outline" size="sm" onClick={generate} disabled={loading}>
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 size-4 animate-spin" />
-                生成中…
-              </>
-            ) : (
-              <>
-                <Lightbulb className="mr-2 size-4" />
-                生成联想记忆
-              </>
-            )}
-          </Button>
+          <div className="space-y-2">
+            {error && <div className="text-xs text-destructive">{error}</div>}
+            <Button variant="outline" size="sm" onClick={generate} disabled={loading}>
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  生成中…
+                </>
+              ) : (
+                <>
+                  <Lightbulb className="mr-2 size-4" />
+                  生成联想记忆
+                </>
+              )}
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -528,20 +540,30 @@ export function MnemonicPage() {
   const [error, setError] = useState<string | null>(null)
 
   // 流式生成卡片
+  // 评审 P1：每轮流式持独立 AbortController —— 切换词条/卸载/发起新一轮时
+  // abort 旧流，SSE 事件不再跨词条污染状态，后台也不再继续消费整条 LLM 流
+  const abortRef = useRef<AbortController | null>(null)
+
   const streamCard = useCallback(async (found: VocabEntry) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const isStale = () => controller.signal.aborted
+
     setStreaming(true)
     setPartialCard({})
     setCard(null)
     setError(null)
 
     try {
-      const gen = services.mnemonic.generateCardStream(found.text, found.context, found.note)
+      const gen = services.mnemonic.generateCardStream(found.text, found.context, found.note, controller.signal)
       let lastCard: MnemonicCard | null = null
       // 局部累积流出的字段：useCallback([]) 闭包里的 partialCard 永远是初值 {}，
       // 无 done 事件（error/中断收场）时的兜底必须读这个局部副本
       const partial: Partial<MnemonicCard> = {}
 
       for await (const event of gen) {
+        if (isStale()) return
         if (event.event === 'field') {
           partial[event.data.field] = event.data.value as never
           setPartialCard(prev => ({ ...prev, [event.data.field]: event.data.value }))
@@ -553,10 +575,14 @@ export function MnemonicPage() {
             card: event.data.card,
             createdAt: Date.now(),
           })
+          break
         } else if (event.event === 'error') {
           setError(event.data.error)
+          break
         }
       }
+
+      if (isStale()) return
 
       // 如果流结束但没有 done 事件，用已流出的字段兜底
       if (!lastCard) {
@@ -571,10 +597,13 @@ export function MnemonicPage() {
         }
       }
     } catch (err) {
-      setError('生成失败，请重试')
+      // abort 引起的中断不是错误
+      if (!isStale()) setError('生成失败，请重试')
     } finally {
-      setStreaming(false)
-      setLoading(false)
+      if (!isStale()) {
+        setStreaming(false)
+        setLoading(false)
+      }
     }
   }, [])
 
@@ -612,7 +641,10 @@ export function MnemonicPage() {
     }
 
     init()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      abortRef.current?.abort()
+    }
   }, [entryId, streamCard])
 
   const handleRefresh = useCallback(async () => {
@@ -684,7 +716,7 @@ export function MnemonicPage() {
         {error && (
           <div className="flex flex-col items-center justify-center py-20">
             <div className="text-sm text-destructive">{error}</div>
-            <Button variant="outline" size="sm" className="mt-4" onClick={handleRefresh}>
+            <Button variant="outline" size="sm" className="mt-4" onClick={handleRefresh} disabled={loading || streaming}>
               <RefreshCw className="mr-2 size-4" />
               重试
             </Button>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { setKokoroModelId, preloadKokoroModel } from '@/platform/kokoro-tts'
+import { subscribeIdbBlocked } from '@/platform/storage/idb'
 import { sweepTrainingRetention } from '@/stores/training-record-store'
 import { Library } from '@/components/pages/library'
 import { CollectionDetail } from '@/components/pages/collection'
@@ -24,8 +25,10 @@ import { Placeholder } from '@/components/pages/placeholder'
 
 export default function StudyApp() {
   const [ready, setReady] = useState(false)
+  const [idbBlocked, setIdbBlocked] = useState(false)
 
   useEffect(() => {
+    const unsubscribeIdb = subscribeIdbBlocked(setIdbBlocked)
     setReady(true)
     // 启动时加载 Kokoro 配置并预加载模型
     // 后台清扫训练记录保留策略（只读 train: 前缀；兜住升级前/导入的历史积压，失败静默）
@@ -37,12 +40,20 @@ export default function StudyApp() {
       })
       .catch(() => {})
       .finally(() => { preloadKokoroModel() })
+    return () => {
+      unsubscribeIdb()
+    }
   }, [])
 
   if (!ready) return null
 
   return (
     <BrowserRouter>
+      {idbBlocked && (
+        <div role="alert" className="fixed inset-x-0 top-0 z-[100] bg-amber-500/95 px-4 py-2 text-center text-sm font-medium text-black">
+          本页正在等待其他标签页释放本地数据库升级锁；请保存并关闭旧标签页后继续。
+        </div>
+      )}
       <Routes>
         <Route path="/" element={<Library />} />
         <Route path="/collection/:collectionId" element={<CollectionDetail />} />

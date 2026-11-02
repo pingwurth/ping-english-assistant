@@ -84,6 +84,30 @@ describe('start() 并发守卫', () => {
     expect(rec.getState()).toBe('idle')
     expect(track.stop).toHaveBeenCalled() // 麦克风 track 已释放，指示灯不残留
   })
+
+  it('权限弹窗期间 destroy()：getUserMedia 随后 resolve 也不续建录音栈，track 立即归还（评审 #14）', async () => {
+    const pending = deferred<MediaStream>()
+    const gum = vi.fn(() => pending.promise)
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: gum } })
+    const MediaRecorderCtor = vi.fn()
+    vi.stubGlobal('MediaRecorder', MediaRecorderCtor)
+
+    const { createRecorder } = await importRecorder()
+    const rec = createRecorder()
+
+    const first = rec.start()
+    rec.destroy() // 组件卸载：作废未决的 start（此时 stream/mediaRecorder 均为 null）
+    expect(rec.getState()).toBe('idle')
+
+    // 用户此时才点「允许」——旧实现会无条件续建全套录音栈，僵尸采集最长 60s
+    const track = { stop: vi.fn() }
+    pending.resolve({ getTracks: () => [track] } as unknown as MediaStream)
+
+    await expect(first).resolves.toBeUndefined()
+    expect(track.stop).toHaveBeenCalledTimes(1) // 麦克风立即归还
+    expect(MediaRecorderCtor).not.toHaveBeenCalled() // 未续建 MediaRecorder
+    expect(rec.getState()).toBe('idle')
+  })
 })
 
 describe('start() 失败路径', () => {

@@ -8,9 +8,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { seedSentences } from '@/data/seed'
-import { assignMaterialCollection, createCollection, getProgress, materialStore } from '@/stores/material-store'
+import { assignMaterialCollection, createCollection, materialStore } from '@/stores/material-store'
 import { useStore } from '@/stores/store'
-import type { MaterialRecord } from '@/platform/storage/schema'
+import { recordsStore } from '@/platform/storage/idb'
+import { RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import type { Material, MaterialCollection } from '@/types/material'
 import type { SubtitleMode, SubtitleSentence } from '@/types/subtitle'
 
@@ -41,13 +42,21 @@ function lastLabel(lastOpenedAt: number): string {
 
 /** 进度百分比 = playedSentenceIndexes 去重数 / 总句数（真源：docs/原型设计.md P0 学习进度条） */
 async function loadProgressPercents(records: MaterialRecord[]): Promise<Record<string, number>> {
-  const entries = await Promise.all(records.map(async (r) => {
+  // records v3 批量读（评审 #57）：原每材料一次独立 getProgress 事务，
+  // 50 份材料首屏挂 50 个各自开事务的读；前缀区间单事务即可构建同样映射
+  const prefix = RECORD_KEY_PREFIXES.progress
+  const progressEntries = await recordsStore.getAllEntriesByPrefix(prefix)
+  const playedByMaterial = new Map<string, number>()
+  for (const [key, value] of progressEntries) {
+    const progress = value as { playedSentenceIndexes?: unknown } | null
+    const played = Array.isArray(progress?.playedSentenceIndexes) ? new Set(progress.playedSentenceIndexes).size : 0
+    playedByMaterial.set(key.slice(prefix.length), played)
+  }
+  return Object.fromEntries(records.map((r) => {
     const total = r.material.subtitle?.sentenceCount ?? 0
-    const progress = await getProgress(r.material.id)
-    const played = progress ? new Set(progress.playedSentenceIndexes).size : 0
+    const played = playedByMaterial.get(r.material.id) ?? 0
     return [r.material.id, total > 0 ? Math.min(100, Math.round((played / total) * 100)) : 0] as const
   }))
-  return Object.fromEntries(entries)
 }
 
 /**

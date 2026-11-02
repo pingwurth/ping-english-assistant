@@ -3,7 +3,7 @@
  * 提示模式三态（显示中文 / 仅首词 / 无提示）→ 全文录音（60s 上限由 recorder 默认）
  * → 结束后本页直接呈现结果：录音回放 / 录音转文字 / 与原文逐词对比。
  * 录音处理与 P7 影子跟读完全一致（共用 recording-review.tsx：本机 faster-whisper
- * 优先、云端大模型兜底，转写失败可重试），不做评分，P9 报告页已移除。
+ * 优先、云端大模型兜底，转写失败可重试）；训练记录按文本 diff 计分，P9 独立报告页已移除。
  *
  * 说明（原型设计 §4.9）：
  *  - 无中文字幕时"显示中文"不可选；
@@ -19,11 +19,12 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Shell } from '@/components/shared/shell'
 import { MicPermissionOverlay } from '@/components/shared/score-panel'
 import { RecordButton } from '@/components/shared/record-button'
-import { WaveBars } from '@/components/shared/wave-bars'
+import { LiveRecordingWave } from '@/components/shared/wave-bars'
 import { formatDuration } from '@/components/shared/player-parts'
 import { diffWords } from '@/core/training/dictation-diff'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
+import { appendReportTrainingRecord } from '@/stores/training-record-store'
 import { toApiError } from '@/services'
 import { RecordingReview, transcribeRecording, useRecordingReplayUrl } from './recording-review'
 
@@ -49,20 +50,21 @@ function Recitation() {
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [hintMode, setHintMode] = useState<HintMode>('zh')
-  const [elapsed, setElapsed] = useState(0)
-  const [level, setLevel] = useState(0)
   const [transcript, setTranscript] = useState('')
   const [permDenied, setPermDenied] = useState(false)
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
+  /** recorder 实例同步给 LiveRecordingWave 自订阅（评审 #51：volume/计时不再进本组件 state） */
+  const [recorder, setRecorder] = useState<WebRecorder | null>(null)
 
   const recorderRef = useRef<WebRecorder | null>(null)
-  const timerRef = useRef<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const finishingRef = useRef(false)
   const finishRef = useRef<() => Promise<void>>(async () => {})
   /** 最近一次录音：供"重新转写"重试（不重新录音） */
   const lastBlobRef = useRef<Blob | null>(null)
+  /** 同一段录音转写/重试成功后只写一条训练记录 */
+  const reportSavedRef = useRef(false)
   const { recordingUrl, setRecordingUrlFromBlob } = useRecordingReplayUrl()
 
   const sentences = record?.subtitleData?.sentences ?? []
@@ -75,27 +77,22 @@ function Recitation() {
     if (record && !hasZh) setHintMode((m) => (m === 'zh' ? 'first' : m))
   }, [record, hasZh])
 
-  // 录音器生命周期：挂载创建 + volume 监听 + 60s 上限自动收尾；卸载 destroy + 中止转写请求
+  // 录音器生命周期：挂载创建 + 60s 上限自动收尾；卸载 destroy + 中止转写请求
+  // （volume/计时高频更新由 LiveRecordingWave 自订阅承接，评审 #51）
   useEffect(() => {
     const rec = createRecorder()
     recorderRef.current = rec
-    rec.on('volume', (l) => setLevel(l))
+    setRecorder(rec)
     rec.on('maxreach', () => { void finishRef.current() })
     const abort = new AbortController()
     abortRef.current = abort
     return () => {
-      if (timerRef.current !== null) window.clearInterval(timerRef.current)
-      timerRef.current = null
       abort.abort()
       rec.destroy()
       recorderRef.current = null
+      setRecorder(null)
     }
   }, [])
-
-  const clearTimer = () => {
-    if (timerRef.current !== null) window.clearInterval(timerRef.current)
-    timerRef.current = null
-  }
 
   const startRecording = async () => {
     const rec = recorderRef.current
@@ -108,11 +105,9 @@ function Recitation() {
       else setError(err instanceof Error ? err.message : '录音启动失败')
       return
     }
-    setElapsed(0)
     setTranscript('')
     setRecordingUrlFromBlob(null)
-    clearTimer()
-    timerRef.current = window.setInterval(() => setElapsed(rec.getElapsedMs()), 200)
+    reportSavedRef.current = false
     setPhase('recording')
   }
 
@@ -124,6 +119,11 @@ function Recitation() {
     try {
       const text = await transcribeRecording(blob, abortRef.current?.signal)
       setTranscript(text)
+      if (!reportSavedRef.current && record && text.trim()) {
+        reportSavedRef.current = true
+        void appendReportTrainingRecord('recitation', record.material.id, text, fullEn)
+          .catch((err) => console.warn('[recitation] 训练记录保存失败:', err))
+      }
       setPhase('result')
     } catch (err) {
       if (toApiError(err).code === 'ABORTED' || abortRef.current?.signal.aborted) return
@@ -137,7 +137,6 @@ function Recitation() {
     const rec = recorderRef.current
     if (finishingRef.current || !rec || rec.getState() !== 'recording' || !record) return
     finishingRef.current = true
-    clearTimer()
     setPhase('transcribing')
     try {
       const audio = await rec.stop()
@@ -157,9 +156,7 @@ function Recitation() {
 
   /** 放弃本次录音（不转写） */
   const abandon = () => {
-    clearTimer()
     recorderRef.current?.cancel()
-    setLevel(0)
     setPhase('idle')
   }
 
@@ -168,7 +165,6 @@ function Recitation() {
     setRecordingUrlFromBlob(null)
     setError(null)
     setTranscript('')
-    setLevel(0)
     setPhase('idle')
   }
 
@@ -213,10 +209,7 @@ function Recitation() {
                 ) : (
                   <RecordButton recording={false} setRecording={() => void startRecording()} />
                 )}
-                <div className="flex w-full flex-col items-center gap-2">
-                  <WaveBars level={level} active={phase === 'recording'} />
-                  <p className="font-mono text-sm text-muted-foreground">{phase === 'recording' ? `${formatDuration(elapsed)} · 录音中` : '凭记忆背诵全文，准备好后开始录音'}</p>
-                </div>
+                <LiveRecordingWave recorder={recorder} active={phase === 'recording'} formatMs={formatDuration} idleText="凭记忆背诵全文，准备好后开始录音" />
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 {phase === 'recording' && (
                   <div className="flex flex-wrap justify-center gap-2">

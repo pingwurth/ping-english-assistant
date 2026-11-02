@@ -4,6 +4,9 @@
  * 纯 TS 零依赖：正确率 / 用时 / 最弱句 TOP3 汇总。
  */
 
+import { diffWords, sentenceAccuracy, toWords } from './dictation-diff'
+import type { ReportDetail } from '@/types/training'
+
 /** 单句训练结果（各模式共用最小集） */
 export interface SentenceResult {
   sentenceIndex: number
@@ -54,4 +57,23 @@ export function summarize(results: SentenceResult[], durationMs: number): Sessio
 export function formatElapsed(durationMs: number): string {
   const totalSec = Math.max(0, Math.round(durationMs / 1000))
   return `${String(Math.floor(totalSec / 60)).padStart(2, '0')}:${String(totalSec % 60).padStart(2, '0')}`
+}
+
+/**
+ * 影子跟读/全文背诵的文本 diff 指标。
+ * accuracy 沿用听写 diff 口径（漏读/错读/多读都扣分）；completeness 只看目标词覆盖率。
+ * 当前链路没有语音时长/停顿数据，fluency 以文本 accuracy 作为保守代理，后续接入计时后再替换。
+ */
+export function reportDetailFromText(transcript: string, target: string): ReportDetail {
+  const tokens = diffWords(transcript, target)
+  const targetCount = toWords(target).length
+  const correctCount = tokens.filter((t) => t.type === 'correct').length
+  const accuracy = sentenceAccuracy(tokens, targetCount)
+  const completeness = targetCount > 0 ? Math.round((correctCount / targetCount) * 100) : (tokens.length === 0 ? 100 : 0)
+  return {
+    total: Math.round((accuracy + completeness) / 2),
+    completeness,
+    accuracy,
+    fluency: accuracy,
+  }
 }

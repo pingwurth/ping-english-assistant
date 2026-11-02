@@ -1,7 +1,7 @@
 /**
  * 翻译基础设施 —— 纯 TS、无 React 依赖，供翻译页面与字幕双语生成共用。
  *
- * - translateTexts：分块（每 50 句一块）串行调用 /api/translate，支持取消与进度回调
+ * - translateTexts：分块（每 50 句一块）3 路有界并发调用 /api/translate，支持取消与进度回调
  * - detectDirection：基于 isCJK 占比的方向判定（口径与 detectBilingual 一致：>30%）
  * - mergeBilingualSrt：将译文合并回 SRT 生成双语字幕
  * - buildBilingualPreview：双语预览文本（英文行 + 中文行）
@@ -13,15 +13,56 @@ import type { TranslateDirection, TranslateResponse } from '@/types/api'
 
 /** 每块提交给 /api/translate 的句数 */
 const CHUNK_SIZE = 50
+/** 并发块数（评审 #50：原逐块串行 await，1000 句 = 20 次串行 LLM 往返 100-200s；
+ * 3 路有界并发按索引回填可缩一半以上。池深有意保持小，避免触发服务端限流） */
+const CHUNK_CONCURRENCY = 3
+
+/** 单块请求与响应校验（错误信息与取消语义同评审前口径） */
+async function translateChunk(
+  chunk: string[],
+  configId: string | undefined,
+  direction: TranslateDirection,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const res = await fetch('/api/translate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ texts: chunk, direction, configId }),
+    signal,
+  })
+
+  let data: (TranslateResponse & { error?: string }) | null = null
+  try {
+    data = (await res.json()) as (TranslateResponse & { error?: string }) | null
+  } catch {
+    // body 读取失败有两种可能：响应体确实非 JSON，或用户取消导致读取中断 ——
+    // 先查中止，把主动取消与真实故障区分开（调用方对 AbortError 静默处理）
+    if (signal?.aborted) throw new DOMException('翻译已取消', 'AbortError')
+  }
+
+  if (!res.ok) {
+    const message = data?.error || `翻译失败 (${res.status})`
+    throw new Error(message)
+  }
+  if (!data) {
+    // 2xx 但响应体非 JSON（如网关返回 HTML）：单独提示格式异常，避免误导为“条数不一致”
+    throw new Error('翻译服务响应格式异常，请重试')
+  }
+  if (!data?.translations || data.translations.length !== chunk.length) {
+    throw new Error('翻译结果与原文条数不一致，请重试')
+  }
+  return data.translations
+}
 
 /**
- * 分块翻译：每 50 句一块串行调用 /api/translate。
+ * 分块翻译：每 50 句一块，CHUNK_CONCURRENCY 路有界并发、按块索引回填（结果顺序与原文一致）。
+ * 进度回调只报累计完成数——两个消费方均只 setProgress，不依赖完成顺序。
  * @param texts      待翻译文本列表（空列表直接返回 []）
  * @param configId   模型配置 id（undefined 用默认配置）
  * @param direction  翻译方向（由调用方预先判定，不做 'auto'）
  * @param signal     取消信号（贯穿所有分块请求）
  * @param onProgress 每块完成后回调（累计完成数, 总条数）
- * @throws 非 2xx 时抛出服务端返回的中文错误信息
+ * @throws 任意块失败时快速失败：抛首个错误并中止其余在途/未发块
  */
 export async function translateTexts(
   texts: string[],
@@ -31,45 +72,48 @@ export async function translateTexts(
   onProgress?: (done: number, total: number) => void,
 ): Promise<string[]> {
   if (texts.length === 0) return []
+  if (signal?.aborted) throw new Error('翻译已取消')
 
-  const results: string[] = []
-  for (let start = 0; start < texts.length; start += CHUNK_SIZE) {
-    if (signal?.aborted) throw new Error('翻译已取消')
+  const chunkCount = Math.ceil(texts.length / CHUNK_SIZE)
+  const chunkResults: string[][] = new Array(chunkCount)
+  // 内部中止源：任一块失败即中止其余在途请求（调用方 signal 经由监听联动）
+  const controller = new AbortController()
+  const onCallerAbort = (): void => controller.abort()
+  signal?.addEventListener('abort', onCallerAbort, { once: true })
 
-    const chunk = texts.slice(start, start + CHUNK_SIZE)
-    const res = await fetch('/api/translate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texts: chunk, direction, configId }),
-      signal,
-    })
+  let nextChunk = 0
+  let doneCount = 0
+  let firstError: unknown = null
 
-    let data: (TranslateResponse & { error?: string }) | null = null
-    try {
-      data = (await res.json()) as (TranslateResponse & { error?: string }) | null
-    } catch {
-      // body 读取失败有两种可能：响应体确实非 JSON，或用户取消导致读取中断 ——
-      // 先查中止，把主动取消与真实故障区分开（调用方对 AbortError 静默处理）
-      if (signal?.aborted) throw new DOMException('翻译已取消', 'AbortError')
+  const worker = async (): Promise<void> => {
+    while (firstError === null) {
+      const idx = nextChunk++
+      if (idx >= chunkCount) return
+      const chunk = texts.slice(idx * CHUNK_SIZE, (idx + 1) * CHUNK_SIZE)
+      try {
+        chunkResults[idx] = await translateChunk(chunk, configId, direction, controller.signal)
+        doneCount += chunk.length
+        onProgress?.(Math.min(doneCount, texts.length), texts.length)
+      } catch (err) {
+        if (firstError === null) {
+          firstError = err
+          controller.abort()
+        }
+        return
+      }
     }
-
-    if (!res.ok) {
-      const message = data?.error || `翻译失败 (${res.status})`
-      throw new Error(message)
-    }
-    if (!data) {
-      // 2xx 但响应体非 JSON（如网关返回 HTML）：单独提示格式异常，避免误导为“条数不一致”
-      throw new Error('翻译服务响应格式异常，请重试')
-    }
-    if (!data?.translations || data.translations.length !== chunk.length) {
-      throw new Error('翻译结果与原文条数不一致，请重试')
-    }
-
-    results.push(...data.translations)
-    onProgress?.(Math.min(results.length, texts.length), texts.length)
   }
 
-  return results
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(CHUNK_CONCURRENCY, chunkCount) }, () => worker()),
+    )
+  } finally {
+    signal?.removeEventListener('abort', onCallerAbort)
+  }
+
+  if (firstError !== null) throw firstError
+  return chunkResults.flat()
 }
 
 /**

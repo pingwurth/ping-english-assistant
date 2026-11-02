@@ -84,6 +84,15 @@ describe('parseNoteMarkdown 块级解析', () => {
     }])
   })
 
+  it('GFM 单短横分隔行 | - | - | 同样识别为分隔行（评审 #28）', () => {
+    const blocks = parseNoteMarkdown('| A | B |\n| - | - |\n| x | y |')
+    expect(blocks).toEqual([{
+      type: 'table',
+      header: [[{ type: 'text', text: 'A' }], [{ type: 'text', text: 'B' }]],
+      rows: [[[{ type: 'text', text: 'x' }], [{ type: 'text', text: 'y' }]]],
+    }])
+  })
+
   it('CRLF 与混合块顺序', () => {
     const blocks = parseNoteMarkdown('# T\r\n\r\n段落 *x*\r\n\r\n> q')
     expect(blocks.map((b) => b.type)).toEqual(['heading', 'paragraph', 'quote'])

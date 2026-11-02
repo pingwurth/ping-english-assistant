@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isTrustedRequestHost } from '@/lib/api-guard'
 
 /**
  * BFF 变更请求的同源防护。
@@ -11,6 +12,9 @@ export function proxy(request: NextRequest) {
   const method = request.method.toUpperCase()
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return NextResponse.next()
 
+  // Host 是第一道边界：公网 Host 未显式配置时，即使没有 Origin 也不能变更本地配置或消耗额度。
+  if (!isTrustedRequestHost(request.headers.get('host'))) return forbiddenOrigin()
+
   const origin = request.headers.get('origin')
   if (!origin) return NextResponse.next()
 
@@ -21,8 +25,9 @@ export function proxy(request: NextRequest) {
     return forbiddenOrigin()
   }
 
-  // 只比较 host（含端口）以兼容反向代理终止 TLS；跨 host/端口仍然全部拒绝。
-  if (originUrl.host !== request.nextUrl.host) return forbiddenOrigin()
+  // 可信反代/局域网访问要求 Origin 与请求 Host 同 host（含端口）；
+  // DNS rebinding 的攻击者域名已在 isTrustedRequestHost 处被拒绝。
+  if (originUrl.host !== request.headers.get('host')) return forbiddenOrigin()
   return NextResponse.next()
 }
 

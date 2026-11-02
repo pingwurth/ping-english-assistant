@@ -9,7 +9,7 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
-import { translateTexts, LlmError } from '@/lib/llm'
+import { translateTexts, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { TranslateDirection, TranslateRequest } from '@/types/api'
 
 /** 单次请求文本条数上限 */
@@ -126,22 +126,10 @@ export async function POST(request: Request) {
       return new NextResponse(null, { status: 499 })
     }
 
-    // LLM 服务层错误
+    // LLM 服务层错误（状态码映射收敛于 toLlmErrorResponse，评审 #48）
     if (error instanceof LlmError) {
       console.error('[Translate] LlmError:', error.code, error.message)
-      const statusMap: Record<string, number> = {
-        API_KEY_MISSING: 400,
-        BASE_URL_MISSING: 400,
-        MODEL_NOT_CONFIGURED: 400,
-        RESPONSE_EMPTY: 502,
-        RESPONSE_FORMAT_ERROR: 502,
-        UPSTREAM_ERROR: 502,
-        REQUEST_TIMEOUT: 504,
-      }
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: statusMap[error.code] || 502 },
-      )
+      return toLlmErrorResponse(error)
     }
 
     console.error('Translate API error:', error)

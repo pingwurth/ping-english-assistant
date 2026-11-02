@@ -8,7 +8,8 @@
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById, readLocalServices } from '@/lib/server-settings'
 import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
-import { transcribe, getAsrProviderType, LlmError } from '@/lib/llm'
+import { parseWavDurationMs } from '@/lib/wav-duration'
+import { transcribe, getAsrProviderType, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { AsrModelConfig, AsrSegment } from '@/lib/llm'
 import {
   getDefaultModel,
@@ -141,38 +142,11 @@ function distributeTimestamps(sentences: string[], totalDurationMs: number): Asr
 
 /** Estimate audio duration from file headers or file size */
 function estimateAudioDurationMs(buffer: ArrayBuffer, file: File): number {
-  const wavMs = probeWavDurationMs(buffer)
+  const wavMs = parseWavDurationMs(buffer)
   if (wavMs !== null) return wavMs
 
   const bytesPerSecond = 16_000
   return Math.round((file.size / bytesPerSecond) * 1000)
-}
-
-/** Parse WAV file header for exact duration */
-function probeWavDurationMs(buf: ArrayBuffer): number | null {
-  if (buf.byteLength < 44) return null
-  const dv = new DataView(buf)
-
-  const tag = (off: number, len: number) =>
-    String.fromCharCode(...new Uint8Array(buf, off, len))
-
-  if (tag(0, 4) !== 'RIFF' || tag(8, 4) !== 'WAVE') return null
-
-  const channels = dv.getUint16(22, true)
-  const sampleRate = dv.getUint32(24, true)
-  const blockAlign = dv.getUint16(32, true)
-  if (!channels || !sampleRate || !blockAlign) return null
-
-  let off = 12
-  while (off + 8 <= buf.byteLength) {
-    const id = tag(off, 4)
-    const size = dv.getUint32(off + 4, true)
-    if (id === 'data') {
-      return Math.round((size / blockAlign / sampleRate) * 1000)
-    }
-    off += 8 + size + (size & 1)
-  }
-  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -185,10 +159,12 @@ export async function POST(request: Request) {
   if (oversized) return oversized
   try {
     const formData = await request.formData()
-    const audioFile = formData.get('audio') as File | null
+    // 运行时类型校验（评审 #25）：文本字段穿透到下游会以引擎内部 TypeError 500 收场，
+    // 对照 soe/evaluate 的 instanceof Blob 校验，这里给干净的 400
+    const audioFile = formData.get('audio')
 
-    if (!audioFile) {
-      return NextResponse.json({ error: 'Missing audio file' }, { status: 400 })
+    if (!(audioFile instanceof Blob)) {
+      return NextResponse.json({ error: 'Missing or invalid audio file' }, { status: 400 })
     }
 
     const configId = formData.get('configId') as string | null
@@ -284,7 +260,9 @@ export async function POST(request: Request) {
     // LLM 服务层错误
     if (error instanceof LlmError) {
       console.error('[Transcribe] LlmError:', error.code, error.message)
-      return NextResponse.json({ error: error.message, code: error.code }, { status: 500 })
+      // 状态码映射与 translate/mnemonic 统一（评审 #48：原先一律 500，
+      // 「API Key 未配置」在转写路由被误报为服务故障）
+      return toLlmErrorResponse(error)
     }
 
     console.error('Transcribe error:', error)

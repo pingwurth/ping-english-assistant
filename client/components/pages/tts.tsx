@@ -214,25 +214,33 @@ function TTS() {
         body: JSON.stringify({ text, voice: voice.id, speed, configId: selectedConfigId || undefined }),
         signal: abort.signal,
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || `生成失败 (${res.status})`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => null as { error?: string } | null)
+        throw new Error(data?.error || `生成失败 (${res.status})`)
+      }
       if (abort.signal.aborted) throw new DOMException('已取消', 'AbortError')
 
       clearInterval(simTimer)
       setProgress({ done: estimatedSentences, total: estimatedSentences })
 
-      const binaryStr = atob(data.audioBase64)
-      const bytes = new Uint8Array(binaryStr.length)
-      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-      const audioBlob = new Blob([bytes], { type: 'audio/wav' })
+      // multipart 响应原生解析（评审 #53）：meta 为 JSON 文本，audio 为原始字节
+      // Blob —— 不再 base64 膨胀 33%，也没有 atob+逐字节重组的主线程循环
+      const fd = await res.formData()
+      const metaRaw = fd.get('meta')
+      const audioPart = fd.get('audio')
+      if (typeof metaRaw !== 'string' || !(audioPart instanceof Blob)) {
+        throw new Error('TTS 响应格式异常，请重试')
+      }
+      const meta = JSON.parse(metaRaw) as { taskId: string; durationMs: number; sentenceCount: number; srt: string }
+      const audioBlob = new Blob([audioPart], { type: 'audio/wav' })
 
       return {
-        taskId: data.taskId,
+        taskId: meta.taskId,
         audio: audioBlob,
         url: URL.createObjectURL(audioBlob),
-        durationMs: data.durationMs,
-        sentenceCount: data.sentenceCount,
-        srt: data.srt,
+        durationMs: meta.durationMs,
+        sentenceCount: meta.sentenceCount,
+        srt: meta.srt,
       }
     } catch (e) {
       clearInterval(simTimer)

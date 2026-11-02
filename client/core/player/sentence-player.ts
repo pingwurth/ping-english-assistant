@@ -159,6 +159,9 @@ export class SentencePlayer {
     this.loopIndex = -1
     this.loopRemaining = 0
     this.lastIndex = -1
+    // 旧句集的试听区间停点不跨场景残留（评审 #29：任何未来调用方先
+    // playRange 再 setSentences，进度一越过旧 rangeEndMs 会被无故暂停）
+    this.rangeEndMs = null
   }
 
   destroy(): void {
