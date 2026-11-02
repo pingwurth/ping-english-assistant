@@ -1,7 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
-    ignoreBuildErrors: true,
+    // 默认让 build 捕获类型错误（仓库当前 tsc 零错）；仅在显式 SKIP_TSC=1 时关闭，
+    // 用于临时绕过紧急发布。原先无条件 ignoreBuildErrors 使 strict 配置形同虚设。
+    ignoreBuildErrors: process.env.SKIP_TSC === '1',
   },
   images: {
     unoptimized: true,

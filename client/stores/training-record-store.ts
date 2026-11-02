@@ -10,7 +10,7 @@
  * 消费方不受影响：「上次成绩」（training-center）只读各模式最新一条；
  * 删句平移（material-store）与设置页统计、备份导出读到的都是有界集合。
  */
-import { recordsStore } from '@/platform/storage/idb'
+import { recordsStore, runAtomicOps } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import { reportDetailFromText } from '@/core/training/scoring'
 import { makeRecordId } from '@/core/training/session'
@@ -141,25 +141,31 @@ export async function getLatestTrainingRecordsByMaterial(
   return latest
 }
 
-/** 删句后平移单句听写明细中的 sentenceIndex；被删句的记录删除。 */
+/** 删句后平移单句听写明细中的 sentenceIndex；被删句的记录删除。
+ * 先收集全部变更再一次性提交（runAtomicOps），避免逐条 await 中途失败留下
+ * 「前半已删/已平移、后半未处理」的永久错位状态。 */
 export async function shiftTrainingRecordsAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
   const entries = await recordsStore.getEntriesByMaterial(materialId)
+  const del: string[] = []
+  const put: Array<readonly [string, unknown]> = []
   for (const [key, value] of entries) {
     if (!key.startsWith(RECORD_KEY_PREFIXES.training)) continue
     const record = value as TrainingRecord | undefined
     if (!record || record.mode !== 'dictation') continue
 
-    const detail = record.detail as { sentenceIndex?: unknown }
-    if (typeof detail.sentenceIndex !== 'number') continue
+    // detail 可能缺失/非对象（导入的外来数据、历史版本遗留）：未判空直接取 .sentenceIndex 会抛 TypeError
+    const detail = record.detail as { sentenceIndex?: unknown } | undefined
+    if (!detail || typeof detail.sentenceIndex !== 'number') continue
     if (detail.sentenceIndex === deletedIndex) {
-      await recordsStore.delete(key)
+      del.push(key)
       continue
     }
     if (detail.sentenceIndex > deletedIndex) {
-      await recordsStore.put(key, {
+      put.push([key, {
         ...record,
         detail: { ...record.detail, sentenceIndex: detail.sentenceIndex - 1 },
-      } satisfies TrainingRecord)
+      } satisfies TrainingRecord])
     }
   }
+  await runAtomicOps({ del: { records: del }, put: { records: put } })
 }

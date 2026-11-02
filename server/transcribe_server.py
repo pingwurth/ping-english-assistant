@@ -16,6 +16,7 @@ Endpoints:
 import argparse
 import asyncio
 import logging
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -30,6 +31,29 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="faster-whisper Transcription Server", version="1.0.0")
+
+# 上传音频硬上限（字节）：默认 300MB，覆盖长播客/电影音轨，防止单请求把整段
+# 音频全量驻留内存（本服务通常同时持有 Whisper 权重）直接 OOM 并杀掉排队任务。
+# 可用环境变量 TRANSCRIBE_MAX_BYTES 调整。
+MAX_UPLOAD_BYTES = int(os.environ.get("TRANSCRIBE_MAX_BYTES", 300 * 1024 * 1024))
+_CHUNK = 1 << 20  # 1 MiB
+
+
+async def _stream_to_file(upload: UploadFile, dest) -> int:
+    """分块流式落盘，累计超 MAX_UPLOAD_BYTES 立即中断并回 413（不信 Content-Length）。"""
+    total = 0
+    while True:
+        chunk = await upload.read(_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"audio exceeds {MAX_UPLOAD_BYTES} bytes limit",
+            )
+        dest.write(chunk)
+    return total
 
 # ---------------------------------------------------------------------------
 # Global state — model cached after first load
@@ -86,7 +110,9 @@ def _transcribe_sync(audio_path: str, language: str):
         audio_path,
         language=lang_arg,
         beam_size=5,
-        word_timestamps=True,
+        # 本端点只回传句级 segments（词级对齐由独立的 align_server 负责）；
+        # 开 word_timestamps 会让对齐模型逐段产出词级时间纯属白耗算力。
+        word_timestamps=False,
         vad_filter=True,
     )
 
@@ -144,14 +170,15 @@ async def transcribe(
     """
     start_time = time.time()
 
-    # Save uploaded audio to a temp file (faster-whisper needs a file path)
+    # Save uploaded audio to a temp file (faster-whisper needs a file path).
+    # 分块流式落盘 + 累计上限，不把整段音频一次性读进内存。
     suffix = Path(audio.filename or "audio.wav").suffix or ".wav"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        content = await audio.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    tmp_path = tmp.name
     try:
+        await _stream_to_file(audio, tmp)
+        tmp.close()
+
         # Run blocking transcription in thread pool
         loop = asyncio.get_event_loop()
         full_text, segments, detected_lang = await loop.run_in_executor(
@@ -175,10 +202,14 @@ async def transcribe(
             "segments": segments,
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
+        # 详情只写日志，不外泄给客户端（可能含临时路径/模型缓存目录/CUDA 报错细节）
         logger.exception("Transcription failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="transcription failed")
     finally:
+        tmp.close()
         Path(tmp_path).unlink(missing_ok=True)
 
 

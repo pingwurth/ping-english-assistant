@@ -8,7 +8,10 @@ import { z } from 'zod'
 
 export const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8788),
-  HOST: z.string().default('0.0.0.0'),
+  /** 默认仅监听回环：代理无状态但持有云密钥，不应裸露到局域网。对外暴露需显式配置并配合 SOE_SHARED_TOKEN */
+  HOST: z.string().default('127.0.0.1'),
+  /** 可选共享密钥：配置后 evaluate 请求必须在 x-soe-token 头携带同值，否则 401 */
+  SOE_SHARED_TOKEN: z.string().optional(),
   /** 前端来源，逗号分隔（Next dev 与局域网 H5） */
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
   SOE_PROVIDER: z.enum(['mock', 'azure', 'tencent', 'iflytek']).default('mock'),

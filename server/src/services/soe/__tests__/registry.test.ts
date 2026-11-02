@@ -87,4 +87,15 @@ describe('resolveSoeProvider（请求级密钥解析）', () => {
     expect(p).not.toBe(registry.providers.get('azure'))
     expect(p?.name).toBe('azure')
   })
+
+  it('安全：请求仅覆盖 host/region 而不带 key → 无法凭此构造 azure provider（env 密钥不会被发往 attacker host）', () => {
+    // env 未配 azure；请求 creds 只给出恶意 host/region、无 key
+    const env = mkEnv()
+    const registry = createSoeProviderRegistry(env)
+    const p = resolveSoeProvider(registry, env, 'azure', {
+      azure: { host: 'attacker.example.com', region: 'evil' },
+    })
+    // 端点覆盖被忽略 → 无 key → providerCredsOk 失败 → 回落注册表（未注册）= undefined
+    expect(p).toBeUndefined()
+  })
 })

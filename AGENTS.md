@@ -17,11 +17,12 @@ All commands run from `client/`:
 ```bash
 pnpm install          # install deps (pnpm is the package manager, not npm)
 pnpm test             # vitest run (node env; core/services/platform/lib/stores/app-api unit tests)
+pnpm typecheck        # tsc --noEmit (full type check)
 pnpm dev              # next dev — localhost:3000
 pnpm build            # next build
 ```
 
-No typecheck script — use `npx tsc --noEmit` or rely on Next.js build-time checks.
+Type safety: `pnpm typecheck` runs `tsc --noEmit`. `next build` enforces types too — `next.config.mjs` only sets `ignoreBuildErrors` when `SKIP_TSC=1` is set (emergency bypass), so a plain build fails on type errors.
 
 Tests are **node-environment unit tests only** (vitest). No browser/React component tests exist.
 Test files live inside `__tests__/` dirs co-located with source across `core/**`, `services/**`, `platform/**`, `lib/**`, `stores/**`, and `app/api/**`.
@@ -114,7 +115,7 @@ Next.js Route Handlers keep cloud API keys out of the browser. They read `~/.pin
 
 ## Gotchas
 
-- `next.config.mjs` has `ignoreBuildErrors: true` for TypeScript — build won't catch type errors
+- `next.config.mjs` sets `ignoreBuildErrors` to `process.env.SKIP_TSC === '1'` — a normal `next build` DOES catch type errors; only `SKIP_TSC=1` disables them (emergency release bypass). Run `pnpm typecheck` in CI
 - `components/study-app.tsx` is the single place where client routes live; `next dev` may rewrite the `<!-- BEGIN:nextjs-agent-rules -->` block in `client/AGENTS.md` — keep that auto-managed block in diffs
 - `page-prototype/` is a design sandbox with its own `package.json` and `node_modules` — changes there don't affect `client/`
 - Seed data auto-injects on first load (`data/seed.ts`) — 4 sample materials, each sharing the same 5 `seedSentences`; clearing IndexedDB re-triggers injection

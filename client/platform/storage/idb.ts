@@ -181,6 +181,70 @@ export function putAllAtomic(writes: AtomicStoreWrites): Promise<void> {
   }))
 }
 
+/** 同一事务内的 put + delete 批量操作（删句平移等需要「删若干 + 改若干」原子生效的场景） */
+export interface AtomicStoreOps {
+  /** store → 待写入 [key, value] */
+  put?: Partial<Record<StoreName, ReadonlyArray<readonly [string, unknown]>>>
+  /** store → 待删除 key */
+  del?: Partial<Record<StoreName, ReadonlyArray<string>>>
+}
+
+/**
+ * 跨多 store 的原子「写 + 删」：所有请求在同一 readwrite 事务内同步发出，
+ * 任一失败整体回滚，避免半平移状态（sentenceIndex 与真实句序永久错位）。
+ */
+export function runAtomicOps(ops: AtomicStoreOps): Promise<void> {
+  const put = ops.put ?? {}
+  const del = ops.del ?? {}
+  const touched = (name: StoreName): boolean =>
+    (put[name]?.length ?? 0) > 0 || (del[name]?.length ?? 0) > 0
+  const names = STORES.filter(touched)
+  if (names.length === 0) return Promise.resolve()
+
+  const applyMemory = (): void => {
+    for (const name of names) {
+      for (const key of del[name] ?? []) mem(name).delete(key)
+      for (const [key, value] of put[name] ?? []) mem(name).set(key, value)
+    }
+  }
+  if (useMemory) {
+    applyMemory()
+    return Promise.resolve()
+  }
+
+  return openDb().then(db => new Promise<void>((resolve, reject) => {
+    if (!db) {
+      applyMemory()
+      return resolve()
+    }
+    let reqError: unknown
+    let transaction: IDBTransaction | null = null
+    try {
+      transaction = db.transaction(names, 'readwrite')
+      for (const name of names) {
+        const os = transaction.objectStore(name)
+        for (const key of del[name] ?? []) {
+          const request = os.delete(key)
+          request.onerror = () => { reqError = request.error ?? reqError }
+        }
+        for (const [key, value] of put[name] ?? []) {
+          const request = os.put(value, key)
+          request.onerror = () => { reqError = request.error ?? reqError }
+        }
+      }
+      transaction.oncomplete = () => resolve()
+      transaction.onabort = () => {
+        console.error(`[IDB] atomic ops transaction aborted (${names.join(',')}):`, transaction!.error ?? reqError)
+        reject(transaction!.error ?? reqError ?? new Error('idb atomic transaction aborted'))
+      }
+    } catch (e) {
+      console.error('[IDB] atomic ops transaction threw:', e)
+      try { transaction?.abort() } catch { /* 已结束则忽略 */ }
+      reject(e)
+    }
+  }))
+}
+
 interface PairedSnapshotRequests {
   keys: IDBRequest<IDBValidKey[]>
   values: IDBRequest<unknown[]>

@@ -59,6 +59,30 @@ describe('parseBackupJson 校验', () => {
     if (!r.ok) return
     expect(r.backup.exportedAt).toBe(0)
   })
+
+  it('records 仅保留普通对象值：null/数组/基元被剔除，不拒绝整份备份', () => {
+    const r = parseBackupJson(validBackupJson({
+      records: {
+        'train:m1:0': { detail: { score: 1 } }, // 合法
+        'bad:null': null,
+        'bad:arr': [1, 2],
+        'bad:num': 42,
+        'bad:str': 'x',
+      },
+    }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(Object.keys(r.backup.records)).toEqual(['train:m1:0'])
+  })
+
+  it('prefs 仅保留基元值：嵌套对象/数组被剔除（localStorage 无法容纳）', () => {
+    const r = parseBackupJson(validBackupJson({
+      prefs: { 'pref:n': 1, 'pref:s': 'a', 'pref:o': { x: 1 }, 'pref:a': [1] },
+    }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.backup.prefs).toEqual({ 'pref:n': 1, 'pref:s': 'a' })
+  })
 })
 
 describe('parseBackupJson media 清单', () => {

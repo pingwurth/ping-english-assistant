@@ -162,6 +162,14 @@ export async function POST(request: Request) {
     if (!(audioFile instanceof Blob)) {
       return NextResponse.json({ error: 'Missing or invalid audio file' }, { status: 400 })
     }
+    // 真实字节二次闸：Content-Length 可被 chunked 伪造绕过声明预检，这里按已解析出的
+    // 实际体积拦截，避免超大音频进入 base64（内存膨胀 3 份）与上游计费
+    if (audioFile.size > MAX_TRANSCRIBE_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: `上传内容过大（上限 ${Math.round(MAX_TRANSCRIBE_UPLOAD_BYTES / 1048576)} MB）` },
+        { status: 413 },
+      )
+    }
 
     const configId = formData.get('configId') as string | null
     const settings = configId
@@ -182,8 +190,8 @@ export async function POST(request: Request) {
       whisperAlignUrl: settings.whisperAlignUrl,
     }
 
-    // ── 调用 ASR 服务 ───────────────────────────────────────
-    let result = await transcribe(audioFile, asrConfig)
+    // ── 调用 ASR 服务（传播客户端取消；provider 内部再叠加硬超时）────────
+    let result = await transcribe(audioFile, asrConfig, request.signal)
 
     // ── 时间戳后处理（multimodal 模型且无时间戳时） ────────────
     if (providerType === 'multimodal' && result.segments.length === 0 && result.text.trim()) {

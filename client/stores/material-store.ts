@@ -15,7 +15,7 @@
 import type { LearningProgress } from '@/types/progress'
 import type { Material, MaterialCollection } from '@/types/material'
 import type { SubtitleData } from '@/types/subtitle'
-import { blobsStore, materialsStore, recordsStore } from '@/platform/storage/idb'
+import { blobsStore, materialsStore, recordsStore, runAtomicOps } from '@/platform/storage/idb'
 import { MATERIAL_OWNED_RECORD_PREFIXES, RECORD_KEYS, RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import { seedMaterials, seedSentences } from '@/data/seed'
 import { createStore } from '@/stores/store'
@@ -177,23 +177,28 @@ export async function removeMaterial(id: string): Promise<void> {
   await initMaterials()
   await materialsStore.delete(id)
   await blobsStore.delete(id)
-  // MATERIAL_OWNED_RECORD_PREFIXES 是“哪些记录随材料删除”的唯一清单。
-  // train: 走 materialId 值索引；fav:/note: 的键本身含 materialId，用带尾部分隔符
-  // 的前缀区间（天然排除 m-1 / m-10 互为前缀）；progress: 是精确键。
-  const [materialEntries, favoriteEntries, noteEntries] = await Promise.all([
-    recordsStore.getEntriesByMaterial(id),
-    recordsStore.getAllEntriesByPrefix(`${RECORD_KEY_PREFIXES.favorite}${id}:`),
-    recordsStore.getAllEntriesByPrefix(`${RECORD_KEY_PREFIXES.note}${id}:`),
-  ])
-  const ownedKeys = new Set([
-    ...materialEntries
-      .filter(([key]) => key.startsWith(RECORD_KEY_PREFIXES.training))
-      .map(([key]) => key),
-    ...favoriteEntries.map(([key]) => key),
-    ...noteEntries.map(([key]) => key),
-    RECORD_KEYS.progress(id),
-  ])
-  await Promise.all([...ownedKeys].map((key) => recordsStore.delete(key)))
+  // MATERIAL_OWNED_RECORD_PREFIXES 是“哪些记录随材料删除”的唯一清单：遍历它派生待删 key，
+  // 新增材料属主记录族只需在清单登记（不同前缀的 key 派生策略在此集中映射）。
+  //   - training：键不含 materialId，走 materialId 值索引；
+  //   - progress：精确键 progress:{id}（无尾分隔符，必须精确匹配否则 m-1 会命中 m-10）；
+  //   - favorite/note：键本身含 materialId，用带尾部分隔符的前缀区间（天然排除 m-1 / m-10）。
+  const ownedKeys = new Set<string>()
+  const scans = await Promise.all(
+    MATERIAL_OWNED_RECORD_PREFIXES.map(async (prefix) => {
+      if (prefix === RECORD_KEY_PREFIXES.training) {
+        return (await recordsStore.getEntriesByMaterial(id))
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([key]) => key)
+      }
+      if (prefix === RECORD_KEY_PREFIXES.progress) {
+        return [RECORD_KEYS.progress(id)]
+      }
+      return (await recordsStore.getAllEntriesByPrefix(`${prefix}${id}:`)).map(([key]) => key)
+    }),
+  )
+  for (const keys of scans) for (const key of keys) ownedKeys.add(key)
+  // 级联删除收进单事务：任一失败整体回滚，不留「删了一半记录」的孤儿状态
+  await runAtomicOps({ del: { records: [...ownedKeys] } })
   // 生词词频撤账：回收该材料对 frequency 的贡献（评审 #19，否则删除材料后词频永久虚高，
   // 违反 types/vocabulary.ts「frequency = materialCounts 各值之和」不变量）
   await updateFrequencies([], id)

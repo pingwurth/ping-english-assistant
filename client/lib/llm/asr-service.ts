@@ -18,12 +18,14 @@ import { transcribeDashScope } from './providers/dashscope-asr'
  *
  * @param audioFile  音频文件（File 对象）
  * @param config     ASR 配置
+ * @param signal     可选取消信号（客户端关页/中断时中止上游）
  * @returns          转写结果（文本 + 时间戳 segments）
  * @throws           LlmError 转写失败时抛出
  */
 export async function transcribe(
   audioFile: File,
   config: AsrModelConfig,
+  signal?: AbortSignal,
 ): Promise<AsrResult> {
   const provider = normalizeProvider(config.provider)
 
@@ -33,15 +35,15 @@ export async function transcribe(
 
   switch (provider) {
     case 'dashscope':
-      return transcribeDashScope(audioFile, config)
+      return transcribeDashScope(audioFile, config, signal)
 
     case 'mimo':
-      return transcribeMimo(audioFile, config)
+      return transcribeMimo(audioFile, config, signal)
 
     default:
       // 未知 provider 回退到 mimo（OpenAI-compatible）
       console.log(`[ASR] Unknown provider "${provider}", falling back to MiMo`)
-      return transcribeMimo(audioFile, config)
+      return transcribeMimo(audioFile, config, signal)
   }
 }
 

@@ -151,6 +151,25 @@ describe('llmConfigs CRUD 语义', () => {
     expect(configs[0]!.apiKey).toBe('sk-brand-new-key')
   })
 
+  it('updateLlmConfig 显式清空 apiKey：空串真的清除旧云 key（不会被 falsy 短路残留并发往新 baseUrl）', async () => {
+    const s = await fresh()
+    const id = await s.addLlmConfig({ name: 'n', provider: 'p', baseUrl: 'https://cloud', apiKey: 'sk-old-cloud-key-1234' })
+
+    // 用户切到无需鉴权的本地服务：清空 key + 改 baseUrl
+    await s.updateLlmConfig(id, { apiKey: '', baseUrl: 'http://127.0.0.1:1234/v1' })
+    const { configs } = await s.readLlmConfigs()
+    expect(configs[0]!.apiKey).toBe('')
+    expect(configs[0]!.baseUrl).toBe('http://127.0.0.1:1234/v1')
+  })
+
+  it('updateLlmConfig 未携带 apiKey 字段 → 保留现有真实 key（不误清）', async () => {
+    const s = await fresh()
+    const id = await s.addLlmConfig({ name: 'n', provider: 'p', baseUrl: 'https://x', apiKey: 'sk-keepme-12345' })
+    await s.updateLlmConfig(id, { name: '改名' })
+    const { configs } = await s.readLlmConfigs()
+    expect(configs[0]!.apiKey).toBe('sk-keepme-12345')
+  })
+
   it('deleteLlmConfig 删默认后重排：默认落到剩余首条，有效配置读取同步', async () => {
     const s = await fresh()
     const idA = await s.addLlmConfig({ name: 'A', provider: 'p', baseUrl: 'https://a', apiKey: 'kA' })

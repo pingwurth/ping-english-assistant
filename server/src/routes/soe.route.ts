@@ -63,6 +63,14 @@ function parseCreds(raw: string | undefined): SoeRequestCreds | undefined {
 
 export function buildSoeRoute(registry: SoeProviderRegistry, env: Env): FastifyPluginAsync {
   return async (app: FastifyInstance) => {
+    // 共享密钥闸门（onRequest 在 body 解析前执行，未鉴权请求不消耗 multipart 解析开销）
+    app.addHook('onRequest', async (req) => {
+      if (!env.SOE_SHARED_TOKEN) return // 未配置：沿用无鉴权（本机回环部署）
+      if (req.headers['x-soe-token'] !== env.SOE_SHARED_TOKEN) {
+        throw apiError(ERR.UNAUTHORIZED, '缺少或错误的共享密钥 x-soe-token')
+      }
+    })
+
     app.post('/api/v1/soe/evaluate', async (req, reply) => {
       // 单文件端点：req.file() 拿文件与伴随字段
       const file = await req.file()

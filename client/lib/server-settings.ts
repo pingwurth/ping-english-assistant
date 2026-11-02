@@ -200,10 +200,16 @@ export async function updateLlmConfig(id: string, patch: Partial<LlmConfig>): Pr
     if (idx === -1) return false
 
     const { apiKey: patchKey, ...rest } = patch as Record<string, unknown>
-    // 掩码保护：编辑对话框回填的是掩码值，原样存回会毁掉真实 key —— 与现值掩码相同视为「未修改」
+    // 掩码保护：编辑对话框回填的是掩码值，原样存回会毁掉真实 key —— 与现值掩码相同视为「未修改」。
+    // 语义修正：apiKey 只要出现在 patch 里（包含显式空串）就必须写入，仅「回传的正是现值掩码」才跳过；
+    // 否则用户清空 key（切到无需鉴权的本地服务）会被 falsy 判断短路，旧云 key 残留并被静默发往新 baseUrl。
     const currentKey = String(configs[idx]?.apiKey ?? '')
-    const keyIsUnchangedMask = typeof patchKey === 'string' && patchKey !== '' && patchKey === maskSecret(currentKey)
-    const safePatch = patchKey && !keyIsUnchangedMask ? { ...rest, apiKey: patchKey } : rest
+    const keyIsUnchangedMask =
+      typeof patchKey === 'string' && patchKey !== '' && patchKey === maskSecret(currentKey)
+    const safePatch =
+      'apiKey' in patch && !keyIsUnchangedMask
+        ? { ...rest, apiKey: typeof patchKey === 'string' ? patchKey : '' }
+        : rest
     configs[idx] = { ...configs[idx], ...safePatch, id }
     raw.llmConfigs = configs
 

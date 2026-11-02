@@ -26,13 +26,6 @@ const DASHSCOPE_ENDPOINTS: Record<ServiceKind, string> = {
   mnemonic: '/chat/completions',
 }
 
-const QWEN_ENDPOINTS: Record<ServiceKind, string> = {
-  tts: '/services/audio/tts/SpeechSynthesizer',
-  asr: '/services/aigc/multimodal-generation/generation',
-  translate: '/chat/completions',
-  mnemonic: '/chat/completions',
-}
-
 const MIMO_ENDPOINTS: Record<ServiceKind, string> = {
   tts: '/chat/completions',
   asr: '/chat/completions',
@@ -47,9 +40,15 @@ const LOCAL_ENDPOINTS: Record<ServiceKind, string> = {
   mnemonic: '/v1/chat/completions',
 }
 
+/**
+ * provider 别名归一：'qwen' 是 'dashscope' 的别名，查表前先归一，
+ * 使 endpoint / 默认模型 / 默认音色三张表各自只保留一份真源（原 qwen 与 dashscope 逐字重复）。
+ */
+const PROVIDER_ALIASES: Record<string, string> = { qwen: 'dashscope' }
+const aliasProvider = (provider: ProviderKey): string => PROVIDER_ALIASES[provider] ?? provider
+
 const PROVIDER_ENDPOINTS: Record<string, Record<ServiceKind, string>> = {
   dashscope: DASHSCOPE_ENDPOINTS,
-  qwen: QWEN_ENDPOINTS,
   mimo: MIMO_ENDPOINTS,
   local: LOCAL_ENDPOINTS,
 }
@@ -87,23 +86,19 @@ export const DEFAULT_HF_BASE = 'https://huggingface.co'
 const DEFAULT_MODELS: Record<ServiceKind, Record<string, string>> = {
   tts: {
     dashscope: 'qwen-audio-3.0-tts-flash',
-    qwen: 'qwen-audio-3.0-tts-flash',
     mimo: 'qwen-audio-3.0-tts-flash',
   },
   asr: {
     dashscope: 'qwen-audio-3.0-asr-flash',
-    qwen: 'qwen-audio-3.0-asr-flash',
     mimo: 'mimo-v2.5-asr',
   },
   translate: {
     dashscope: 'qwen-turbo',
-    qwen: 'qwen-turbo',
     mimo: 'mimo-v2.5',
     local: '',
   },
   mnemonic: {
     dashscope: 'qwen-turbo',
-    qwen: 'qwen-turbo',
     mimo: 'mimo-v2.5',
     local: '',
   },
@@ -115,7 +110,6 @@ const DEFAULT_MODELS: Record<ServiceKind, Record<string, string>> = {
 
 const DEFAULT_VOICES: Record<string, string> = {
   dashscope: 'longanlingxin',
-  qwen: 'longanlingxin',
   mimo: 'Mia',
 }
 
@@ -144,7 +138,7 @@ export function buildServiceUrl(baseUrl: string, endpoint: string): string {
  * 'qwen' 作为 'dashscope' 的别名处理。
  */
 export function getDefaultEndpoint(provider: ProviderKey, service: ServiceKind): string {
-  return PROVIDER_ENDPOINTS[provider]?.[service] ?? MIMO_ENDPOINTS[service]
+  return PROVIDER_ENDPOINTS[aliasProvider(provider)]?.[service] ?? MIMO_ENDPOINTS[service]
 }
 
 /**
@@ -153,7 +147,7 @@ export function getDefaultEndpoint(provider: ProviderKey, service: ServiceKind):
  * 'qwen' 作为 'dashscope' 的别名处理。
  */
 export function getDefaultModel(provider: ProviderKey, service: ServiceKind): string {
-  return DEFAULT_MODELS[service]?.[provider] ?? ''
+  return DEFAULT_MODELS[service]?.[aliasProvider(provider)] ?? ''
 }
 
 /**
@@ -161,7 +155,7 @@ export function getDefaultModel(provider: ProviderKey, service: ServiceKind): st
  * 'qwen' 作为 'dashscope' 的别名处理。
  */
 export function getDefaultVoice(provider: ProviderKey): string {
-  return DEFAULT_VOICES[provider] ?? 'alloy'
+  return DEFAULT_VOICES[aliasProvider(provider)] ?? 'alloy'
 }
 
 /**

@@ -60,9 +60,13 @@ export function groupWordsToSegments(words: WordTimestamp[]): AsrSegment[] {
 }
 
 function buildSegment(words: WordTimestamp[]): AsrSegment {
+  // NaN 守卫：上游缺字段时 start/end 可能是 NaN（`?? 0` 只拦 null/undefined），
+  // Math.round(NaN * 1000) = NaN 会污染时间轴并让字幕卡在第 0 秒
+  const rawStart = words[0]?.start
+  const rawEnd = words[words.length - 1]?.end
   return {
-    startMs: Math.round((words[0]?.start ?? 0) * 1000),
-    endMs: Math.round((words[words.length - 1]?.end ?? 0) * 1000),
+    startMs: Number.isFinite(rawStart) ? Math.round((rawStart as number) * 1000) : 0,
+    endMs: Number.isFinite(rawEnd) ? Math.round((rawEnd as number) * 1000) : 0,
     text: words.map((w) => w.word.trim()).join(' ').trim(),
   }
 }

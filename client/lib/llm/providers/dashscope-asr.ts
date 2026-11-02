@@ -17,6 +17,9 @@ interface DashScopeWord {
   punctuation?: string
 }
 
+/** ASR 上游硬超时：整段音频转写慢于即时对话，给 180s（与 WhisperX 对齐预算同量级） */
+const ASR_TIMEOUT_MS = 180_000
+
 
 /**
  * DashScope ASR 转写
@@ -26,6 +29,7 @@ interface DashScopeWord {
 export async function transcribeDashScope(
   audioFile: File,
   config: AsrModelConfig,
+  signal?: AbortSignal,
 ): Promise<AsrResult> {
   const model = config.model || getDefaultModel('dashscope', 'asr')
   const url = resolveProviderUrl(config.baseUrl, config.endpoint, 'dashscope', 'asr')
@@ -63,6 +67,10 @@ export async function transcribeDashScope(
 
   console.log(`[ASR DashScope] POST ${url} (model=${model}, audio=${(audioFile.size / 1024).toFixed(0)}KB)`)
 
+  // 取消传播 + 硬超时（对齐 TTS 路径评审 #24）：客户端关页/取消后不再干等上游跑完计费
+  const timeoutSignal = AbortSignal.timeout(ASR_TIMEOUT_MS)
+  const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -70,6 +78,7 @@ export async function transcribeDashScope(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: combined,
   })
 
   if (!response.ok) {
@@ -99,8 +108,9 @@ export async function transcribeDashScope(
   if (apiWords.length > 0) {
     const words: WordTimestamp[] = apiWords.map(w => ({
       word: w.punctuation ? `${w.text}${w.punctuation}` : w.text,
-      start: w.begin_time / 1000,
-      end: w.end_time / 1000,
+      // NaN 兜底：上游缺 begin_time/end_time 时 `undefined/1000 = NaN` 会污染时间轴，回退为 0
+      start: Number.isFinite(w.begin_time) ? w.begin_time / 1000 : 0,
+      end: Number.isFinite(w.end_time) ? w.end_time / 1000 : 0,
     }))
     const segments = groupWordsToSegments(words)
     console.log(`[ASR DashScope] ${words.length} words → ${segments.length} segments`)

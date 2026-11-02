@@ -61,6 +61,14 @@ export async function POST(request: Request) {
 
     const provider = settings.provider || 'dashscope'
     const ttsModel = settings.ttsModel || getDefaultModel(provider, 'tts')
+    // 快速失败（对齐同层 translate 路由口径）：local/未知 provider 无默认模型时
+    // getDefaultModel 回空串，不能拿空 model 去请求上游（返回不可归因的 4xx/5xx）
+    if (!ttsModel) {
+      return NextResponse.json(
+        { error: '请先在设置页配置 TTS 模型', code: 'MODEL_NOT_CONFIGURED' },
+        { status: 400 },
+      )
+    }
     const ttsVoice = voice || getDefaultVoice(provider)
     const spd = Math.max(0.5, Math.min(2.0, speed || 1.0))
 

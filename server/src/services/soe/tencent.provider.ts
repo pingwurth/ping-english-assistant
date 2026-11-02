@@ -79,7 +79,8 @@ export function createTencentSoeProvider(env: Env): SoeProvider {
 
     return await new Promise<SoeEvaluateResponse>((resolve, reject) => {
       let settled = false
-      let sock: WebSocket
+      // 显式 undefined 初值：避免 abort 早于 new WebSocket 赋值时，fail() 里的 sock?. 读取触发 TDZ ReferenceError
+      let sock: WebSocket | undefined
 
       const onAbort = (): void => {
         if (signal?.aborted) {
@@ -110,6 +111,8 @@ export function createTencentSoeProvider(env: Env): SoeProvider {
 
       combined.addEventListener('abort', onAbort, { once: true })
       if (combined.aborted) onAbort()
+      // abort 已在赋值前触发 → fail() 已 reject，不再建连（否则泄漏一个孤儿 socket）
+      if (settled) return
 
       sock = new WebSocket(url, { handshakeTimeout: env.SOE_TIMEOUT_MS })
 

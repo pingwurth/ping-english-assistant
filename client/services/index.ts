@@ -26,7 +26,13 @@ export interface MockServicesOptions {
   mnemonic?: MockMnemonicOptions
 }
 
-/** 获取 mock 服务集（确定性、离线可用、零网络） */
+/**
+ * 获取服务集（默认聚合）。注意各成员的真实语义：
+ *   - soe/tts：本地确定性伪实现，零网络；
+ *   - mnemonic：名为 Mock 但实际转发到 /api/mnemonic（真实 BFF/LLM）——
+ *     见 services/mock/mnemonic.ts 文件头说明，并非离线伪数据。日后接入真实后端时应
+ *     移入 services/api/ 并更名为 ApiMnemonicService，避免「mock」命名误导。
+ */
 export function getMockServices(options: MockServicesOptions = {}): MockServices {
   return {
     soe: new MockSoeService(options.soe),

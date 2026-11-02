@@ -73,7 +73,8 @@ export function createIflytekSoeProvider(env: Env): SoeProvider {
       // 结果 XML 以 base64 分片下发：必须先累积完整 base64 再一次性解码 ——
       // 逐片解码时多字节 UTF-8 字符（中文评语）被分片边界切开会产生替换符咬坏 XML
       let xmlB64 = ''
-      let sock: WebSocket
+      // 显式 undefined 初值：避免 abort 早于 new WebSocket 赋值时，fail() 里的 sock?. 读取触发 TDZ ReferenceError
+      let sock: WebSocket | undefined
 
       const onAbort = (): void => {
         if (signal?.aborted) {
@@ -104,6 +105,8 @@ export function createIflytekSoeProvider(env: Env): SoeProvider {
 
       combined.addEventListener('abort', onAbort, { once: true })
       if (combined.aborted) onAbort()
+      // abort 已在赋值前触发 → fail() 已 reject，不再建连（否则泄漏一个孤儿 socket）
+      if (settled) return
 
       sock = new WebSocket(url)
 

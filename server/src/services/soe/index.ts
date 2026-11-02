@@ -50,8 +50,13 @@ export function resolveSoeProvider(
   const { azure, tencent, iflytek } = creds
   if (azure) {
     if (has(azure.key)) merged.AZURE_SPEECH_KEY = azure.key
-    if (has(azure.region)) merged.AZURE_SPEECH_REGION = azure.region
-    if (has(azure.host)) merged.AZURE_SPEECH_HOST = azure.host
+    // 安全：端点覆盖（region/host）仅在请求同时自带 key 时生效——BYO key 场景下
+    // 请求者把「自己的 key」发往「自己指定的端点」；若请求只覆盖端点而不带 key，
+    // 生效的会是服务端 env 的真实 key，构成密钥外泄 + SSRF 跳板，故忽略此类覆盖。
+    if (has(azure.key)) {
+      if (has(azure.region)) merged.AZURE_SPEECH_REGION = azure.region
+      if (has(azure.host)) merged.AZURE_SPEECH_HOST = azure.host
+    }
   }
   if (tencent) {
     if (has(tencent.appId)) merged.TENCENT_APP_ID = tencent.appId

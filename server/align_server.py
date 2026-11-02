@@ -17,6 +17,7 @@ Endpoints:
 import argparse
 import asyncio
 import logging
+import os
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -33,6 +34,27 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="WhisperX Alignment Server", version="1.0.0")
+
+# 上传音频硬上限（字节）：默认 300MB，防止单请求把整段音频全量读进内存 OOM。
+MAX_UPLOAD_BYTES = int(os.environ.get("ALIGN_MAX_BYTES", 300 * 1024 * 1024))
+_CHUNK = 1 << 20  # 1 MiB
+
+
+async def _stream_to_file(upload: UploadFile, dest) -> int:
+    """分块流式落盘，累计超 MAX_UPLOAD_BYTES 立即中断并回 413（不信 Content-Length）。"""
+    total = 0
+    while True:
+        chunk = await upload.read(_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"audio exceeds {MAX_UPLOAD_BYTES} bytes limit",
+            )
+        dest.write(chunk)
+    return total
 
 # 同步推理线程池：whisperx.load_audio / load_align_model / align 全是密集同步调用
 # （首语言还可能触发分钟级模型下载），直接跑在 async 端点里会把事件循环整个冻住，
@@ -162,15 +184,21 @@ def _align_sync(tmp_path: str, text: str, language: str) -> tuple[list, list]:
     )
 
     aligned_segments = result.get("segments", [])
-    words = [
-        {
-            "word": w.get("word", ""),
-            "start": w.get("start", 0),
-            "end": w.get("end", 0),
-        }
-        for seg in aligned_segments
-        for w in seg.get("words", [])
-    ]
+    # WhisperX 对强制对齐失败的词会返回 start/end 键存在但值为 None；
+    # w.get("start", 0) 的默认值对 None 不生效 → JSON null 直入客户端时间轴被静默归零。
+    # 这里把 None/非数值收敛为上一个词的 end（再缺则句 start / 0），保证回传都是有限数值。
+    words = []
+    last_end = 0.0
+    for seg in aligned_segments:
+        seg_start = seg.get("start")
+        seg_cursor = seg_start if isinstance(seg_start, (int, float)) else last_end
+        for w in seg.get("words", []):
+            start = w.get("start")
+            end = w.get("end")
+            start = start if isinstance(start, (int, float)) else seg_cursor
+            end = end if isinstance(end, (int, float)) and end >= start else start
+            words.append({"word": w.get("word", ""), "start": start, "end": end})
+            seg_cursor = last_end = end
     return words, aligned_segments
 
 
@@ -194,14 +222,14 @@ async def align(
 
     start_time = time.time()
 
-    # Save uploaded audio to a temp file (WhisperX needs a file path)
+    # Save uploaded audio to a temp file (WhisperX needs a file path).
+    # 分块流式落盘 + 累计上限，不把整段音频一次性读进内存。
     suffix = Path(audio.filename or "audio.wav").suffix or ".wav"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        content = await audio.read()
-        tmp.write(content)
-        tmp_path = tmp.name
-
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    tmp_path = tmp.name
     try:
+        await _stream_to_file(audio, tmp)
+        tmp.close()
         # 推理放线程池：不让同步模型加载/对齐冻住事件循环（期间 /health 仍可响应）
         loop = asyncio.get_running_loop()
         words, aligned_segments = await loop.run_in_executor(
@@ -220,9 +248,11 @@ async def align(
     except HTTPException:
         raise
     except Exception as e:
+        # 详情只写日志，不外泄给客户端（可能含临时路径/模型缓存目录/CUDA 报错细节）
         logger.exception("Alignment failed")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="alignment failed")
     finally:
+        tmp.close()
         Path(tmp_path).unlink(missing_ok=True)
 
 

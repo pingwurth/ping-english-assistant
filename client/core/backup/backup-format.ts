@@ -68,6 +68,23 @@ export function parseBackupJson(json: string): ParseResult {
   // media 可选（轻量导出无此字段）；存在则必须是数组
   if (r.media !== undefined && !Array.isArray(r.media)) return { ok: false, error: '备份的 media 字段不正确' }
 
+  // records 值形状守卫：store 里的每条记录都必须是普通对象（TrainingRecord/favorite/note/progress
+  // 皆为对象）。原样透传任意 JSON 会让脏数据（null/数组/基元）绕过 types 层必填约束直落 IndexedDB，
+  // 进而在 stores 读取处抛 TypeError。按容错策略剔除不合格项，而非拒绝整份备份。
+  const records: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(r.records as Record<string, unknown>)) {
+    if (typeof key !== 'string' || !key) continue
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    records[key] = value
+  }
+  // prefs 同样收敛为字符串键的基元值（localStorage 只接受字符串；对象/数组按剔除处理）
+  const prefs: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(r.prefs as Record<string, unknown>)) {
+    if (typeof key !== 'string' || !key) continue
+    if (value !== null && typeof value === 'object') continue
+    prefs[key] = value
+  }
+
   // materials 按 material.id 归一化；没有有效 id 的项剔除（不因个别脏数据拒绝整份备份）
   const materials: ParsedBackup['materials'] = []
   for (const entry of r.materials) {
@@ -104,8 +121,8 @@ export function parseBackupJson(json: string): ParseResult {
       formatVersion: version,
       exportedAt: typeof r.exportedAt === 'number' ? r.exportedAt : 0,
       materials,
-      records: r.records as Record<string, unknown>,
-      prefs: r.prefs as Record<string, unknown>,
+      records,
+      prefs,
       media,
     },
   }

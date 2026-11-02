@@ -10,6 +10,9 @@ import { resolveProviderUrl } from '../factory'
 import { getDefaultModel } from '@/lib/service-endpoints'
 import { inferMimeType } from '../asr-audio'
 
+/** ASR 上游硬超时（与 dashscope-asr 同口径） */
+const ASR_TIMEOUT_MS = 180_000
+
 /**
  * MiMo ASR 转写
  *
@@ -19,6 +22,7 @@ import { inferMimeType } from '../asr-audio'
 export async function transcribeMimo(
   audioFile: File,
   config: AsrModelConfig,
+  signal?: AbortSignal,
 ): Promise<AsrResult> {
   const model = config.model || getDefaultModel('mimo', 'asr')
   const url = resolveProviderUrl(config.baseUrl, config.endpoint, 'mimo', 'asr')
@@ -54,6 +58,10 @@ export async function transcribeMimo(
   console.log('[ASR MiMo] URL:', url)
   console.log('[ASR MiMo] Model:', model, '| Audio:', (audioFile.size / 1024).toFixed(0), 'KB')
 
+  // 取消传播 + 硬超时（对齐 TTS 路径）
+  const timeoutSignal = AbortSignal.timeout(ASR_TIMEOUT_MS)
+  const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -61,6 +69,7 @@ export async function transcribeMimo(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: combined,
   })
 
   if (!response.ok) {
