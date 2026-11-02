@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseNoteMarkdown, tokenizeInline } from '../note-markdown'
+import { enclosingCenter, parseNoteMarkdown, tokenizeInline, type NoteListItem } from '../note-markdown'
 
 describe('tokenizeInline 行内记号', () => {
   it('纯文本原样返回', () => {
@@ -73,8 +73,11 @@ describe('parseNoteMarkdown 块级解析', () => {
   it('连续列表项归并为一个列表，空行分段', () => {
     const blocks = parseNoteMarkdown('- a\n- **b**\n\n- c')
     expect(blocks).toEqual([
-      { type: 'list', items: [[{ type: 'text', text: 'a' }], [{ type: 'bold', text: 'b' }]] },
-      { type: 'list', items: [[{ type: 'text', text: 'c' }]] },
+      { type: 'list', items: [
+        { inline: [{ type: 'text', text: 'a' }], children: [] },
+        { inline: [{ type: 'bold', text: 'b' }], children: [] },
+      ] },
+      { type: 'list', items: [{ inline: [{ type: 'text', text: 'c' }], children: [] }] },
     ])
   })
 
@@ -82,7 +85,7 @@ describe('parseNoteMarkdown 块级解析', () => {
     const blocks = parseNoteMarkdown('> 引用一\n> 引用二\n- 列表')
     expect(blocks).toEqual([
       { type: 'quote', lines: [[{ type: 'text', text: '引用一' }], [{ type: 'text', text: '引用二' }]] },
-      { type: 'list', items: [[{ type: 'text', text: '列表' }]] },
+      { type: 'list', items: [{ inline: [{ type: 'text', text: '列表' }], children: [] }] },
     ])
   })
 
@@ -123,6 +126,47 @@ describe('parseNoteMarkdown 块级解析', () => {
     const blocks = parseNoteMarkdown('# T\r\n\r\n段落 *x*\r\n\r\n> q')
     expect(blocks.map((b) => b.type)).toEqual(['heading', 'paragraph', 'quote'])
     expect(blocks[1]).toEqual({ type: 'paragraph', inline: [{ type: 'text', text: '段落 ' }, { type: 'italic', text: 'x' }] })
+  })
+})
+
+describe('parseNoteMarkdown 嵌套列表', () => {
+  const item = (text: string, children: NoteListItem[] = []): NoteListItem => ({ inline: [{ type: 'text', text }], children })
+
+  it('缩进 2 空格一级、tab 折算 2 空格：同级互为兄弟，回退到顶是新顶层项', () => {
+    const blocks = parseNoteMarkdown('- a\n  - b\n\t- c\n- d')
+    expect(blocks).toEqual([{ type: 'list', items: [item('a', [item('b'), item('c')]), item('d')] }])
+  })
+
+  it('4 空格 = 两级：子项再嵌孙项', () => {
+    expect(parseNoteMarkdown('- a\n  - b\n    - c')).toEqual([{ type: 'list', items: [item('a', [item('b', [item('c')])])] }])
+  })
+
+  it('跨级缺失收敛为栈顶直接子级；同缩进行互为兄弟（按测得层级比较）', () => {
+    expect(parseNoteMarkdown('- a\n      - b\n      - c')).toEqual([{ type: 'list', items: [item('a', [item('b'), item('c')])] }])
+  })
+
+  it('子项后回退一级是父项的兄弟', () => {
+    expect(parseNoteMarkdown('- a\n  - b\n  - c\n- d')).toEqual([{ type: 'list', items: [item('a', [item('b'), item('c')]), item('d')] }])
+  })
+
+  it('首项即缩进（无父可挂）视为顶层', () => {
+    expect(parseNoteMarkdown('  - a\n  - b')).toEqual([{ type: 'list', items: [item('a'), item('b')] }])
+  })
+
+  it('空行结束整个列表（含子层），后接段落成两个块', () => {
+    const blocks = parseNoteMarkdown('- a\n  - b\n\n段落')
+    expect(blocks.map((b) => b.type)).toEqual(['list', 'paragraph'])
+  })
+
+  it('围栏代码块内的缩进 - 行是代码内容，不解析成列表', () => {
+    expect(parseNoteMarkdown('```\n  - x\n```')).toEqual([{ type: 'code', text: '  - x' }])
+  })
+
+  it('嵌套项内容同样走行内记号', () => {
+    expect(parseNoteMarkdown('- **a**\n  - `b`')).toEqual([{ type: 'list', items: [{
+      inline: [{ type: 'bold', text: 'a' }],
+      children: [{ inline: [{ type: 'code', text: 'b' }], children: [] }],
+    }] }])
   })
 })
 
@@ -175,7 +219,7 @@ describe('parseNoteMarkdown 公式块', () => {
     })
     expect(parseNoteMarkdown('- $z$')[0]).toEqual({
       type: 'list',
-      items: [[{ type: 'math', text: 'z', display: false }]],
+      items: [{ inline: [{ type: 'math', text: 'z', display: false }], children: [] }],
     })
     expect(parseNoteMarkdown('## 能量 $E$')[0]).toEqual({
       type: 'heading',
@@ -222,7 +266,7 @@ describe('parseNoteMarkdown 多余空行转 spacer', () => {
   it('列表间的多余空行：先收块再插 spacer（顺序不颠倒）', () => {
     const blocks = parseNoteMarkdown('- a\n\n\n- b')
     expect(blocks.map((b) => b.type)).toEqual(['list', 'spacer', 'list'])
-    expect(blocks[0]).toEqual({ type: 'list', items: [[{ type: 'text', text: 'a' }]] })
+    expect(blocks[0]).toEqual({ type: 'list', items: [{ inline: [{ type: 'text', text: 'a' }], children: [] }] })
   })
 
   it('围栏代码紧跟列表（中间无空行）不误插 spacer', () => {
@@ -273,7 +317,7 @@ describe('parseNoteMarkdown 分割线与居中容器', () => {
       blocks: [
         { type: 'paragraph', inline: [{ type: 'text', text: 'a' }] },
         { type: 'code', text: 'c' },
-        { type: 'list', items: [[{ type: 'math', text: 'x', display: false }]] },
+        { type: 'list', items: [{ inline: [{ type: 'math', text: 'x', display: false }], children: [] }] },
       ],
     }])
   })
@@ -291,5 +335,51 @@ describe('parseNoteMarkdown 分割线与居中容器', () => {
       type: 'paragraph',
       inline: [{ type: 'text', text: '::: note 提示' }],
     }])
+  })
+})
+
+describe('enclosingCenter 取消居中定位', () => {
+  // '前'\n\n'::: center'\n'A'\n'B'\n':::'\n\n'后'
+  const doc = '前\n\n::: center\nA\nB\n:::\n\n后'
+  // 区间：::: center [3,13) | A [14,15) | B [16,17) | ::: [18,21) | 后 [23,24)
+
+  it('选区在容器内 → 返回四段区间（含内容 A\\nB）', () => {
+    expect(enclosingCenter(doc, 14, 17)).toEqual({ from: 3, contentStart: 14, contentEnd: 17, to: 21 })
+  })
+
+  it('选区只选容器内一部分也命中（光标亦可）', () => {
+    expect(enclosingCenter(doc, 16, 17)?.from).toBe(3)
+    expect(enclosingCenter(doc, 14, 14)?.to).toBe(21)
+  })
+
+  it('容器前 / 容器后 → null', () => {
+    expect(enclosingCenter(doc, 0, 1)).toBeNull()
+    expect(enclosingCenter(doc, 23, 24)).toBeNull()
+  })
+
+  it('选区跨过闭合行（容器内 + 容器外）→ null', () => {
+    expect(enclosingCenter(doc, 14, 19)).toBeNull()
+  })
+
+  it('未闭合容器延伸到文末（与解析器一致）', () => {
+    const unclosed = '::: center\nabc'
+    expect(enclosingCenter(unclosed, 11, 14)).toEqual({ from: 0, contentStart: 11, contentEnd: 14, to: 14 })
+  })
+
+  it('代码块内的字面 ::: center 不算容器（围栏奇偶防误判）', () => {
+    const fenced = '```\n::: center\n```\nx'
+    expect(enclosingCenter(fenced, 22, 23)).toBeNull()
+  })
+
+  it('代码块之后的真实容器正常命中', () => {
+    // ``` [0,3) | c [4,5) | ``` [6,9) | 空行 | ::: center [11,21) | x [22,23) | ::: [24,27)
+    const doc2 = '```\nc\n```\n\n::: center\nx\n:::'
+    expect(enclosingCenter(doc2, 22, 23)?.from).toBe(11)
+  })
+
+  it('拆容器后内容与前后文无损拼接', () => {
+    const enc = enclosingCenter(doc, 14, 17)!
+    const next = doc.slice(0, enc.from) + doc.slice(enc.contentStart, enc.contentEnd) + doc.slice(enc.to)
+    expect(next).toBe('前\n\nA\nB\n\n后')
   })
 })

@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import 'katex/dist/katex.min.css'
-import { parseNoteMarkdown, type InlineToken, type NoteBlock } from '@/core/markdown/note-markdown'
+import { parseNoteMarkdown, type InlineToken, type NoteBlock, type NoteListItem } from '@/core/markdown/note-markdown'
 
 type KatexModule = (typeof import('katex'))['default']
 
@@ -58,6 +58,20 @@ function Inline({ tokens, katex }: { tokens: InlineToken[]; katex: KatexModule |
   )
 }
 
+/** 列表（含嵌套子层）：子层换 circle 圆点并留一点上边距，逐层递归 */
+function NoteList({ items, katex, nested = false }: { items: NoteListItem[]; katex: KatexModule | null; nested?: boolean }) {
+  return (
+    <ul className={`${nested ? 'mt-1 list-circle ' : ''}list-disc space-y-1 pl-5`}>
+      {items.map((item, i) => (
+        <li key={i}>
+          <Inline tokens={item.inline} katex={katex} />
+          {item.children.length > 0 && <NoteList items={item.children} katex={katex} nested />}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function Block({ block, katex }: { block: NoteBlock; katex: KatexModule | null }) {
   switch (block.type) {
     case 'heading': {
@@ -65,7 +79,7 @@ function Block({ block, katex }: { block: NoteBlock; katex: KatexModule | null }
       return <p className={`font-semibold leading-snug ${cls}`}><Inline tokens={block.inline} katex={katex} /></p>
     }
     case 'list':
-      return <ul className="list-disc space-y-1 pl-5">{block.items.map((item, i) => <li key={i}><Inline tokens={item} katex={katex} /></li>)}</ul>
+      return <NoteList items={block.items} katex={katex} />
     case 'quote':
       return <blockquote className="border-l-2 border-primary/40 pl-3 text-muted-foreground">{block.lines.map((line, i) => <p key={i}><Inline tokens={line} katex={katex} /></p>)}</blockquote>
     case 'code':

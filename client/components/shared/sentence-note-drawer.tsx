@@ -4,14 +4,16 @@
  * 形态：左侧开口（盖住媒体区，右侧字幕列表保持可见），右缘拖拽调宽（双击复位）；
  *       编辑/预览上下布局，中间分隔条拖拽调预览高度（双击复位，编辑器保底高度）。
  * 行为：内容受控（调用方负责持久化，抽屉本身不落盘）；打开期间锚定目标句不随播放切走；
- *       Esc / 点遮罩 / 完成 关闭；Markdown 支持 **粗** ==高亮== `码` $公式$ - 列表 > 引用 | 表格 --- 分割线 ::: center 居中。
+ *       Esc / 点遮罩 / 完成 关闭；Markdown 支持 **粗** ==高亮== `码` $公式$ - 列表（缩进嵌套）> 引用 | 表格 --- 分割线 ::: center 居中；
+ *       编辑器列表行回车自动续行（继承缩进与前缀，空项回车退出），Tab / Shift+Tab 整行缩进 / 回退一级。
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react'
 import { AlignCenter, Bold, Check, Code, Highlighter, List, Minus, Pencil, Play, Sigma, StickyNote, Table as TableIcon, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownText } from '@/components/shared/markdown-text'
+import { enclosingCenter } from '@/core/markdown/note-markdown'
 import { formatDuration } from '@/components/shared/player-parts'
 import type { SubtitleSentence } from '@/types/subtitle'
 
@@ -49,9 +51,11 @@ function contentHeightOf(el: HTMLDivElement | null): number {
 }
 
 /**
- * 工具条 + 受控 textarea；wrapSelection 包选中文本，insertBlock 在光标处插整块（表格）。
+ * 工具条 + 受控 textarea；wrapSelection 是 toggle：选区已带效果（记号紧贴选区外侧，
+ * 或选区自身完整含记号）则去记号取消，否则包裹；insertBlock 在光标处插整块（表格）。
  * 工具条 mousedown 阻止默认：焦点不离开编辑器——否则失焦状态下受控赋值会重置滚动位置
  * （跳顶/跳底），且 wrapSelection/insertBlock 里仍备份恢复 scrollTop 作保险。
+ * 键盘增强见 onKeyDown：列表回车续行 / 空项退出 / Tab 整行缩进（IME 组合中不拦截）。
  */
 function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const ref = useRef<HTMLTextAreaElement | null>(null)
@@ -60,10 +64,22 @@ function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) 
     if (!el) return
     const { selectionStart: s, selectionEnd: e } = el
     const st = el.scrollTop
-    const sel = value.slice(s, e) || before.trim()
-    const next = value.slice(0, s) + before + sel + after + value.slice(e)
-    onChange(next)
-    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + before.length, s + before.length + sel.length); el.scrollTop = st })
+    const sel = value.slice(s, e)
+    // 取消判定：a) 记号紧贴选区外侧（**[选区]**）b) 选区自身完整含记号（选中 **文本**）
+    const outer = s >= before.length && value.slice(s - before.length, s) === before && value.slice(e, e + after.length) === after
+    const self = sel.length >= before.length + after.length && sel.startsWith(before) && sel.endsWith(after)
+    if (outer || self) {
+      const core = outer ? sel : sel.slice(before.length, sel.length - after.length)
+      const cutStart = outer ? s - before.length : s
+      const cutEnd = outer ? e + after.length : e
+      onChange(value.slice(0, cutStart) + core + value.slice(cutEnd))
+      requestAnimationFrame(() => { el.focus(); el.setSelectionRange(cutStart, cutStart + core.length); el.scrollTop = st })
+      return
+    }
+    // 包裹（无选区 → 插入空记号对，光标落在中间）
+    onChange(value.slice(0, s) + before + sel + after + value.slice(e))
+    const cs = s + before.length
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(cs, cs + sel.length); el.scrollTop = st })
   }
   const insertBlock = (text: string) => {
     const el = ref.current
@@ -81,6 +97,61 @@ function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) 
     const caret = before.length + prefix.length + text.length + 1
     requestAnimationFrame(() => { el.focus(); el.setSelectionRange(caret, caret); el.scrollTop = st })
   }
+  /**
+   * 键盘增强（IME 组合中不拦——回车是确认候选词；缩进单位与解析器一致：2 空格一级）：
+   *  Enter：列表行续行（继承缩进与 '- ' 前缀，光标后内容落到新行）；空列表项回车 = 退出列表；
+   *         Shift+Enter 及带修饰键的回车保持原生行为。
+   *  Tab / Shift+Tab：当前行整体缩进 / 回退一级（1 个 tab 视作 2 空格），嵌套列表的主要调整手段。
+   * 与工具条一致走手工拼接 + rAF 恢复光标与 scrollTop（撤销栈行为同工具条操作）。
+   */
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing) return
+    const el = ref.current
+    if (!el || (e.key !== 'Enter' && e.key !== 'Tab')) return
+    const { selectionStart: s, selectionEnd: sel } = el
+    const st = el.scrollTop
+    const lineStart = value.slice(0, s).lastIndexOf('\n') + 1
+
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      if (e.shiftKey) {
+        // 回退：去掉行首 1 个 tab 或至多 2 个空格；无可退则不动
+        const cut = value.startsWith('\t', lineStart) ? 1 : /^[ ]{1,2}/.exec(value.slice(lineStart))?.[0].length ?? 0
+        if (!cut) return
+        onChange(value.slice(0, lineStart) + value.slice(lineStart + cut))
+        const ns = Math.max(lineStart, s - cut)
+        const ne = Math.max(ns, sel - cut)
+        requestAnimationFrame(() => { el.focus(); el.setSelectionRange(ns, ne); el.scrollTop = st })
+      } else {
+        onChange(value.slice(0, lineStart) + '  ' + value.slice(lineStart))
+        requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + 2, sel + 2); el.scrollTop = st })
+      }
+      return
+    }
+
+    // Enter：带修饰键（Shift+Enter 原生换行等）不处理
+    if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return
+    const nl = value.indexOf('\n', sel)
+    const lineEnd = nl === -1 ? value.length : nl
+    const fullLine = value.slice(lineStart, lineEnd)
+    // 空列表项（只有缩进 + '-' 无内容）：回车退出列表——整行换成空行，光标落空行
+    if (/^[ \t]*-[ \t]*$/.test(fullLine)) {
+      e.preventDefault()
+      onChange(value.slice(0, lineStart) + '\n' + value.slice(lineEnd + 1))
+      const caret = lineStart + 1
+      requestAnimationFrame(() => { el.focus(); el.setSelectionRange(caret, caret); el.scrollTop = st })
+      return
+    }
+    // 列表行：续行继承缩进 + '- '；光标后内容经 after 拼接自然落到新行
+    const m = /^([ \t]*)- /.exec(fullLine)
+    if (m) {
+      e.preventDefault()
+      const insert = `\n${m[1]!}- `
+      onChange(value.slice(0, s) + insert + value.slice(sel))
+      const caret = s + insert.length
+      requestAnimationFrame(() => { el.focus(); el.setSelectionRange(caret, caret); el.scrollTop = st })
+    }
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-1.5">
       <div className="flex items-center gap-0.5 text-muted-foreground" aria-label="格式工具条" onMouseDown={(e) => e.preventDefault()}>
@@ -95,10 +166,24 @@ function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) 
           variant="ghost"
           size="icon-xs"
           aria-label="居中"
-          title="居中：选中文本包裹 ::: center 容器，未选中插入模板"
+          title="居中：选中文本包裹 ::: center 容器；已在容器内则取消居中；未选中插入模板"
           onClick={() => {
             const el = ref.current
-            if (el && el.selectionStart !== el.selectionEnd) wrapSelection('::: center\n', '\n:::')
+            if (!el) return
+            const { selectionStart: s, selectionEnd: e } = el
+            const st = el.scrollTop
+            // 已在居中容器内（选区任意位置）→ 拆掉容器取消居中，内容与选区保留
+            const enc = enclosingCenter(value, s, e)
+            if (enc) {
+              const inner = value.slice(enc.contentStart, enc.contentEnd)
+              onChange(value.slice(0, enc.from) + inner + value.slice(enc.to))
+              const shift = enc.contentStart - enc.from
+              const ns = Math.max(enc.from, s - shift)
+              const ne = Math.max(ns, Math.min(enc.from + inner.length, e - shift))
+              requestAnimationFrame(() => { el.focus(); el.setSelectionRange(ns, ne); el.scrollTop = st })
+              return
+            }
+            if (s !== e) wrapSelection('::: center\n', '\n:::')
             else insertBlock(CENTER_SNIPPET)
           }}
         ><AlignCenter /></Button>
@@ -110,6 +195,7 @@ function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) 
         ref={ref}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
         placeholder={MD_PLACEHOLDER}
         aria-label="笔记内容（Markdown）"
         className="min-h-0 flex-1 resize-none text-sm leading-relaxed"
