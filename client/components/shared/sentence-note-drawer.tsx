@@ -2,14 +2,17 @@
  * 句子笔记抽屉 —— 播放页"边听边记"的书写面（UI 定稿自 /prototype/sentence-notes 原型）。
  *
  * 形态：左侧开口（盖住媒体区，右侧字幕列表保持可见），右缘拖拽调宽（双击复位）；
- *       编辑/预览上下布局，中间分隔条拖拽调预览高度（双击复位，编辑器保底高度）。
+ *       编辑/预览左右分栏（窄屏 <768px 退回上下分栏），视图三态：仅编辑/双栏/仅预览；
+ *       分隔条拖拽调预览占比（双击复位，编辑器保底），左右默认 1:1、上下默认 1:2。
  * 行为：内容受控（调用方负责持久化，抽屉本身不落盘）；打开期间锚定目标句不随播放切走；
- *       Esc / 点遮罩 / 完成 关闭；Markdown 支持 **粗** ==高亮== `码` $公式$ - 列表（缩进嵌套）> 引用 | 表格 --- 分割线 ::: center 居中；
+ *       Esc / 点遮罩 / 完成 关闭；双栏下编辑/预览滚动按百分比互同步（先滚的一侧持有同步权，
+ *       静止 120ms 释放，对端回声被吞——无反馈循环）；
+ *       Markdown 支持 **粗** ==高亮== `码` $公式$ - 列表（缩进嵌套）> 引用 | 表格 --- 分割线 ::: center 居中；
  *       编辑器列表行回车自动续行（继承缩进与前缀，空项回车退出），Tab / Shift+Tab 整行缩进 / 回退一级。
  */
 
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react'
-import { AlignCenter, Bold, Check, Code, Highlighter, List, Minus, Pencil, Play, Sigma, StickyNote, Table as TableIcon, Trash2, X } from 'lucide-react'
+import { AlignCenter, Bold, Check, Code, Columns2, Highlighter, List, Minus, PanelLeft, PanelRight, Pencil, Play, Sigma, StickyNote, Table as TableIcon, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownText } from '@/components/shared/markdown-text'
@@ -17,17 +20,26 @@ import { enclosingCenter } from '@/core/markdown/note-markdown'
 import { formatDuration } from '@/components/shared/player-parts'
 import type { SubtitleSentence } from '@/types/subtitle'
 
-/** 抽屉宽度：默认 44vw，夹在 [MIN, MAX_RATIO×vw]；双击拖柄复位 */
-const DEFAULT_WIDTH_RATIO = 0.44
+/** 抽屉宽度：默认 80vw，夹在 [MIN, MAX_RATIO×vw]；双击拖柄复位 */
+const DEFAULT_WIDTH_RATIO = 0.8
 const MIN_WIDTH = 360
 const MAX_WIDTH_RATIO = 0.85
-/** 预览区高度：初始按 编辑器:预览 = 1:2 计算（双击分隔条复位同款），最小 96px；
- *  上界由"编辑器保底 ~180px"动态夹紧——短视口时保底优先于 1:2 比例 */
+/** 预览区高度（窄屏上下分栏用）：初始按 编辑器:预览 = 1:2 计算（双击分隔条复位同款），
+ *  最小 96px；上界由"编辑器保底 ~180px"动态夹紧——短视口时保底优先于 1:2 比例 */
 const FALLBACK_PREVIEW_H = 220
 const MIN_PREVIEW_H = 96
 const MIN_EDITOR_H = 180
-/** 分隔条竖向占位：h-2 + my-2（上下各 8px） */
+/** 分隔条沿分轴的占位：h-2/w-2 + my-2/mx-2（两侧各 8px），上下/左右同宽 */
 const SEPARATOR_H = 24
+const SEPARATOR_W = 24
+/** 预览区宽度（宽屏左右分栏用）：初始 1:1 对半；夹在 [MIN_PREVIEW_W, 可用宽-编辑器保底]，
+ *  可用宽不足两者之和（极窄抽屉）时退化为对半——不溢出优先于保底 */
+const FALLBACK_PREVIEW_W = 260
+const MIN_PREVIEW_W = 220
+const MIN_EDITOR_W = 280
+
+/** 视图三态：仅编辑 / 编辑+预览 / 仅预览 */
+type NoteViewMode = 'editor' | 'split' | 'preview'
 
 const MD_PLACEHOLDER = '记点什么…（支持 Markdown：**粗** ==高亮== `代码` $公式$ - 列表 > 引用 | 表格 --- 分割线 居中）'
 const CENTER_SNIPPET = '::: center\n居中文本\n:::'
@@ -50,6 +62,13 @@ function contentHeightOf(el: HTMLDivElement | null): number {
   return el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
 }
 
+/** 主体内容盒宽度：同 contentHeightOf，左右 padding 扣除后才是左右分栏的分配空间 */
+function contentWidthOf(el: HTMLDivElement | null): number {
+  if (!el) return 0
+  const cs = getComputedStyle(el)
+  return el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+}
+
 /**
  * 工具条 + 受控 textarea；wrapSelection 是 toggle：选区已带效果（记号紧贴选区外侧，
  * 或选区自身完整含记号）则去记号取消，否则包裹；insertBlock 在光标处插整块（表格）。
@@ -57,8 +76,16 @@ function contentHeightOf(el: HTMLDivElement | null): number {
  * （跳顶/跳底），且 wrapSelection/insertBlock 里仍备份恢复 scrollTop 作保险。
  * 键盘增强见 onKeyDown：列表回车续行 / 空项退出 / Tab 整行缩进（IME 组合中不拦截）。
  */
-function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const ref = useRef<HTMLTextAreaElement | null>(null)
+function NoteEditor({ value, onChange, inputRef, onInputScroll }: {
+  value: string
+  onChange: (v: string) => void
+  /** 编辑器 textarea 的外部 ref（滚动同步需要反向设置编辑器滚动位置） */
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>
+  /** textarea 滚动回调（抽屉用于百分比同步到预览区） */
+  onInputScroll?: (el: HTMLTextAreaElement) => void
+}) {
+  const localRef = useRef<HTMLTextAreaElement | null>(null)
+  const ref = inputRef ?? localRef
   const wrapSelection = (before: string, after = before) => {
     const el = ref.current
     if (!el) return
@@ -153,7 +180,7 @@ function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) 
     }
   }
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1.5">
       <div className="flex items-center gap-0.5 text-muted-foreground" aria-label="格式工具条" onMouseDown={(e) => e.preventDefault()}>
         <Button variant="ghost" size="icon-xs" aria-label="加粗" title="加粗" onClick={() => wrapSelection('**')}><Bold /></Button>
         <Button variant="ghost" size="icon-xs" aria-label="高亮" title="高亮" onClick={() => wrapSelection('==')}><Highlighter /></Button>
@@ -196,6 +223,7 @@ function NoteEditor({ value, onChange }: { value: string; onChange: (v: string) 
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
+        onScroll={(e) => onInputScroll?.(e.currentTarget)}
         placeholder={MD_PLACEHOLDER}
         aria-label="笔记内容（Markdown）"
         className="min-h-0 flex-1 resize-none text-sm leading-relaxed"
@@ -219,29 +247,95 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
   onLocate: () => void
   onClose: () => void
 }) {
+  // 视图三态（仅编辑 / 双栏 / 仅预览）；会话内保留，不落盘
+  const [mode, setMode] = useState<NoteViewMode>('split')
+  // 窄屏（<768px，与页脚提示的 md: 断点一致）：双栏退回上下布局——手机上左右放不下
+  const [narrow, setNarrow] = useState(false)
   // 抽屉宽度（右缘拖拽）
   const [width, setWidth] = useState(defaultWidth)
-  const [draggingW, setDraggingW] = useState(false)
-  const widthDrag = useRef<{ startX: number; startW: number } | null>(null)
-  // 预览高度（分隔条拖拽）；null = 尚未初始化，首次打开时按 1:2 测量设定
+  const [draggingWidth, setDraggingWidth] = useState(false)
+  const edgeDrag = useRef<{ startX: number; startW: number } | null>(null)
+  // 预览高度（窄屏上下分栏，分隔条拖拽）；null = 尚未初始化，首次打开时按 1:2 测量设定
   const [previewH, setPreviewH] = useState<number | null>(null)
-  const [draggingH, setDraggingH] = useState(false)
-  const heightDrag = useRef<{ startY: number; startH: number } | null>(null)
+  const [draggingPH, setDraggingPH] = useState(false)
+  const phDrag = useRef<{ startY: number; startH: number } | null>(null)
+  // 预览宽度（宽屏左右分栏，分隔条拖拽）；null = 尚未初始化，首次打开时按 1:1 测量设定
+  const [previewW, setPreviewW] = useState<number | null>(null)
+  const [draggingPW, setDraggingPW] = useState(false)
+  const pwDrag = useRef<{ startX: number; startW: number } | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
+  // 滚动同步（双栏下按百分比互镜像）：editorEl/previewEl 为两栏的滚动容器
+  const editorScrollRef = useRef<HTMLTextAreaElement | null>(null)
+  const previewScrollRef = useRef<HTMLDivElement | null>(null)
+  /** 当前持有同步权的一侧：持有期间对端的 scroll 事件视作程序化设置的回声，直接吞掉；
+   *  静止 120ms 释放——避免 A→B→A 反馈循环与往复漂移 */
+  const syncOwner = useRef<'editor' | 'preview' | null>(null)
+  const syncRelease = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  /** 默认预览高：编辑器:预览 = 1:2（内容盒扣分隔条后按 1/3、2/3 分），再被
-   *  [MIN_PREVIEW_H, 可用高 - 编辑器保底] 夹紧——短视口保底优先于比例 */
+  /** 按百分比同步两栏滚动位置：from 侧滚动 → 设置 target 侧同比例 scrollTop */
+  const syncScroll = (from: 'editor' | 'preview', el: HTMLElement) => {
+    if (mode !== 'split') return
+    if (syncOwner.current && syncOwner.current !== from) return
+    const target = from === 'editor' ? previewScrollRef.current : editorScrollRef.current
+    if (!target) return
+    const elMax = el.scrollHeight - el.clientHeight
+    const tgMax = target.scrollHeight - target.clientHeight
+    // 先占权再设置：个别浏览器 scrollTop 赋值可能同步派发 scroll，占权晚了会误吞本侧
+    syncOwner.current = from
+    if (syncRelease.current) clearTimeout(syncRelease.current)
+    syncRelease.current = setTimeout(() => { syncOwner.current = null }, 120)
+    if (elMax > 0 && tgMax > 0) target.scrollTop = (el.scrollTop / elMax) * tgMax
+  }
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)')
+    const update = () => setNarrow(mq.matches)
+    update()
+    mq.addEventListener('change', update)
+    return () => mq.removeEventListener('change', update)
+  }, [])
+
+  // 窄/宽切换时重夹上一布局留下的定尺寸——否则桌面高度下定的 previewH 会撑爆
+  // 窄屏内容盒，把编辑器压没（previewW 同理反向）；夹紧幂等，正常值不受影响
+  useEffect(() => {
+    setPreviewH((h) => (h == null ? h : clampPreviewH(h)))
+    setPreviewW((w) => (w == null ? w : clampPreviewW(w)))
+  }, [narrow])
+
+  /** 预览高夹紧：[MIN_PREVIEW_H, 可用高 - 编辑器保底]（可用高不足时上界退到下界） */
+  const clampPreviewH = (h: number): number => {
+    const usable = contentHeightOf(bodyRef.current) - SEPARATOR_H
+    if (usable <= 0) return FALLBACK_PREVIEW_H
+    const max = Math.max(MIN_PREVIEW_H, usable - MIN_EDITOR_H)
+    return Math.round(Math.max(MIN_PREVIEW_H, Math.min(max, h)))
+  }
+
+  /** 默认预览高：编辑器:预览 = 1:2（内容盒扣分隔条后按 1/3、2/3 分），再夹紧 */
   const defaultPreviewH = () => {
     const bodyH = contentHeightOf(bodyRef.current)
     if (!bodyH) return FALLBACK_PREVIEW_H
-    const usable = bodyH - SEPARATOR_H
-    return Math.round(Math.max(MIN_PREVIEW_H, Math.min((usable * 2) / 3, usable - MIN_EDITOR_H)))
+    return clampPreviewH(((bodyH - SEPARATOR_H) * 2) / 3)
   }
 
-  // 首次打开按实测高度设定初始比例；此后保留用户拖拽值，双击分隔条才重算复位
+  /** 预览宽夹紧：常规夹在 [MIN_PREVIEW_W, 可用宽 - 编辑器保底]；可用宽不足两者之和
+   *  （极窄抽屉）时下界退化为对半——不溢出优先于保底 */
+  const clampPreviewW = (w: number): number => {
+    const usable = contentWidthOf(bodyRef.current) - SEPARATOR_W
+    if (usable <= 0) return FALLBACK_PREVIEW_W
+    const min = Math.min(MIN_PREVIEW_W, Math.round(usable / 2))
+    const max = Math.max(min, usable - MIN_EDITOR_W)
+    return Math.round(Math.max(min, Math.min(max, w)))
+  }
+
+  /** 默认预览宽：编辑器:预览 = 1:1 对半，再经 clampPreviewW 夹紧 */
+  const defaultPreviewW = () => clampPreviewW((contentWidthOf(bodyRef.current) - SEPARATOR_W) / 2)
+
+  // 首次打开按实测尺寸设定初始比例；此后保留用户拖拽值，双击分隔条才重算复位
   useEffect(() => {
-    if (open && previewH == null) setPreviewH(defaultPreviewH())
-  }, [open, previewH])
+    if (!open) return
+    if (previewH == null) setPreviewH(defaultPreviewH())
+    if (previewW == null) setPreviewW(defaultPreviewW())
+  }, [open, previewH, previewW])
 
   // Esc 关闭（抽屉打开时才监听）
   useEffect(() => {
@@ -260,7 +354,7 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
         aria-modal="true"
         aria-label={`句子 ${target.index + 1} 的笔记`}
         className="absolute inset-y-0 left-0 flex flex-col bg-card shadow-2xl select-none"
-        style={{ width: `${Math.min(width, maxWidth())}px`, userSelect: draggingW || draggingH ? 'none' : 'text' }}
+        style={{ width: `${Math.min(width, maxWidth())}px`, userSelect: draggingWidth || draggingPH || draggingPW ? 'none' : 'text' }}
       >
         {/* 头部：锚定句信息 */}
         <div className="border-b p-5 pr-12">
@@ -275,46 +369,95 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
           <p className="mt-1 text-sm text-muted-foreground">{target.textZh}</p>
         </div>
 
-        {/* 主体：编辑器（占余高） + 分隔条 + 预览（拖拽定高） */}
+        {/* 主体：视图三态切换 + 编辑/预览双栏（宽屏左右、窄屏上下） */}
         <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col p-5">
-          <NoteEditor value={content} onChange={onChange} />
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label="拖拽调整预览区高度"
-            title="拖动调整预览高度（双击复位）"
-            tabIndex={0}
-            className="-mx-2 my-2 h-2 shrink-0 cursor-row-resize rounded-full transition-colors hover:bg-primary/25 data-[dragging=true]:bg-primary/50"
-            data-dragging={draggingH ? 'true' : undefined}
-            onDoubleClick={() => setPreviewH(defaultPreviewH())}
-            onPointerDown={(e) => {
-              e.currentTarget.setPointerCapture(e.pointerId)
-              heightDrag.current = { startY: e.clientY, startH: previewH ?? defaultPreviewH() }
-              setDraggingH(true)
-            }}
-            onPointerMove={(e) => {
-              const d = heightDrag.current
-              if (!d) return
-              const bodyH = contentHeightOf(bodyRef.current)
-              const max = Math.max(MIN_PREVIEW_H, bodyH - SEPARATOR_H - MIN_EDITOR_H)
-              setPreviewH(Math.max(MIN_PREVIEW_H, Math.min(max, d.startH - (e.clientY - d.startY))))
-            }}
-            onPointerUp={() => { heightDrag.current = null; setDraggingH(false) }}
-          />
-          <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border bg-muted/30" style={{ height: `${previewH ?? FALLBACK_PREVIEW_H}px` }}>
-            <p className="border-b bg-muted/60 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">实时预览</p>
-            <div className="min-h-0 flex-1 overflow-auto p-3">
-              {content.trim()
-                ? <MarkdownText src={content} />
-                : <p className="text-sm text-muted-foreground">上方开始输入，这里实时显示 Markdown 渲染效果（支持表格与公式）</p>}
-            </div>
+          {/* 视图切换必须放在两栏之外——仅编辑/仅预览模式下工具条或预览头任一可能不渲染 */}
+          <div className="mb-2 flex shrink-0 items-center justify-end gap-0.5" role="group" aria-label="视图模式">
+            <Button variant={mode === 'editor' ? 'secondary' : 'ghost'} size="icon-xs" aria-label="仅显示编辑区" title="仅显示编辑区" aria-pressed={mode === 'editor'} onClick={() => setMode('editor')}><PanelLeft /></Button>
+            <Button variant={mode === 'split' ? 'secondary' : 'ghost'} size="icon-xs" aria-label="编辑加预览" title="编辑 + 预览双栏（窄屏上下）" aria-pressed={mode === 'split'} onClick={() => setMode('split')}><Columns2 /></Button>
+            <Button variant={mode === 'preview' ? 'secondary' : 'ghost'} size="icon-xs" aria-label="仅显示预览区" title="仅显示预览区" aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}><PanelRight /></Button>
+          </div>
+
+          <div className={`flex min-h-0 flex-1 ${narrow ? 'flex-col' : 'flex-row'}`}>
+            {mode !== 'preview' && <NoteEditor value={content} onChange={onChange} inputRef={editorScrollRef} onInputScroll={(el) => syncScroll('editor', el)} />}
+
+            {mode === 'split' && !narrow && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="拖拽调整预览区宽度"
+                title="拖动调整预览宽度（双击复位）"
+                tabIndex={0}
+                className="-my-2 mx-2 w-2 shrink-0 cursor-col-resize rounded-full transition-colors hover:bg-primary/25 data-[dragging=true]:bg-primary/50"
+                data-dragging={draggingPW ? 'true' : undefined}
+                onDoubleClick={() => setPreviewW(defaultPreviewW())}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                  pwDrag.current = { startX: e.clientX, startW: previewW ?? defaultPreviewW() }
+                  setDraggingPW(true)
+                }}
+                onPointerMove={(e) => {
+                  const d = pwDrag.current
+                  if (!d) return
+                  // 预览在分隔条右侧：鼠标右移分隔条右移、预览变窄（与上下分栏的 startH - dy 对称）
+                  setPreviewW(clampPreviewW(d.startW - (e.clientX - d.startX)))
+                }}
+                onPointerUp={() => { pwDrag.current = null; setDraggingPW(false) }}
+              />
+            )}
+
+            {mode === 'split' && narrow && (
+              <div
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="拖拽调整预览区高度"
+                title="拖动调整预览高度（双击复位）"
+                tabIndex={0}
+                className="-mx-2 my-2 h-2 shrink-0 cursor-row-resize rounded-full transition-colors hover:bg-primary/25 data-[dragging=true]:bg-primary/50"
+                data-dragging={draggingPH ? 'true' : undefined}
+                onDoubleClick={() => setPreviewH(defaultPreviewH())}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                  phDrag.current = { startY: e.clientY, startH: previewH ?? defaultPreviewH() }
+                  setDraggingPH(true)
+                }}
+                onPointerMove={(e) => {
+                  const d = phDrag.current
+                  if (!d) return
+                  setPreviewH(clampPreviewH(d.startH - (e.clientY - d.startY)))
+                }}
+                onPointerUp={() => { phDrag.current = null; setDraggingPH(false) }}
+              />
+            )}
+
+            {mode !== 'editor' && (
+              <div
+                className={`flex flex-col overflow-hidden rounded-xl border bg-muted/30 ${mode === 'split' ? 'shrink-0' : 'min-h-0 flex-1'}`}
+                style={mode === 'split'
+                  ? (narrow
+                      ? { height: `${previewH ?? FALLBACK_PREVIEW_H}px` }
+                      : { width: `${previewW ?? FALLBACK_PREVIEW_W}px` })
+                  : undefined}
+              >
+                <p className="border-b bg-muted/60 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">实时预览</p>
+                <div ref={previewScrollRef} className="min-h-0 flex-1 overflow-auto p-3" onScroll={(e) => syncScroll('preview', e.currentTarget)}>
+                  {content.trim()
+                    ? <MarkdownText src={content} />
+                    : <p className="text-sm text-muted-foreground">
+                        {mode === 'preview'
+                          ? '暂无内容——切换到编辑模式开始输入'
+                          : `${narrow ? '上方' : '左侧'}开始输入，这里实时显示 Markdown 渲染效果（支持表格与公式）`}
+                      </p>}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
         {/* 底部 */}
         <div className="flex items-center gap-2 border-t px-5 py-3 text-xs text-muted-foreground">
-          <span className="hidden md:inline">拖动抽屉右缘调宽度 · 拖动分隔条调预览高度</span>
-          <span className="md:hidden">拖动右缘/分隔条调整</span>
+          <span className="hidden md:inline">{mode === 'split' ? '拖动抽屉右缘调宽度 · 拖动分隔条调预览宽度' : '拖动抽屉右缘调宽度'}</span>
+          <span className="md:hidden">{mode === 'split' ? '拖动右缘/分隔条调整' : '拖动右缘调整'}</span>
           <span className="flex-1" />
           {content.trim() && (
             <Button variant="ghost" size="xs" onClick={onDelete}><Trash2 data-icon="inline-start" />删除本句笔记</Button>
@@ -334,19 +477,21 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
           title="拖动调整宽度（双击复位）"
           tabIndex={0}
           className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-primary/40 data-[dragging=true]:bg-primary/60"
-          data-dragging={draggingW ? 'true' : undefined}
+          data-dragging={draggingWidth ? 'true' : undefined}
           onDoubleClick={() => setWidth(defaultWidth())}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
-            widthDrag.current = { startX: e.clientX, startW: width }
-            setDraggingW(true)
+            edgeDrag.current = { startX: e.clientX, startW: width }
+            setDraggingWidth(true)
           }}
           onPointerMove={(e) => {
-            const d = widthDrag.current
+            const d = edgeDrag.current
             if (!d) return
             setWidth(Math.max(MIN_WIDTH, Math.min(maxWidth(), d.startW + (e.clientX - d.startX))))
+            // 抽屉收窄会压缩左右分栏的可用宽，同步重夹预览宽——否则编辑器被压没
+            setPreviewW((w) => (w == null || narrow ? w : clampPreviewW(w)))
           }}
-          onPointerUp={() => { widthDrag.current = null; setDraggingW(false) }}
+          onPointerUp={() => { edgeDrag.current = null; setDraggingWidth(false) }}
         />
       </div>
     </div>
