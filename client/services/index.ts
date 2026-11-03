@@ -1,55 +1,39 @@
 /**
  * 服务工厂 —— 真源：docs/系统架构设计.md §3.1-3.3
  *
- * 当前原型仅有 mock 实现（离线可演示）。未来接入真实 Fastify 后端（§3.2 路由）后：
- *   1. 新增 services/api/*.ts，实现 contracts.ts 中的同名接口（契约不变，只换实现）；
- *   2. 在下方 getServices() 中按服务来源切换（预留环境变量，如
- *      NEXT_PUBLIC_SERVICE_MODE: 'mock' | 'api'，默认 'mock'）。
+ * getServices() 返回服务聚合，各成员的真实语义：
+ *   - soe：本地确定性伪实现，零网络（演示模式的评分走它；真实评分见 getSoeService）；
+ *   - mnemonic：名为 Mock 但实际转发到 /api/mnemonic（真实 BFF/LLM）——
+ *     见 services/mock/mnemonic.ts 文件头说明，并非离线伪数据。日后接入真实后端时应
+ *     移入 services/api/ 并更名为 ApiMnemonicService，避免「mock」命名误导。
  *
- * 注意：TtsService 的 mock 实现已于批次 E 补齐（services/mock/tts.ts，契约⑥⑦），
- * getMockServices() / getServices() 均返回完整 AppServices（含 tts 字段）。
+ * 历史注：契约⑥⑦ TtsService（含 mock 实现/ServiceMode 切换脚手架）已于 2026-11 删除——
+ * 真实 TTS 路径一直是 tts.tsx 页 → POST /api/tts（multipart，形状与旧契约不同），旧契约零调用方。
  */
 
 import { ApiError, type AppServices, type SoeService } from './contracts'
 import type { SoeSettingsConfig } from '@/lib/server-settings'
 import { ApiSoeService } from './api/soe'
 import { MockSoeService, type MockSoeOptions } from './mock/soe'
-import { MockTtsService, type MockTtsOptions } from './mock/tts'
 import { MockMnemonicService, type MockMnemonicOptions } from './mock/mnemonic'
 
-/** mock 聚合（批次 E 起为完整 AppServices，含 tts） */
+/** 服务聚合（soe 演示伪评分 + mnemonic BFF 转发） */
 export interface MockServices extends AppServices {}
 
 export interface MockServicesOptions {
   soe?: MockSoeOptions
-  tts?: MockTtsOptions
   mnemonic?: MockMnemonicOptions
 }
 
-/**
- * 获取服务集（默认聚合）。注意各成员的真实语义：
- *   - soe/tts：本地确定性伪实现，零网络；
- *   - mnemonic：名为 Mock 但实际转发到 /api/mnemonic（真实 BFF/LLM）——
- *     见 services/mock/mnemonic.ts 文件头说明，并非离线伪数据。日后接入真实后端时应
- *     移入 services/api/ 并更名为 ApiMnemonicService，避免「mock」命名误导。
- */
 export function getMockServices(options: MockServicesOptions = {}): MockServices {
   return {
     soe: new MockSoeService(options.soe),
-    tts: new MockTtsService(options.tts),
     mnemonic: new MockMnemonicService(options.mnemonic),
   }
 }
 
-/** 服务来源切换预留：'mock' = 本地 mock；'api' = 真实 Fastify 后端（契约①-⑦） */
-export type ServiceMode = 'mock' | 'api'
-
-/**
- * 统一入口（当前恒返回 mock）：完整 AppServices（含 tts）。
- * 接入真实后端后在此读取 NEXT_PUBLIC_SERVICE_MODE 并返回 api 实现。
- */
-export function getServices(_mode: ServiceMode = 'mock'): AppServices {
-  // const mode = process.env.NEXT_PUBLIC_SERVICE_MODE === 'api' ? 'api' : 'mock'
+/** 统一入口：完整 AppServices（页面级单例，如 mnemonic 页的 services） */
+export function getServices(): AppServices {
   return getMockServices()
 }
 
@@ -87,8 +71,7 @@ export async function getSoeService(): Promise<SoeService> {
 export type {
   AppServices,
   SoeService,
-  TtsService,
   MnemonicService,
 } from './contracts'
 export { ApiError, toApiError, throwIfAborted, abortableDelay } from './contracts'
-export type { ApiErrorPayload, SoeEvalMode, TtsGenerateResult } from './contracts'
+export type { ApiErrorPayload, SoeEvalMode } from './contracts'

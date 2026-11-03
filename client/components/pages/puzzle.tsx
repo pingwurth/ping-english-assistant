@@ -17,12 +17,9 @@ import {
 } from '@/core/training/puzzle'
 import { formatElapsed, summarize } from '@/core/training/scoring'
 import { attempt, createSession, currentSentence, hint, makeRecordId, next, submit, type SessionState } from '@/core/training/session'
-import { useSentencePlayer } from '@/lib/use-sentence-player'
+import { useSentencePlayer, NO_SENTENCES } from '@/lib/use-sentence-player'
 import { appendTrainingRecord } from '@/stores/training-record-store'
 import type { PuzzleDetail, TrainingRecord } from '@/types/training'
-
-/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
-const NO_SENTENCES: SentenceRange[] = []
 
 /** 每句提示上限（每次扣 2 分，由 gridScore 结算） */
 const MAX_HINTS = 3

@@ -1,26 +1,21 @@
 /**
- * AI 服务契约 —— 真源：docs/系统架构设计.md §3.3 API 契约（契约②⑥⑦⑧）
+ * AI 服务契约 —— 真源：docs/系统架构设计.md §3.3 API 契约（契约②⑧）
  *
- * 字段严格对齐 types/api.ts（批次 A 已按架构 §3.3 落型的请求/响应/SSE 事件类型）。
+ * 字段严格对齐 types/api.ts（批次 A 已按架构 §3.3 落型的请求/响应类型）。
  * 未来替换为真实 Fastify 客户端时只改实现（services/mock/* → services/api/*），
  * 本文件定义的接口签名与类型保持不变。
  *
  * 所有方法接受可选 AbortSignal；失败统一抛 ApiError（含中止：code === 'ABORTED'）。
- * SSE 流式以 AsyncGenerator<SseEvent> 表达（事件序 status → token → result → done，
- * 错误走 error 事件后终止流）。
  * 注：契约①③④已移除 —— ①ASR 与③④训练报告均改走 BFF 直连或页内呈现
  * （录音转写见 pages/training/recording-review.tsx 的 transcribeRecording、
- * 素材导入见 components/shared/transcribe-shared.tsx，服务端 lib/llm/asr-service.ts），
- * SSE 事件类型保留（契约⑤ LLM 讲解、契约⑧ 生词助记仍在使用）。
+ * 素材导入见 components/shared/transcribe-shared.tsx，服务端 lib/llm/asr-service.ts）；
+ * 契约⑥⑦ TtsService 已于 2026-11 删除（真实路径 tts.tsx → /api/tts，旧契约零调用方）；
+ * 助记 SSE 事件类型为 types/mnemonic.ts 的 MnemonicSseEvent（不走本文件）。
  */
 
 import type {
   ApiError as ApiErrorShape,
   SoeEvaluateResponse,
-  SseEvent,
-  TtsGenerateRequest,
-  TtsGenerateResponseMeta,
-  TtsSubtitleResponse,
 } from '../types/api'
 import type {
   Association,
@@ -107,26 +102,9 @@ export interface SoeService {
   ): Promise<SoeEvaluateResponse>
 }
 
-/** 契约⑥ POST /api/v1/tts/generate —— 音频二进制 + 响应头元信息（X-Tts-*） */
-export interface TtsGenerateResult {
-  /** 响应 Body（Content-Type: audio/wav | audio/mpeg） */
-  audio: Blob
-  /** 响应头元信息：taskId / durationMs / sentenceCount */
-  meta: TtsGenerateResponseMeta
-}
-
-/** 契约⑥⑦ TTS 服务（实现留给批次 E；本批次仅定义接口） */
-export interface TtsService {
-  /** 契约⑥ POST /api/v1/tts/generate（text 上限 5000 字符，超限抛 ApiError code 'TEXT_TOO_LONG'） */
-  generate(request: TtsGenerateRequest, signal?: AbortSignal): Promise<TtsGenerateResult>
-  /** 契约⑦ GET /api/v1/tts/subtitle/:taskId（未命中缓存抛 ApiError code 'SUBTITLE_NOT_FOUND'） */
-  getSubtitle(taskId: string, signal?: AbortSignal): Promise<TtsSubtitleResponse>
-}
-
-/** 契约⑧ 生词助记 —— LLM 生成助记卡片、联想、练习、造句批改 */
+/** 契约⑧ 生词助记 —— LLM 生成助记卡片（流式）、联想、练习、造句批改。
+ *  非流式 generateCard 已随 BFF 'card' action 一并删除（页面只用流式路径，2026-11）。 */
 export interface MnemonicService {
-  /** 生成即时助记卡片（非流式） */
-  generateCard(word: string, context: string, note?: string, signal?: AbortSignal): Promise<MnemonicCard>
   /** 流式生成助记卡片 — 返回 AsyncGenerator，逐字段 yield SSE 事件 */
   generateCardStream(word: string, context: string, note?: string, signal?: AbortSignal): AsyncGenerator<MnemonicSseEvent>
   /** 生成联想记忆（hard 词自动触发或用户手动触发） */
@@ -140,6 +118,5 @@ export interface MnemonicService {
 /** 服务聚合（供工厂 services/index.ts 与上层 store/页面注入使用） */
 export interface AppServices {
   soe: SoeService
-  tts: TtsService
   mnemonic: MnemonicService
 }

@@ -93,8 +93,9 @@ function buildSeedSubtitle(material: Material): SubtitleData {
   return { format: 'srt', isBilingual, sentences, totalDurationMs: material.durationMs }
 }
 
-/** seeded 标记（records store）：把「首次启动」与「store 暂时为空」区分开 —— 用户逐个删光材料后刷新，不该复活种子 */
-const SEEDED_FLAG_KEY = 'meta:seeded'
+/** seeded 标记（records store）：把「首次启动」与「store 暂时为空」区分开 —— 用户逐个删光材料后刷新，不该复活种子。
+ *  key 登记在 schema.ts 的 RECORD_KEYS（键格式单一出处，勿手写字面量） */
+const SEEDED_FLAG_KEY = RECORD_KEYS.metaSeeded()
 
 /** 首次启动种子注入：仅未打过标记时执行（设置页"清空全部数据"会连标记一起清，恢复示例内容） */
 async function seedIfEmpty(): Promise<void> {

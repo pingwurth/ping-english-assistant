@@ -20,12 +20,23 @@ import type { TrainingRecord } from '@/types/training'
 export const TRAINING_KEEP_PER_MATERIAL_MODE = 100
 
 /**
- * 写入一条训练记录并立即执行该材料的保留策略。
+ * prune 扫描的写入门槛：prune 会物化该材料全部家族记录（O(N) 克隆），听写逐句
+ * 首评是每句一次写 —— 稳态（远未到 100 条上限）下每次写都扫是纯开销。改为每
+ * PRUNE_EVERY_WRITES 次写扫一次；保留数可能短暂超出上限少许，由后续写入与
+ * 启动清扫（sweepTrainingRetention）收敛。
+ */
+const PRUNE_EVERY_WRITES = 10
+let writesSincePrune = 0
+
+/**
+ * 写入一条训练记录并按写入门槛执行该材料的保留策略。
  * put 失败会上抛（调用方沿用「存储失败不影响训练」的吞掉约定）；
  * 清理失败只告警不打断 —— 下次写入或启动清扫会再收敛。
  */
 export async function appendTrainingRecord(record: TrainingRecord): Promise<void> {
   await recordsStore.put(RECORD_KEYS.training(record.id), record)
+  writesSincePrune++
+  if (writesSincePrune % PRUNE_EVERY_WRITES !== 0) return
   try {
     await pruneTrainingRecords(record.materialId)
   } catch (e) {

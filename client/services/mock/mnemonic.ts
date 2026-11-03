@@ -48,11 +48,6 @@ export interface MockMnemonicOptions {
 export class MockMnemonicService implements MnemonicService {
   constructor(_options: MockMnemonicOptions = {}) {}
 
-  async generateCard(word: string, context: string, note?: string, signal?: AbortSignal): Promise<MnemonicCard> {
-    throwIfAborted(signal)
-    return callApi<MnemonicCard>('card', { word, context, note }, signal)
-  }
-
   async *generateCardStream(word: string, context: string, note?: string, signal?: AbortSignal): AsyncGenerator<MnemonicSseEvent> {
     throwIfAborted(signal)
 

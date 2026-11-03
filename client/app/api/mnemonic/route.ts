@@ -1,8 +1,8 @@
 /**
- * 生词助记 API 路由（BFF）—— 调用 LLM 生成助记卡片、联想、练习、批改
+ * 生词助记 API 路由（BFF）—— 调用 LLM 生成助记卡片（流式）、联想、练习、批改
  *
- * 请求：{ action: 'card'|'association'|'exercises'|'evaluate', word, context?, note?, meaning?, collocations?, difficulty?, sentence?, configId? }
- * 响应：MnemonicCard | Association | Exercises | SentenceEvaluation
+ * 请求：{ action: 'card_stream'|'association'|'exercises'|'evaluate', word, context?, note?, meaning?, collocations?, difficulty?, sentence?, configId? }
+ * 响应：MnemonicCard 流（SSE）| Association | Exercises | SentenceEvaluation
  *
  * 模型优先级：mnemonicModel > translateModel
  * 配置未设置时返回 400 SETTINGS_NOT_CONFIGURED
@@ -11,7 +11,6 @@
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigs, readLlmConfigById } from '@/lib/server-settings'
 import {
-  generateMnemonicCard,
   generateMnemonicCardStream,
   generateAssociation,
   generateMnemonicExercises,
@@ -24,7 +23,7 @@ import type { ChatModelConfig } from '@/lib/llm'
 /** 单次上游调用超时（毫秒） */
 const REQUEST_TIMEOUT_MS = 120_000
 
-type MnemonicAction = 'card' | 'card_stream' | 'association' | 'exercises' | 'evaluate'
+type MnemonicAction = 'card_stream' | 'association' | 'exercises' | 'evaluate'
 
 interface MnemonicRequest {
   action: MnemonicAction
@@ -64,7 +63,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const validActions: MnemonicAction[] = ['card', 'card_stream', 'association', 'exercises', 'evaluate']
+    const validActions: MnemonicAction[] = ['card_stream', 'association', 'exercises', 'evaluate']
     if (!validActions.includes(action)) {
       return NextResponse.json(
         { error: `action 必须为 ${validActions.join(' | ')}`, code: 'INVALID_REQUEST' },
@@ -72,7 +71,7 @@ export async function POST(request: Request) {
       )
     }
 
-    if ((action === 'card' || action === 'card_stream') && !context) {
+    if (action === 'card_stream' && !context) {
       return NextResponse.json(
         { error: 'card action 需要 context 参数', code: 'INVALID_REQUEST' },
         { status: 400 },
@@ -190,9 +189,6 @@ export async function POST(request: Request) {
       let llmResult: { data: unknown; timing: { invokeMs: number; parseMs: number; contentLength: number } }
 
       switch (action) {
-        case 'card':
-          llmResult = await generateMnemonicCard(word, context!, note, chatConfig, combined)
-          break
         case 'association':
           llmResult = await generateAssociation(word, meaning!, chatConfig, combined)
           break

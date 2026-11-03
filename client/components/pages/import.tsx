@@ -17,8 +17,8 @@ import { estimateUsage } from '@/platform/storage/idb'
 import { consumeTtsExport, readTtsExport } from '@/lib/tts-export'
 import { consumeTranscribeExport, readTranscribeExport } from '@/lib/transcribe-export'
 import { probeMediaDuration } from '@/platform/media-probe'
+import { formatBytes } from '@/lib/format'
 
-function formatBytes(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB` }
 function baseName(fileName: string): string { return fileName.replace(/\.[^.]+$/, '').slice(0, 50) }
 
 /** 下拉/选择器中「＋ 新建材料集…」选项的哨兵值 */

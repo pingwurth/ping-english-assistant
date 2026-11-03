@@ -413,16 +413,8 @@ async function* callLlmStream<T>(
 // 导出方法
 // ---------------------------------------------------------------------------
 
-export async function generateMnemonicCard(
-  word: string,
-  context: string,
-  note: string | undefined,
-  config: ChatModelConfig,
-  signal?: AbortSignal,
-): Promise<LlmResult<MnemonicCard>> {
-  const userMsg = `Word: ${word}\nContext sentence: ${context}${note ? `\nLearner's note: ${note}` : ''}`
-  return callLlm<MnemonicCard>(CARD_SYSTEM_PROMPT, userMsg, config, signal)
-}
+// 非流式 generateMnemonicCard 已删除（2026-11）：页面只用流式路径，
+// 旧函数与 BFF 'card' action 均无调用方。
 
 /** 流式生成助记卡片 — 返回 AsyncGenerator，逐字段 yield */
 export async function* generateMnemonicCardStream(

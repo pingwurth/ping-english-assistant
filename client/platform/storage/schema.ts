@@ -27,6 +27,8 @@ export const RECORD_KEY_PREFIXES = {
   vocabEntry: 'vocabentry:',
   mnemonic: 'mnemonic:',
   collection: 'collection:',
+  /** 非业务记录族（seed 注入标记等元数据；不随材料级联删除） */
+  meta: 'meta:',
 } as const
 
 /**
@@ -50,4 +52,6 @@ export const RECORD_KEYS = {
   vocabEntry: (entryId: string) => `vocabentry:${entryId}`,
   mnemonic: (entryId: string) => `mnemonic:${entryId}`,
   collection: (collectionId: string) => `collection:${collectionId}`,
+  /** 首次启动种子注入标记（material-store 用：区分「首次启动」与「store 暂时为空」） */
+  metaSeeded: () => `${RECORD_KEY_PREFIXES.meta}seeded`,
 } as const

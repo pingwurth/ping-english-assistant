@@ -43,8 +43,6 @@ export interface ReportDetail {
   accuracy: number
   /** 流利度（0-100） */
   fluency: number
-  /** LLM 流式生成的 Markdown 分析报告 */
-  reportMarkdown?: string
 }
 
 export type TrainingMode =

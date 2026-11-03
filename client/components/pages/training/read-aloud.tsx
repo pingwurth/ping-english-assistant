@@ -21,13 +21,10 @@ import { formatDuration } from '@/components/shared/player-parts'
 import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { makeRecordId, sentencesInScope } from '@/core/training/session'
 import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-player'
-import { useSentencePlayer } from '@/lib/use-sentence-player'
+import { useSentencePlayer, NO_SENTENCES } from '@/lib/use-sentence-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { appendTrainingRecord } from '@/stores/training-record-store'
 import { ApiError, getSoeService } from '@/services'
-
-/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
-const NO_SENTENCES: SentenceRange[] = []
 import type { SoeEvaluateResponse } from '@/types/api'
 import type { ReadAloudDetail, TrainingRecord } from '@/types/training'
 import { useRecordingReplayUrl } from './recording-review'

@@ -10,12 +10,9 @@ import { diffWords, sentenceAccuracy, toWords, type DiffToken } from '@/core/tra
 import { createSession, currentSentence, makeRecordId, next, retryAt, submit, type SessionState } from '@/core/training/session'
 import type { SentenceRange } from '@/core/player/sentence-player'
 import type { SentencePlayer } from '@/core/player/sentence-player'
-import { useSentencePlayer } from '@/lib/use-sentence-player'
+import { useSentencePlayer, NO_SENTENCES } from '@/lib/use-sentence-player'
 import { appendTrainingRecord } from '@/stores/training-record-store'
 import type { DictationDetail, TrainingRecord } from '@/types/training'
-
-/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
-const NO_SENTENCES: SentenceRange[] = []
 
 /** 逐词 diff 着色渲染：正确不变色 / 错词红删（附正确词）/ 漏词绿插 / 多词灰 */
 function DiffView({ tokens }: { tokens: DiffToken[] }) {

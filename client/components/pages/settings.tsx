@@ -21,6 +21,7 @@ import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { ModelConfigListSection } from '@/components/shared/model-config-list-dialog'
+import { formatBytes } from '@/lib/format'
 import { RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import { parseBackupJson, type ImportStrategy } from '@/core/backup/backup-format'
 import { isZipMagic } from '@/core/backup/zip'
@@ -37,12 +38,6 @@ import {
 } from '@/lib/pref-keys'
 
 /* ── helpers ─────────────────────────────────────────── */
-
-function formatBytes(n: number): string {
-  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`
-  if (n >= 1024) return `${Math.round(n / 1024)} KB`
-  return `${n} B`
-}
 
 const loopLabel = (v: PrefLoop) => (v === 0 ? '关' : v === 'inf' ? '∞' : `${v} 次`)
 

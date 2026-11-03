@@ -16,6 +16,9 @@ import { SentencePlayer, type SentenceRange } from '@/core/player/sentence-playe
 import { HtmlPlayerController } from '@/platform/html-player'
 import { getMediaBlob } from '@/stores/material-store'
 
+/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎）—— dictation/puzzle/shadowing/read-aloud 共用 */
+export const NO_SENTENCES: SentenceRange[] = []
+
 /**
  * 媒体 Blob → ObjectURL（SSR 安全：仅 effect 内触碰浏览器 API）。
  * 无媒体 / 加载中返回 null；换材料或卸载时 revoke 旧 URL。

@@ -49,8 +49,11 @@ export function fullBackupFilename(now: Date = new Date()): string {
 
 /** materials + records + prefs 全量收集（两条导出链共用，防漂移） */
 async function collectBackupParts(): Promise<{ materials: MaterialRecord[]; records: Record<string, unknown>; prefs: Record<string, unknown> }> {
-  const materialKeys = await materialsStore.allKeys()
-  const materials = (await Promise.all(materialKeys.map((k) => materialsStore.get<MaterialRecord>(k))))
+  // materials 同样走单事务快照（与下方 records 同模式）：原 allKeys + 逐键 get 的 N+1
+  // 在 50 材料导出时要开 51 个事务、各自克隆整份 MaterialRecord（含 subtitleData）
+  const materialEntries = await materialsStore.getAllEntries()
+  const materials = materialEntries
+    .map(([, v]) => v as MaterialRecord | undefined)
     .filter((m): m is MaterialRecord => !!m)
   // 全量导出确实需要所有记录：单事务快照（原 allKeys 全扫 + 每键一个读事务的 N+1）
   const recordEntries = await recordsStore.getAllEntries()

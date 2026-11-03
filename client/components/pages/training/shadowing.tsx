@@ -28,16 +28,13 @@ import { MicPermissionOverlay } from '@/components/shared/score-panel'
 import { diffWords } from '@/core/training/dictation-diff'
 import { formatDuration } from '@/components/shared/player-parts'
 import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-player'
-import { useSentencePlayer } from '@/lib/use-sentence-player'
+import { useSentencePlayer, NO_SENTENCES } from '@/lib/use-sentence-player'
 import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { appendReportTrainingRecord } from '@/stores/training-record-store'
 import { toApiError } from '@/services'
 import type { SubtitleSentence } from '@/types/subtitle'
 import { RecordingReview, transcribeRecording, useRecordingReplayUrl } from './recording-review'
-
-/** 稳定空时间轴（hook 依赖需要稳定引用，避免每渲染重建引擎） */
-const NO_SENTENCES: SentenceRange[] = []
 
 type Phase = 'intro' | 'recording' | 'transcribing' | 'result'
 

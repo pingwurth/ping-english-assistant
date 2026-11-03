@@ -27,15 +27,13 @@ import { updateFrequencies } from '@/stores/vocab-store'
 import type { MaterialRecord } from '@/platform/storage/schema'
 import { HtmlPlayerController } from '@/platform/html-player'
 import { SentencePlayer } from '@/core/player/sentence-player'
-import { getDefaultLoop, getDefaultRate } from '@/lib/pref-keys'
+import { getDefaultLoop, getDefaultRate, PREF_RATES, type PrefRate } from '@/lib/pref-keys'
 import { exportSrt, parseSubtitle, splitWords, SubtitleParseError } from '@/core/subtitle'
 import { downloadBlob } from '@/lib/download'
 import { copyText } from '@/lib/clipboard'
 import type { LearningProgress } from '@/types/progress'
 import type { SubtitleData, SubtitleMode, SubtitleSentence } from '@/types/subtitle'
 
-/** 倍速循环序列（0.5 ~ 2.0 六档，与 PREF_RATES 同档位） */
-const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
 /** 学习进度写入节流：5s（播放过的句子增量持久化） */
 const PROGRESS_FLUSH_MS = 5000
 /** 复制原文时的前缀（仅原文；译文按原样复制） */
@@ -416,7 +414,8 @@ function Player() {
     else setActive(i) // 演示材料：仅切换高亮
   }, [])
   const cycleRate = () => {
-    const next = RATES[(RATES.indexOf(rate) + 1) % RATES.length] ?? 1
+    // 倍速循环序列即设置页的 PREF_RATES（单一出处，改档位两处同步）
+    const next = PREF_RATES[(PREF_RATES.indexOf(rate as PrefRate) + 1) % PREF_RATES.length] ?? 1
     setRate(next)
     playerRef.current?.setRate(next)
   }
