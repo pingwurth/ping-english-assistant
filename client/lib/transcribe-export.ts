@@ -3,14 +3,11 @@
  *
  * 转写完成后调用 writeTranscribeExport 写入，再跳转
  * `/import?source=transcribe&taskId={taskId}`；导入页通过 readTranscribeExport 自动填充 ①②。
- *
- * 音频 File 无法经 sessionStorage 序列化，故分两层存放：
- *  - 音频 Blob → IDB blobs store，key = `transcribe:{taskId}`
- *  - 索引 JSON → sessionStorage，key = `ping-english:transcribe-export:{taskId}`
- * 导入成功后调用 consumeTranscribeExport 清理临时产物。
+ * 两层存放（IDB Blob + sessionStorage 索引）与清理路径由 lib/media-export-handoff
+ * 工厂统一实现（原与 tts-export 互为逐字节拷贝）。
  */
 
-import { blobsStore } from '@/platform/storage/idb'
+import { createMediaExportHandoff } from '@/lib/media-export-handoff'
 
 export const TRANSCRIBE_EXPORT_SESSION_PREFIX = 'ping-english:transcribe-export:'
 export const transcribeBlobKey = (taskId: string) => `transcribe:${taskId}`
@@ -33,35 +30,16 @@ export interface TranscribeExportPayload {
   audio: Blob
 }
 
-/** 转写页写入：音频入 IDB，索引入 sessionStorage（写失败静默降级） */
-export async function writeTranscribeExport(
-  taskId: string,
-  audio: File | Blob,
-  meta: Omit<TranscribeExportMeta, 'taskId'>,
-): Promise<void> {
-  await blobsStore.put(transcribeBlobKey(taskId), audio)
-  try {
-    if (typeof sessionStorage !== 'undefined') {
-      sessionStorage.setItem(TRANSCRIBE_EXPORT_SESSION_PREFIX + taskId, JSON.stringify({ ...meta, taskId }))
-    }
-  } catch { /* sessionStorage 不可用时仅丢失自动填充能力，不崩溃 */ }
-}
+const handoff = createMediaExportHandoff<TranscribeExportMeta>({
+  sessionPrefix: TRANSCRIBE_EXPORT_SESSION_PREFIX,
+  blobKeyPrefix: 'transcribe:',
+})
 
-/** 导入页读取；产物缺失或读取失败统一返回 null（空态兜底，用户仍可手动选择文件） */
-export async function readTranscribeExport(taskId: string): Promise<TranscribeExportPayload | null> {
-  try {
-    if (typeof sessionStorage === 'undefined') return null
-    const raw = sessionStorage.getItem(TRANSCRIBE_EXPORT_SESSION_PREFIX + taskId)
-    if (!raw) return null
-    const meta = JSON.parse(raw) as TranscribeExportMeta
-    const audio = await blobsStore.get<Blob>(transcribeBlobKey(taskId))
-    if (!audio || typeof meta.subtitleText !== 'string') return null
-    return { meta, audio }
-  } catch { return null }
-}
+/** 转写页写入：音频入 IDB，索引入 sessionStorage */
+export const writeTranscribeExport = handoff.write
+
+/** 导入页读取；产物缺失或读取失败统一返回 null */
+export const readTranscribeExport = handoff.read
 
 /** 导入成功后清理临时产物 */
-export async function consumeTranscribeExport(taskId: string): Promise<void> {
-  try { sessionStorage.removeItem(TRANSCRIBE_EXPORT_SESSION_PREFIX + taskId) } catch { /* ignore */ }
-  await blobsStore.delete(transcribeBlobKey(taskId))
-}
+export const consumeTranscribeExport = handoff.consume

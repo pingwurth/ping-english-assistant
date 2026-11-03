@@ -5,11 +5,10 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError, toApiError } from '@/services'
 import { Switch } from '@/components/ui/switch'
-import { splitWords, exportSrtRows, formatSrtTimestamp } from '@/core/subtitle'
-import { detectDirection, translateTexts, mergeBilingualSrt, buildBilingualPreview } from '@/lib/translate'
-import { selectServiceConfigs } from '@/lib/llm-configs'
+import { exportSrtRows, formatSrtTimestamp, parseSubtitle } from '@/core/subtitle'
+import { translateSrtToBilingual, buildBilingualPreview } from '@/lib/translate'
+import { useServiceConfigs } from '@/lib/use-service-configs'
 import { probeMediaDuration } from '@/platform/media-probe'
-import type { SubtitleSentence } from '@/types/subtitle'
 import type { AsrTranscribeSegment } from '@/types/api'
 
 /* ── SRT 工具（序列化统一走 core/subtitle 的 exportSrtRows，不再本地拷贝） ── */
@@ -107,41 +106,29 @@ export function useTranscribe() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  // ASR configs for multi-model selection
-  const [asrConfigs, setAsrConfigs] = useState<Array<{ id: string; name: string; asrModel: string }>>([])
-  const [selectedAsrConfigId, setSelectedAsrConfigId] = useState<string>('')
+  // ASR configs for multi-model selection（拉取/缓存/默认选择统一走 useServiceConfigs）
+  const asrSel = useServiceConfigs<{ id: string; name: string; asrModel: string }>(true, 'asrModel',
+    (c) => ({ id: c.id, name: String(c.name ?? ''), asrModel: String(c.asrModel ?? '') }))
+  const asrConfigs = asrSel.configs
+  const selectedAsrConfigId = asrSel.configId
+  const setSelectedAsrConfigId = asrSel.setConfigId
 
   // 翻译开关与翻译模型配置（默认关闭，ai-transcribe-dialog 不渲染开关即永远单语）
   const [translateEnabled, setTranslateEnabled] = useState(false)
-  const [translateConfigs, setTranslateConfigs] = useState<Array<{ id: string; name: string; translateModel: string }>>([])
-  const [selectedTranslateConfigId, setSelectedTranslateConfigId] = useState<string>('')
+  const trSel = useServiceConfigs<{ id: string; name: string; translateModel: string }>(true, 'translateModel',
+    (c) => ({ id: c.id, name: String(c.name ?? ''), translateModel: String(c.translateModel ?? '') }))
+  const translateConfigs = trSel.configs
+  const selectedTranslateConfigId = trSel.configId
+  const setSelectedTranslateConfigId = trSel.setConfigId
   const [translateWarning, setTranslateWarning] = useState('')
   // 用 ref 保证转写回调闭包读取到最新的开关/配置值
   const translateEnabledRef = useRef(false)
   const translateConfigIdRef = useRef('')
 
-  const loadAsrConfigs = useCallback(async (): Promise<Array<{ id: string; name: string; asrModel: string }>> => {
-    try {
-      const res = await fetch('/api/settings/llm-configs')
-      const data = await res.json()
-      // 过滤 + 默认选择统一走 selectServiceConfigs（三处调用方同一默认策略）
-      const asr = selectServiceConfigs<{ id: string; name: string; asrModel: string }>(data, 'asrModel')
-      setAsrConfigs(asr.list)
-      if (asr.preferredId) setSelectedAsrConfigId(asr.preferredId)
-      const tr = selectServiceConfigs<{ id: string; name: string; translateModel: string }>(data, 'translateModel')
-      setTranslateConfigs(tr.list)
-      if (tr.preferredId) setSelectedTranslateConfigId(tr.preferredId)
-      return asr.list
-    } catch {
-      return []
-    }
-  }, [])
-
   // 卸载时中止在途转写：路由离开后上传继续跑完只浪费 API 费用，结果无人消费
   useEffect(() => {
-    void loadAsrConfigs()
     return () => { abortRef.current?.abort() }
-  }, [loadAsrConfigs])
+  }, [])
 
   // 用 useEffect 派生同步 ref：任何 state 变化（含配置加载时的默认值赋值）都自动同步，
   // 避免手工包装 setter 遗漏导致转写回调闭包读取过期值（如 translateConfigIdRef 恒为 ''）
@@ -150,6 +137,8 @@ export function useTranscribe() {
 
   /**
    * 在单语转写产物之上尝试翻译，生成双语 SRT 与双语预览。
+   * 编排统一走 translateSrtToBilingual（与 TTS 页同一实现：中止/降级/漏翻提示
+   * 语义不再两份漂移）；预览由双语 SRT 重新解析构造。
    * 翻译失败（非取消）时降级：保留单语产物并设置警告，不抛出。
    */
   const applyTranslation = useCallback(async (
@@ -168,44 +157,15 @@ export function useTranscribe() {
     }
 
     try {
-      const texts = segments.map(s => s.text)
-      const direction = detectDirection(texts)
-      const translations = await translateTexts(
-        texts,
-        translateConfigIdRef.current || undefined,
-        direction,
-        signal,
-        undefined,
-        // 部分译文被原文回填：如实提示（静默的半翻译双语字幕看起来与成功无异）
-        (filled, total) => setTranslateWarning(`模型漏翻 ${filled}/${total} 条，对应句保留原文，可稍后重翻`),
-      )
-
-      // 双语 SRT：复用既有单语 SRT + mergeBilingualSrt（英上中下）
-      const bilingualSrt = mergeBilingualSrt(srtText, translations, direction)
-
-      // 双语预览：英文行 + 中文行构造轻量句子列表，时间轴取自 segments
-      const sentences: SubtitleSentence[] = segments.map((seg, i) => {
-        const textEn = direction === 'en2zh' ? seg.text : translations[i]
-        const textZh = direction === 'en2zh' ? translations[i] : seg.text
-        return {
-          index: i,
-          startMs: seg.startMs,
-          endMs: seg.endMs,
-          textEn,
-          textZh,
-          words: splitWords(textEn),
-        }
-      })
-
-      return { srt: bilingualSrt, result: buildBilingualPreview(sentences) }
+      const outcome = await translateSrtToBilingual(srtText, translateConfigIdRef.current || undefined, signal)
+      if (outcome.warning) setTranslateWarning(outcome.warning)
+      if (outcome.srt === srtText) return { srt: srtText, result: monoResult }
+      return { srt: outcome.srt, result: buildBilingualPreview(parseSubtitle(outcome.srt).sentences) }
     } catch (err) {
-      // 取消路径统一抛 ApiError('ABORTED')，由外层 catch 静默返回（含 translateTexts 的“翻译已取消”）
-      if (signal?.aborted) throw new ApiError('ABORTED', '操作已取消', err)
-      if (err instanceof Error && err.name === 'AbortError') throw err
-      const apiErr = toApiError(err)
-      if (apiErr.code === 'ABORTED') throw err
-      // 降级：保留单语产物，仅提示警告，转写本身仍视为成功
-      setTranslateWarning('翻译失败，已保留单语字幕：' + apiErr.message)
+      // 取消：编排函数统一抛 DOMException AbortError，这里转 ApiError('ABORTED') 由外层静默
+      if (err instanceof DOMException && err.name === 'AbortError') throw new ApiError('ABORTED', '操作已取消', err)
+      // 其余错误理论上已在编排内降级；兜底同样降级不抛（转写本身仍视为成功）
+      setTranslateWarning('翻译失败，已保留单语字幕：' + (err instanceof Error ? err.message : '未知错误'))
       return { srt: srtText, result: monoResult }
     }
   }, [])
@@ -261,7 +221,7 @@ export function useTranscribe() {
       // 闭包里的 asrConfigs 可能过期（配置对话框刚保存、刷新配置的 fetch 还在途）——
       // 空时现查一次，避免“刚保存又弹出配置框、转写永不启动”
       let configs = asrConfigs
-      if (configs.length === 0) configs = await loadAsrConfigs()
+      if (configs.length === 0) configs = await asrSel.load(true)
       if (configs.length === 0) {
         setPendingFile(file)
         setShowModelConfig(true)
@@ -274,7 +234,7 @@ export function useTranscribe() {
     }
 
     await executeTranscribe(file, ctrl.signal, undefined, 'local')
-  }, [method, executeTranscribe, asrConfigs, loadAsrConfigs, selectedAsrConfigId])
+  }, [method, executeTranscribe, asrConfigs, asrSel.load, selectedAsrConfigId])
 
   const handleModelConfigSaved = useCallback(() => {
     setShowModelConfig(false)
@@ -321,7 +281,7 @@ export function useTranscribe() {
     showModelConfig,
     setShowModelConfig,
     handleModelConfigSaved,
-    refreshConfigs: loadAsrConfigs,
+    refreshConfigs: () => asrSel.load(true),
     asrConfigs,
     selectedAsrConfigId,
     setSelectedAsrConfigId,

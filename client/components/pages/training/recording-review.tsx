@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ApiError } from '@/services'
+import { createRecorder, type WebRecorder } from '@/platform/recorder'
 import type { DiffToken } from '@/core/training/dictation-diff'
 import { callLlmTranscribe, callLocalTranscribe } from '@/components/shared/transcribe-shared'
 
@@ -56,11 +57,46 @@ export function useRecordingReplayUrl(): {
     urlRef.current = blob ? URL.createObjectURL(blob) : null
     setRecordingUrl(urlRef.current)
   }
-
   // 卸载时回收录音回听 ObjectURL
   useEffect(() => () => { if (urlRef.current) URL.revokeObjectURL(urlRef.current) }, [])
 
   return { recordingUrl, setRecordingUrlFromBlob }
+}
+
+/**
+ * 录音器会话 Hook —— P6 跟读 / P7 影子跟读 / P8 全文背诵 三页共用（原先三份拷贝
+ * 已漂移：生命周期依赖、自动收尾接线各不相同）。挂载时创建 recorder，到达 60s 上限
+ * （maxreach）回调 onMaxReach 做自动收尾；卸载时 destroy 并中止在途转写请求（abortRef）。
+ * volume/计时高频更新由 LiveRecordingWave / LivePlayProgress 自订阅承接（评审 #51）。
+ */
+export function useRecorderSession(onMaxReach: () => void | Promise<void>): {
+  recorder: WebRecorder | null
+  recorderRef: RefObject<WebRecorder | null>
+  abortRef: RefObject<AbortController | null>
+} {
+  const [recorder, setRecorder] = useState<WebRecorder | null>(null)
+  const recorderRef = useRef<WebRecorder | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  // 每轮收尾闭包可能是新引用（页面 state 变化），经 ref 转发避免依赖它重建 recorder
+  const onMaxReachRef = useRef(onMaxReach)
+  onMaxReachRef.current = onMaxReach
+
+  useEffect(() => {
+    const rec = createRecorder()
+    recorderRef.current = rec
+    setRecorder(rec)
+    rec.on('maxreach', () => { void onMaxReachRef.current() })
+    const abort = new AbortController()
+    abortRef.current = abort
+    return () => {
+      abort.abort()
+      rec.destroy()
+      recorderRef.current = null
+      setRecorder(null)
+    }
+  }, [])
+
+  return { recorder, recorderRef, abortRef }
 }
 
 /** 逐词对比着色：绿 = 读对；黑 = 原文（未标绿即漏读）；红括号 = 实际读出（跟在误读原文词后，单独出现为多读） */

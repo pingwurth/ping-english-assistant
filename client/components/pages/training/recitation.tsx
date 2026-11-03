@@ -22,11 +22,11 @@ import { RecordButton } from '@/components/shared/record-button'
 import { LiveRecordingWave } from '@/components/shared/wave-bars'
 import { formatDuration } from '@/components/shared/player-parts'
 import { diffWords } from '@/core/training/dictation-diff'
-import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
+import { RecorderPermissionError } from '@/platform/recorder'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { appendReportTrainingRecord } from '@/stores/training-record-store'
 import { toApiError } from '@/services'
-import { RecordingReview, transcribeRecording, useRecordingReplayUrl } from './recording-review'
+import { RecordingReview, transcribeRecording, useRecordingReplayUrl, useRecorderSession } from './recording-review'
 
 type Phase = 'idle' | 'recording' | 'transcribing' | 'result'
 /** 提示模式：中文提示 / 首词提示 / 无提示（§4.9） */
@@ -54,17 +54,16 @@ function Recitation() {
   const [permDenied, setPermDenied] = useState(false)
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
-  /** recorder 实例同步给 LiveRecordingWave 自订阅（评审 #51：volume/计时不再进本组件 state） */
-  const [recorder, setRecorder] = useState<WebRecorder | null>(null)
 
-  const recorderRef = useRef<WebRecorder | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
   const finishingRef = useRef(false)
   const finishRef = useRef<() => Promise<void>>(async () => {})
   /** 最近一次录音：供"重新转写"重试（不重新录音） */
   const lastBlobRef = useRef<Blob | null>(null)
   /** 同一段录音转写/重试成功后只写一条训练记录 */
   const reportSavedRef = useRef(false)
+  /** 录音器会话（挂载创建/卸载销毁 + maxreach 自动收尾；三训练页共用 hook），
+   *  recorder 实例同步给 LiveRecordingWave 自订阅（评审 #51：volume/计时不再进本组件 state） */
+  const { recorder, recorderRef, abortRef } = useRecorderSession(() => finishRef.current())
   const { recordingUrl, setRecordingUrlFromBlob } = useRecordingReplayUrl()
 
   const sentences = record?.subtitleData?.sentences ?? []
@@ -76,23 +75,6 @@ function Recitation() {
   useEffect(() => {
     if (record && !hasZh) setHintMode((m) => (m === 'zh' ? 'first' : m))
   }, [record, hasZh])
-
-  // 录音器生命周期：挂载创建 + 60s 上限自动收尾；卸载 destroy + 中止转写请求
-  // （volume/计时高频更新由 LiveRecordingWave 自订阅承接，评审 #51）
-  useEffect(() => {
-    const rec = createRecorder()
-    recorderRef.current = rec
-    setRecorder(rec)
-    rec.on('maxreach', () => { void finishRef.current() })
-    const abort = new AbortController()
-    abortRef.current = abort
-    return () => {
-      abort.abort()
-      rec.destroy()
-      recorderRef.current = null
-      setRecorder(null)
-    }
-  }, [])
 
   const startRecording = async () => {
     const rec = recorderRef.current

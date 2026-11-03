@@ -61,6 +61,55 @@ async function collectBackupParts(): Promise<{ materials: MaterialRecord[]; reco
   return { materials, records, prefs: exportAllPrefs() }
 }
 
+/** 让出主线程一帧（长任务分片用） */
+function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+/** 分片序列化的批大小（一批 ~几 ms，批间让出主线程保交互） */
+const SERIALIZE_BATCH = 25
+
+/**
+ * 备份 payload → JSON 字符串（分片版）：大数组/大对象逐批 JSON.stringify 并在批间
+ * 让出主线程 —— 整段同步 stringify 数十 MB（材料内嵌完整 subtitleData）会把 UI
+ * 卡死数秒且无任何反馈（2026-11 全仓复审）。产物与 JSON.stringify(payload)
+ * 字节一致（同键序、undefined 值键同样跳过），等价性由测试钉死。
+ */
+export async function stringifyBackupJson(payload: Record<string, unknown>): Promise<string> {
+  const keys = Object.keys(payload).filter((k) => payload[k] !== undefined)
+  const out: string[] = ['{']
+  for (let k = 0; k < keys.length; k++) {
+    const key = keys[k]!
+    const value = payload[key]
+    if (k > 0) out.push(',')
+    out.push(JSON.stringify(key), ':')
+    if (Array.isArray(value)) {
+      out.push('[')
+      for (let i = 0; i < value.length; i += SERIALIZE_BATCH) {
+        if (i > 0) out.push(',')
+        out.push(value.slice(i, i + SERIALIZE_BATCH).map((item) => JSON.stringify(item)).join(','))
+        await yieldToMain()
+      }
+      out.push(']')
+    } else if (value !== null && typeof value === 'object') {
+      const sub = value as Record<string, unknown>
+      const subKeys = Object.keys(sub).filter((sk) => sub[sk] !== undefined)
+      out.push('{')
+      for (let i = 0; i < subKeys.length; i++) {
+        if (i > 0) out.push(',')
+        const sk = subKeys[i]!
+        out.push(JSON.stringify(sk), ':', JSON.stringify(sub[sk]))
+        if (i % SERIALIZE_BATCH === SERIALIZE_BATCH - 1) await yieldToMain()
+      }
+      out.push('}')
+    } else {
+      out.push(JSON.stringify(value))
+    }
+  }
+  out.push('}')
+  return out.join('')
+}
+
 /** 组装轻量备份（不含媒体）：materials + records 全量，prefs 从 localStorage 导出 */
 export async function buildBackup(): Promise<{ filename: string; json: string }> {
   const parts = await collectBackupParts()
@@ -70,7 +119,7 @@ export async function buildBackup(): Promise<{ filename: string; json: string }>
     exportedAt: Date.now(),
     ...parts,
   }
-  return { filename: backupFilename(), json: JSON.stringify(payload) }
+  return { filename: backupFilename(), json: await stringifyBackupJson(payload) }
 }
 
 /**
@@ -117,7 +166,8 @@ export async function buildFullBackupZip(): Promise<{ filename: string; blob: Bl
     if (buffered >= 32 * 1024 * 1024) { chunks = [new Blob(chunks)]; buffered = 0 } // 定期合并：已写内容转出 JS 堆
   }
   const writer = createZipWriter(sink)
-  writer.add('backup.json', new TextEncoder().encode(JSON.stringify(payload)))
+  // backup.json 分片序列化（主线程让出）+ 异步 deflate（浏览器下压缩走 Worker）
+  await writer.addCompressed('backup.json', new TextEncoder().encode(await stringifyBackupJson(payload)))
   for (const c of collected) {
     // 流式写入：媒体分块喂 writer（增量 CRC + data descriptor），峰值堆 ≈ 单块 + 32MB sink，
     // 不再把整个文件（数百 MB 视频）一次性读进 JS 堆

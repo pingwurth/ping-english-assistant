@@ -29,12 +29,12 @@ import { diffWords } from '@/core/training/dictation-diff'
 import { formatDuration } from '@/components/shared/player-parts'
 import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-player'
 import { useSentencePlayer, NO_SENTENCES } from '@/lib/use-sentence-player'
-import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
+import { RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
 import { useTrainingMaterial } from '@/components/shared/training-session-shell'
 import { appendReportTrainingRecord } from '@/stores/training-record-store'
 import { toApiError } from '@/services'
 import type { SubtitleSentence } from '@/types/subtitle'
-import { RecordingReview, transcribeRecording, useRecordingReplayUrl } from './recording-review'
+import { RecordingReview, transcribeRecording, useRecordingReplayUrl, useRecorderSession } from './recording-review'
 
 type Phase = 'intro' | 'recording' | 'transcribing' | 'result'
 
@@ -128,13 +128,9 @@ function Shadowing() {
   const [permDenied, setPermDenied] = useState(false)
   const [permMessage, setPermMessage] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
-  /** recorder 实例同步给 LivePlayProgress 自订阅（评审 #51：计时不再进本组件 state） */
-  const [recorder, setRecorder] = useState<WebRecorder | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null)
-  const recorderRef = useRef<WebRecorder | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
   const finishingRef = useRef(false)
   const finishRef = useRef<() => Promise<void>>(async () => {})
   /** 播放结束 → 自动收尾的延迟计时器（begin/卸载/手动收尾时清除） */
@@ -143,6 +139,9 @@ function Shadowing() {
   const lastBlobRef = useRef<Blob | null>(null)
   /** 同一段录音转写/重试成功后只写一条训练记录 */
   const reportSavedRef = useRef(false)
+  /** 录音器会话（挂载创建/卸载销毁 + maxreach 自动收尾；三训练页共用 hook），
+   *  recorder 实例同步给 LivePlayProgress 自订阅（评审 #51：计时不再进本组件 state） */
+  const { recorder, recorderRef, abortRef } = useRecorderSession(() => finishRef.current())
   const { recordingUrl, setRecordingUrlFromBlob } = useRecordingReplayUrl()
 
   const sentences = record?.subtitleData?.sentences ?? []
@@ -180,22 +179,11 @@ function Shadowing() {
   // 引擎重建/卸载时清掉待触发的收尾定时器（对应原装配 effect 的 cleanup）
   useEffect(() => () => { clearEndGrace() }, [enginePlayer])
 
-  // 录音器生命周期：挂载创建；到达 60s 上限自动收尾；卸载 destroy + 中止转写请求
-  // （timeupdate/计时高频更新由 LivePlayProgress 自订阅承接，评审 #51）
+  // 材料元时长兜底：引擎加载失败时 hook 不回调，进度按材料元时长展示。
+  // （原写在录音器 effect 里、随 [record] 依赖连带重建 recorder —— 录音器只依赖
+  //  麦克风与材料无关，现拆为独立 effect 并由 useRecorderSession 恒挂载一次）
   useEffect(() => {
     if (record) setDurationMs(record.material.durationMs)
-    const rec = createRecorder()
-    recorderRef.current = rec
-    setRecorder(rec)
-    rec.on('maxreach', () => { void finishRef.current() })
-    const abort = new AbortController()
-    abortRef.current = abort
-    return () => {
-      abort.abort()
-      rec.destroy()
-      recorderRef.current = null
-      setRecorder(null)
-    }
   }, [record])
 
   /** 开始跟读：先起录音（拿麦克风权限），再同步起播放 */

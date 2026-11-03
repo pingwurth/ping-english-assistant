@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { readEffectiveLlmSettings, readLocalServices } from '@/lib/server-settings'
+import { readEffectiveLlmSettings, resolveLocalServiceUrl } from '@/lib/server-settings'
 import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import {
   DEFAULT_WHISPER_TRANSCRIBE_URL,
@@ -17,16 +17,14 @@ import {
 const TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes for long audio
 
 /**
- * 从设置读取转写服务地址。
- * 设置页「本地服务配置」写入 localServices 段（唯一有效写入口），
- * legacy llm.whisperTranscribeUrl 仅作历史数据 fallback。
+ * 从设置解析转写服务地址。
+ * 优先级统一走 resolveLocalServiceUrl（localServices 段 → legacy 配置字段 → 默认）；
+ * legacy 档取 effective 配置（本路由无 per-request configId）。读设置失败回落默认地址。
  */
 async function getTranscribeUrl(): Promise<string> {
   try {
-    const ls = await readLocalServices()
-    if (ls.whisperTranscribeUrl) return ls.whisperTranscribeUrl
     const settings = await readEffectiveLlmSettings()
-    return settings?.whisperTranscribeUrl || DEFAULT_WHISPER_TRANSCRIBE_URL
+    return await resolveLocalServiceUrl('transcribe', settings?.whisperTranscribeUrl)
   } catch {
     return DEFAULT_WHISPER_TRANSCRIBE_URL
   }

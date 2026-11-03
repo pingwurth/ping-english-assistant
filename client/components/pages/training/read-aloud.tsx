@@ -22,12 +22,12 @@ import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMa
 import { makeRecordId, sentencesInScope } from '@/core/training/session'
 import type { SentenceRange, SentencePlayer } from '@/core/player/sentence-player'
 import { useSentencePlayer, NO_SENTENCES } from '@/lib/use-sentence-player'
-import { createRecorder, RecorderPermissionError, type WebRecorder } from '@/platform/recorder'
+import { RecorderPermissionError } from '@/platform/recorder'
 import { appendTrainingRecord } from '@/stores/training-record-store'
 import { ApiError, getSoeService } from '@/services'
 import type { SoeEvaluateResponse } from '@/types/api'
 import type { ReadAloudDetail, TrainingRecord } from '@/types/training'
-import { useRecordingReplayUrl } from './recording-review'
+import { useRecordingReplayUrl, useRecorderSession } from './recording-review'
 
 /** 单句阶段：空闲 → 录音中 → 评分中 → 已出分 */
 type Phase = 'idle' | 'recording' | 'scoring' | 'scored'
@@ -49,17 +49,16 @@ function ReadAloud() {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
   const [totals, setTotals] = useState<number[]>([])
-  /** recorder 实例同步给 LiveRecordingWave 自订阅（评审 #51：volume/计时不再进本组件 state） */
-  const [recorder, setRecorder] = useState<WebRecorder | null>(null)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null)
-  const recorderRef = useRef<WebRecorder | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
   /** 每句只写一条 train: 记录（首次评分时），沿用批次 C 约定 */
   const writtenRef = useRef<Set<number>>(new Set())
   /** maxreach/卸载场景调用最新 stopRecording 闭包 */
   const stopRef = useRef<() => Promise<void>>(async () => {})
+  /** 录音器会话（挂载创建/卸载销毁 + maxreach 自动收尾；三训练页共用 hook），
+   *  recorder 实例同步给 LiveRecordingWave 自订阅（评审 #51：volume/计时不再进本组件 state） */
+  const { recorder, recorderRef, abortRef } = useRecorderSession(() => stopRef.current())
   /** 录音回听 ObjectURL 生命周期（与 shadowing/recitation 共用 recording-review.tsx） */
   const { recordingUrl, setRecordingUrlFromBlob } = useRecordingReplayUrl()
 
@@ -73,23 +72,6 @@ function ReadAloud() {
     sentences: record?.subtitleData?.sentences ?? NO_SENTENCES,
     audioElement: audioRef,
   })
-
-  // 录音器生命周期：挂载创建 + 到达 60s 上限自动收尾；卸载 destroy + 中止评分请求
-  // （volume/计时高频更新由 LiveRecordingWave 自订阅承接，评审 #51）
-  useEffect(() => {
-    const rec = createRecorder()
-    recorderRef.current = rec
-    setRecorder(rec)
-    rec.on('maxreach', () => { void stopRef.current() })
-    const abort = new AbortController()
-    abortRef.current = abort
-    return () => {
-      abort.abort()
-      rec.destroy()
-      recorderRef.current = null
-      setRecorder(null)
-    }
-  }, [])
 
   // 切换句子：重置本句阶段与展示
   const resetSentenceState = () => {

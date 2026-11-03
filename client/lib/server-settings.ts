@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir, rename } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
+import { DEFAULT_WHISPER_ALIGN_URL, DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
 
 export interface LlmSettings {
   provider: string
@@ -277,6 +278,23 @@ export async function writeLocalServices(services: LocalServices): Promise<void>
   await mutateRaw((raw) => {
     raw.localServices = services
   })
+}
+
+/**
+ * whisper 服务地址解析（唯一实现，两条转写路由共用）。
+ * 优先级：localServices 段（设置页「本地服务配置」，唯一有效写入口）→
+ * legacy 配置字段（由调用方传入：主路由取 per-request configId 选中的配置，
+ * local 路由取 effective）→ 默认地址。
+ */
+export async function resolveLocalServiceUrl(
+  kind: 'align' | 'transcribe',
+  legacyUrl?: string,
+): Promise<string> {
+  const ls = await readLocalServices()
+  const configured = kind === 'align' ? ls.whisperAlignUrl : ls.whisperTranscribeUrl
+  if (configured) return configured
+  if (legacyUrl) return legacyUrl
+  return kind === 'align' ? DEFAULT_WHISPER_ALIGN_URL : DEFAULT_WHISPER_TRANSCRIBE_URL
 }
 
 /* ── Kokoro TTS settings ─────────────────────────────── */

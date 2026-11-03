@@ -624,6 +624,26 @@ function soeCredsOk(c: SoeConfig, name: 'azure' | 'tencent' | 'iflytek'): boolea
   return Boolean(c.iflytek?.appId && c.iflytek?.apiKey && c.iflytek?.apiSecret)
 }
 
+/** 各 provider 的凭据输入字段表（标签/占位/是否密文）—— 数据驱动渲染。
+ *  原为三个 ~29 行 JSX 块逐字段拷贝，新增字段或漏一个 type=password 只会发生在单侧 */
+const SOE_CRED_FIELDS: Record<'azure' | 'tencent' | 'iflytek', Array<{ key: string; label: string; placeholder: string; password?: boolean }>> = {
+  azure: [
+    { key: 'key', label: 'Speech Key', placeholder: 'Azure 资源密钥（Ocp-Apim-Subscription-Key）', password: true },
+    { key: 'region', label: 'Region', placeholder: 'eastasia' },
+    { key: 'host', label: 'Host（可选）', placeholder: '自定义域名资源（设置后优先于 Region）' },
+  ],
+  tencent: [
+    { key: 'appId', label: 'AppID', placeholder: '腾讯云账号 AppID（数字，控制台「账号信息」页）' },
+    { key: 'secretId', label: 'SecretId', placeholder: '腾讯云 CAM API 密钥 SecretId' },
+    { key: 'secretKey', label: 'SecretKey', placeholder: '腾讯云 CAM API 密钥 SecretKey', password: true },
+  ],
+  iflytek: [
+    { key: 'appId', label: 'AppId', placeholder: '讯飞控制台「语音评测」应用 AppId' },
+    { key: 'apiKey', label: 'APIKey', placeholder: '讯飞 API Key', password: true },
+    { key: 'apiSecret', label: 'APISecret', placeholder: '讯飞 API Secret', password: true },
+  ],
+}
+
 function SoeConfigCard() {
   const [config, setConfig] = useState<SoeConfig | null>(null)
   const [editing, setEditing] = useState(false)
@@ -660,6 +680,14 @@ function SoeConfigCard() {
 
   /** 代理共享密钥（server/.env SOE_SHARED_TOKEN；跨机部署代理开启鉴权时必填，本机回环可留空） */
   const [editToken, setEditToken] = useState('')
+
+  /** 三 provider 凭据编辑值的统一读写（SOE_CRED_FIELDS 数据驱动渲染用） */
+  const editCreds = { azure: editAzure, tencent: editTencent, iflytek: editIflytek } as const
+  const setEditCred = (provider: keyof typeof editCreds, key: string, value: string) => {
+    if (provider === 'azure') setEditAzure((p) => ({ ...p, [key]: value } as typeof p))
+    else if (provider === 'tencent') setEditTencent((p) => ({ ...p, [key]: value } as typeof p))
+    else setEditIflytek((p) => ({ ...p, [key]: value } as typeof p))
+  }
 
   const handleEdit = () => {
     const c = config ?? { provider: 'mock' as const, proxyUrl: DEFAULT_SOE_PROXY_URL }
@@ -766,94 +794,19 @@ function SoeConfigCard() {
                 </div>
               )}
 
-              {editProvider === 'azure' && (
+              {editProvider !== 'mock' && (
                 <div className="flex flex-col gap-2">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">Speech Key</label>
-                    <Input
-                      type="password"
-                      value={editAzure.key}
-                      onChange={(e) => setEditAzure({ ...editAzure, key: e.target.value })}
-                      placeholder="Azure 资源密钥（Ocp-Apim-Subscription-Key）"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">Region</label>
-                    <Input
-                      value={editAzure.region}
-                      onChange={(e) => setEditAzure({ ...editAzure, region: e.target.value })}
-                      placeholder="eastasia"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">Host（可选）</label>
-                    <Input
-                      value={editAzure.host}
-                      onChange={(e) => setEditAzure({ ...editAzure, host: e.target.value })}
-                      placeholder="自定义域名资源（设置后优先于 Region）"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {editProvider === 'tencent' && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">AppID</label>
-                    <Input
-                      value={editTencent.appId}
-                      onChange={(e) => setEditTencent({ ...editTencent, appId: e.target.value })}
-                      placeholder="腾讯云账号 AppID（数字，控制台「账号信息」页）"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">SecretId</label>
-                    <Input
-                      value={editTencent.secretId}
-                      onChange={(e) => setEditTencent({ ...editTencent, secretId: e.target.value })}
-                      placeholder="腾讯云 CAM API 密钥 SecretId"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">SecretKey</label>
-                    <Input
-                      type="password"
-                      value={editTencent.secretKey}
-                      onChange={(e) => setEditTencent({ ...editTencent, secretKey: e.target.value })}
-                      placeholder="腾讯云 CAM API 密钥 SecretKey"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {editProvider === 'iflytek' && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">AppId</label>
-                    <Input
-                      value={editIflytek.appId}
-                      onChange={(e) => setEditIflytek({ ...editIflytek, appId: e.target.value })}
-                      placeholder="讯飞控制台「语音评测」应用 AppId"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">APIKey</label>
-                    <Input
-                      type="password"
-                      value={editIflytek.apiKey}
-                      onChange={(e) => setEditIflytek({ ...editIflytek, apiKey: e.target.value })}
-                      placeholder="讯飞 API Key"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium">APISecret</label>
-                    <Input
-                      type="password"
-                      value={editIflytek.apiSecret}
-                      onChange={(e) => setEditIflytek({ ...editIflytek, apiSecret: e.target.value })}
-                      placeholder="讯飞 API Secret"
-                    />
-                  </div>
+                  {SOE_CRED_FIELDS[editProvider].map((f) => (
+                    <div key={f.key} className="flex flex-col gap-1.5">
+                      <label className="text-sm font-medium">{f.label}</label>
+                      <Input
+                        type={f.password ? 'password' : undefined}
+                        value={(editCreds[editProvider] as Record<string, string>)[f.key]}
+                        onChange={(e) => setEditCred(editProvider, f.key, e.target.value)}
+                        placeholder={f.placeholder}
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
 

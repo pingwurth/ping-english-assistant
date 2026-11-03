@@ -258,6 +258,7 @@ function BackupSection() {
   const [summary, setSummary] = useState<ImportSummary | null>(null)
   const [error, setError] = useState('')
   const [exportingFull, setExportingFull] = useState(false)
+  const [exportingJson, setExportingJson] = useState(false)
   const [mediaInfo, setMediaInfo] = useState<{ count: number; bytes: number } | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
@@ -280,11 +281,14 @@ function BackupSection() {
 
   const handleExport = async () => {
     setError('')
+    setExportingJson(true)
     try {
       const { filename, json } = await buildBackup()
       downloadJsonBackup(filename, json)
     } catch {
       setError('导出失败，请重试')
+    } finally {
+      setExportingJson(false)
     }
   }
 
@@ -363,8 +367,8 @@ function BackupSection() {
         </CardDescription>
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void handleExport()}>
-            <Download data-icon="inline-start" />导出备份
+          <Button variant="outline" disabled={exportingJson} onClick={() => void handleExport()}>
+            <Download data-icon="inline-start" />{exportingJson ? '导出中…' : '导出备份'}
           </Button>
           <Button variant="outline" disabled={exportingFull} onClick={() => void handleExportFull()}>
             <FileArchive data-icon="inline-start" />{exportingFull ? '打包中…' : '完整备份（含媒体）'}

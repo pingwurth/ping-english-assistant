@@ -15,7 +15,7 @@
  * STORE 条目不验 CRC——读入 JS 会破坏零拷贝优势（future：分片流式 CRC 钩子）。
  */
 
-import { deflateSync, inflateSync } from 'fflate'
+import { deflate as deflateAsync, deflateSync, inflateSync } from 'fflate'
 
 /** 非 zip64 单盘 zip 上限（4GiB-1，u32 偏移上限） */
 export const ZIP_MAX_BYTES = 0xFFFFFFFF
@@ -56,6 +56,13 @@ export interface ZipWriter {
   /** 追加一个条目；store=true → method 0 原样透传（不拷贝），默认 deflate level 6 */
   add(name: string, data: Uint8Array, opts?: { store?: boolean }): void
   /**
+   * 异步压缩追加条目：deflate 走 fflate 异步 API（浏览器下由 Web Worker 承担压缩，
+   * 不阻塞主线程），产出字节与 add() 的 deflateSync(level 6) 一致。
+   * 大 JSON 条目（如完整备份的 backup.json，数十 MB）专用——原先在主线程同步
+   * 压缩会把导出按钮点击后的页面卡死数秒（2026-11 全仓复审）。
+   */
+  addCompressed(name: string, data: Uint8Array): Promise<void>
+  /**
    * 流式追加 STORE 条目：数据不整体进内存，逐块推 sink 并增量累计 CRC——
    * 大媒体文件（数百 MB 视频）导出时的峰值堆从「整文件」降到「单块」。
    * size 须预先已知（Blob.size）；CRC 走 data descriptor 记录在数据尾部，
@@ -92,35 +99,55 @@ export function createZipWriter(sink: ZipChunkSink, opts?: { limit?: number }): 
     offset += chunk.length
   }
 
+  /** 写本地头 + 名字 + 已压缩数据，登记中央目录记录（add / addCompressed 共用） */
+  const writeEntry = (
+    nameBytes: Uint8Array,
+    method: number,
+    crc: number,
+    compressed: Uint8Array,
+    uncompressedSize: number,
+  ): void => {
+    const localOffset = offset
+    const h = new DataView(new ArrayBuffer(30))
+    h.setUint32(0, 0x04034b50, true) // 本地头签名
+    h.setUint16(4, 20, true) // 版本
+    h.setUint16(6, 0x0800, true) // UTF-8 名
+    h.setUint16(8, method, true)
+    h.setUint16(10, 0, true) // time
+    h.setUint16(12, 0x0021, true) // date = 1980-01-01
+    h.setUint32(14, crc, true)
+    h.setUint32(18, compressed.length, true)
+    h.setUint32(22, uncompressedSize, true)
+    h.setUint16(26, nameBytes.length, true)
+    h.setUint16(28, 0, true) // extraLen
+    push(new Uint8Array(h.buffer))
+    push(nameBytes)
+    push(compressed)
+    records.push({ nameBytes, method, crc, compressedSize: compressed.length, uncompressedSize, localOffset })
+  }
+
+  const assertCanAdd = (name: string, nameBytesLen: number): void => {
+    if (finished) throw new Error('zip writer 已 finish，不能再 add')
+    if (records.length >= 0xFFFF) throw new Error('备份条目过多（超过 65535），暂不支持')
+    if (nameBytesLen > 0xFFFF) throw new Error(`条目名过长：${name}`)
+  }
+
   return {
     get bytesWritten() { return offset },
     add(name, data, addOpts) {
-      if (finished) throw new Error('zip writer 已 finish，不能再 add')
-      if (records.length >= 0xFFFF) throw new Error('备份条目过多（超过 65535），暂不支持')
       const nameBytes = encoder.encode(name)
-      if (nameBytes.length > 0xFFFF) throw new Error(`条目名过长：${name}`)
+      assertCanAdd(name, nameBytes.length)
       const method = addOpts?.store ? 0 : 8
       const compressed = method === 0 ? data : deflateSync(data, { level: 6 })
-      const crc = crc32(data)
-      const localOffset = offset
-
-      const h = new DataView(new ArrayBuffer(30))
-      h.setUint32(0, 0x04034b50, true) // 本地头签名
-      h.setUint16(4, 20, true) // 版本
-      h.setUint16(6, 0x0800, true) // UTF-8 名
-      h.setUint16(8, method, true)
-      h.setUint16(10, 0, true) // time
-      h.setUint16(12, 0x0021, true) // date = 1980-01-01
-      h.setUint32(14, crc, true)
-      h.setUint32(18, compressed.length, true)
-      h.setUint32(22, data.length, true)
-      h.setUint16(26, nameBytes.length, true)
-      h.setUint16(28, 0, true) // extraLen
-      push(new Uint8Array(h.buffer))
-      push(nameBytes)
-      push(compressed)
-
-      records.push({ nameBytes, method, crc, compressedSize: compressed.length, uncompressedSize: data.length, localOffset })
+      writeEntry(nameBytes, method, crc32(data), compressed, data.length)
+    },
+    async addCompressed(name, data) {
+      const nameBytes = encoder.encode(name)
+      assertCanAdd(name, nameBytes.length)
+      const compressed = await new Promise<Uint8Array>((resolve, reject) => {
+        deflateAsync(data, { level: 6 }, (err, out) => (err ? reject(err) : resolve(out)))
+      })
+      writeEntry(nameBytes, 8, crc32(data), compressed, data.length)
     },
     async addStream(name, size, chunks) {
       if (finished) throw new Error('zip writer 已 finish，不能再 add')

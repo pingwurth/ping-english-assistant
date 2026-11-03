@@ -1,13 +1,9 @@
 /**
  * 翻译模型配置 Hook —— 供单句翻译（字幕编辑弹窗）与整篇翻译（抽屉）共用。
- *
- * - 仅在首次启用时请求 /api/settings/llm-configs，之后复用（弹窗反复开关不重复请求）
- * - 只保留配置了 translateModel 的条目；默认选中 defaultId 对应项，否则取第一项
- * - 请求失败时不置已加载标记，下次启用会重试
+ * 拉取/缓存/默认选择统一委托 lib/use-service-configs（原三处拷贝的收敛）。
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { selectServiceConfigs } from '@/lib/llm-configs'
+import { useServiceConfigs } from '@/lib/use-service-configs'
 
 /** 翻译配置项（仅翻译相关字段） */
 export interface TranslateConfig {
@@ -22,35 +18,10 @@ export interface TranslateConfig {
  * @returns configs 可用配置列表；configId 当前选中 id；setConfigId 切换选中
  */
 export function useTranslateConfigs(enabled: boolean) {
-  const [configs, setConfigs] = useState<TranslateConfig[]>([])
-  const [configId, setConfigId] = useState('')
-  /** 已成功加载过：避免弹窗反复开关时重复请求 */
-  const loadedRef = useRef(false)
-
-  useEffect(() => {
-    if (!enabled || loadedRef.current) return
-    loadedRef.current = true
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch('/api/settings/llm-configs')
-        const data = await res.json()
-        if (cancelled) {
-          // 成功响应被丢弃（打开即关/快速切换）：必须复位标记，
-          // 否则之后每次打开都命中 early return，configs 永久为空
-          loadedRef.current = false
-          return
-        }
-        const { list, preferredId } = selectServiceConfigs<TranslateConfig>(data, 'translateModel')
-        setConfigs(list.map((c) => ({ id: c.id, name: c.name, translateModel: c.translateModel as string })))
-        if (preferredId) setConfigId(preferredId)
-      } catch {
-        // 读取失败：允许下次启用时重试
-        loadedRef.current = false
-      }
-    })()
-    return () => { cancelled = true }
-  }, [enabled])
-
+  const { configs, configId, setConfigId } = useServiceConfigs<TranslateConfig>(enabled, 'translateModel', (c) => ({
+    id: c.id,
+    name: String(c.name ?? ''),
+    translateModel: String(c.translateModel ?? ''),
+  }))
   return { configs, configId, setConfigId }
 }

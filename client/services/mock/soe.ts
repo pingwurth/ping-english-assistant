@@ -13,6 +13,7 @@
 
 import type { SoeEvaluateResponse, SoePhonemeScore, SoeWordScore } from '../../types/api'
 import { ApiError, abortableDelay, throwIfAborted, type SoeEvalMode, type SoeService } from '../contracts'
+import { parseWavDurationWithFallback } from '@/lib/wav-duration'
 
 export interface MockSoeOptions {
   /** 模拟延迟范围 ms（默认 300-800） */
@@ -36,25 +37,11 @@ function fnv1a(str: string): number {
   return h >>> 0
 }
 
-/** 从标准 WAV 解析时长（ms）；不可得时按 16kHz 单声道 16bit 字节率估算（与 mock/asr.ts 同策略） */
+/** 时长解析复用 lib/wav-duration（全应用唯一实现，原为冻结的逐行拷贝）：
+ *  WAV 头解析 chunk 遍历，失败按 16kHz 单声道 16bit（32kB/s）字节率估算 */
 async function estimateDurationMs(audio: Blob): Promise<number> {
   if (audio.size === 0) return 0
-  const buf = await audio.arrayBuffer()
-  if (buf.byteLength >= 44) {
-    const dv = new DataView(buf)
-    const tag = (off: number, len: number) => String.fromCharCode(...new Uint8Array(buf, off, len))
-    if (tag(0, 4) === 'RIFF' && tag(8, 4) === 'WAVE') {
-      const sampleRate = dv.getUint32(24, true)
-      const blockAlign = dv.getUint16(32, true)
-      let off = 12
-      while (sampleRate && blockAlign && off + 8 <= buf.byteLength) {
-        const size = dv.getUint32(off + 4, true)
-        if (tag(off, 4) === 'data') return Math.round((size / blockAlign / sampleRate) * 1000)
-        off += 8 + size + (size & 1)
-      }
-    }
-  }
-  return Math.round((audio.size / 32000) * 1000)
+  return parseWavDurationWithFallback(await audio.arrayBuffer(), 32_000)
 }
 
 /** 词形 → 伪音标（取元音字母映射 IPA 元音，辅音原样，最多 3 个） */

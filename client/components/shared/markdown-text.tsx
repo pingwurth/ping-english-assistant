@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import 'katex/dist/katex.min.css'
-import { parseNoteMarkdown, type InlineToken, type NoteBlock, type NoteListItem } from '@/core/markdown/note-markdown'
+import { parseNoteMarkdown, tokenizeInline, type InlineToken, type NoteBlock, type NoteListItem } from '@/core/markdown/note-markdown'
 
 type KatexModule = (typeof import('katex'))['default']
 
@@ -133,4 +133,21 @@ function MarkdownText({ src, className = '' }: { src: string; className?: string
   return <div className={`flex flex-col gap-1.5 text-sm ${className}`}>{blocks.map((b, i) => <Block key={i} block={b} katex={katex} />)}</div>
 }
 
-export { MarkdownText }
+/** 行内 Markdown（**加粗** / *斜体* / ==高亮== / `代码` / 数学）：与笔记同一 canonical
+ *  解析（note-markdown.tokenizeInline）与渲染（Inline），不产生块级包装 —— 供例句等
+ *  行内场景使用（此前 mnemonic 页自造正则只认 **加粗**，其余记号渲染为原文）。 */
+function InlineMarkdown({ src }: { src: string }) {
+  const [katex, setKatex] = useState<KatexModule | null>(null)
+  const hasMath = src.includes('$')
+  useEffect(() => {
+    if (!hasMath || katex) return
+    let alive = true
+    loadKatex()
+      .then((k) => { if (alive) setKatex(k) })
+      .catch(() => { katexLoading = null })
+    return () => { alive = false }
+  }, [hasMath, katex])
+  return <Inline tokens={tokenizeInline(src)} katex={katex} />
+}
+
+export { MarkdownText, InlineMarkdown }

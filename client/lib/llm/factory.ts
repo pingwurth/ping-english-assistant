@@ -10,7 +10,7 @@
 import { ChatOpenAI } from '@langchain/openai'
 import type { ChatModelConfig } from './types'
 import { LlmError } from './errors'
-import { resolveServiceUrl } from '@/lib/service-endpoints'
+import { resolveServiceUrl, normalizeProviderAlias } from '@/lib/service-endpoints'
 
 // ---------------------------------------------------------------------------
 // Chat Model 工厂
@@ -80,11 +80,10 @@ export function createChatModel(config: ChatModelConfig, options?: CreateChatMod
 /** 将 provider 别名归一化为标准 key */
 export function normalizeProvider(provider: string): string {
   if (!provider) return 'mimo'
-  // 'qwen' 是配置对话框对 DashScope 的别名（默认 provider 即 qwen，见 service-endpoints 注释）。
-  // 不归一的话 ASR dispatch 会把它当未知 provider 落到无时间戳的 mimo 分支，
-  // 丢掉 DashScope 原生时间戳（路由后处理只能用 WhisperX/比例分配兜底）。
-  if (provider === 'qwen') return 'dashscope'
-  return provider
+  // 别名归一唯一出处见 service-endpoints.normalizeProviderAlias（'qwen' → 'dashscope'），
+  // 与 endpoint/默认模型查表共用一张表。不归一的话 ASR dispatch 会把 'qwen' 当未知
+  // provider 落到无时间戳的 mimo 分支，丢掉 DashScope 原生时间戳。
+  return normalizeProviderAlias(provider)
 }
 
 /**

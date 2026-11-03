@@ -5,10 +5,10 @@
  */
 
 import type { TtsModelConfig, TtsResult } from '../types'
-import { LlmError } from '../errors'
+import { LlmError, readUpstreamErrorDetail } from '../errors'
 import { resolveProviderUrl } from '../factory'
 import { getDefaultModel, getDefaultVoice } from '@/lib/service-endpoints'
-import { parseWavDurationWithFallback } from '@/lib/wav-duration'
+import { decodeTtsAudioPayload } from '@/lib/wav-duration'
 
 /**
  * MiMo TTS 语音合成
@@ -47,14 +47,7 @@ export async function generateTtsMimo(
   })
 
   if (!res.ok) {
-    let detail = ''
-    try {
-      const errBody = await res.json()
-      detail = errBody.error?.message || errBody.message || JSON.stringify(errBody)
-    } catch {
-      detail = (await res.text().catch(() => '')).slice(0, 500)
-    }
-    throw new LlmError('UPSTREAM_ERROR', `TTS 调用失败 (${res.status})：${detail}`)
+    throw new LlmError('UPSTREAM_ERROR', `TTS 调用失败 (${res.status})：${await readUpstreamErrorDetail(res)}`)
   }
 
   const result = await res.json()
@@ -63,11 +56,6 @@ export async function generateTtsMimo(
     throw new LlmError('RESPONSE_EMPTY', 'TTS 响应中未返回音频数据')
   }
 
-  // slice 出精确视图：小 payload（≤4KB）时 Node 从 8KB 池分配，直接取 .buffer 会带出池内垃圾
-  const buf = Buffer.from(base64, 'base64')
-  const audioBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
-  // 24kHz mono 16-bit = 48kB/s：头解析失败时的字节率估算兜底
-  const durationMs = parseWavDurationWithFallback(audioBuffer, 24_000 * 2)
-
-  return { audioBuffer, durationMs }
+  // base64 解码（含 Node 8KB 池 slice 修正）+ 时长解析见 lib/wav-duration 唯一实现
+  return decodeTtsAudioPayload(base64)
 }

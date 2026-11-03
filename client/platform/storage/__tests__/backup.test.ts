@@ -94,3 +94,25 @@ describe('备份导入原子性', () => {
     expect(await actualIdb.materialsStore.get('m-import')).toBeDefined()
   })
 })
+
+describe('stringifyBackupJson 分片序列化', () => {
+  it('与 JSON.stringify 整体序列化字节一致（unicode/引号/嵌套/空容器/跳过 undefined 键）', async () => {
+    const payload = {
+      app: 'ping-english-assistant',
+      formatVersion: 3,
+      exportedAt: 1730000000000,
+      materials: [
+        { id: 'm-1', name: 'Ted "Talk"', subtitleData: { sentences: [{ textEn: 'naïve café', textZh: '中文“引号”' }] } },
+        ...Array.from({ length: 60 }, (_, i) => ({ id: `m-${i + 2}`, rows: [i, null, true, 'x,y'] })),
+      ],
+      records: Object.fromEntries(
+        Array.from({ length: 60 }, (_, i) => [`train:${i}`, { score: i, note: i % 2 ? 'a' : null }]),
+      ),
+      prefs: { 'a:b': '1', empty: {} },
+      emptyList: [] as unknown[],
+      skipped: undefined,
+    }
+    const mod = await import('../backup')
+    expect(await mod.stringifyBackupJson(payload)).toBe(JSON.stringify(payload))
+  })
+})

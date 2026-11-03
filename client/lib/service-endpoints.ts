@@ -41,11 +41,15 @@ const LOCAL_ENDPOINTS: Record<ServiceKind, string> = {
 }
 
 /**
- * provider 别名归一：'qwen' 是 'dashscope' 的别名，查表前先归一，
- * 使 endpoint / 默认模型 / 默认音色三张表各自只保留一份真源（原 qwen 与 dashscope 逐字重复）。
+ * provider 别名归一（唯一出处）：'qwen' 是 'dashscope' 的别名，查表前先归一，
+ * 使 endpoint / 默认模型 / 默认音色三张表各自只保留一份真源。
+ * factory.normalizeProvider 也走这里 —— 此前两张手工同步表漏同步过一次，
+ * 'qwen' 只在一侧归一时 ASR 会静默落到错误 provider（空 SRT）。
  */
 const PROVIDER_ALIASES: Record<string, string> = { qwen: 'dashscope' }
-const aliasProvider = (provider: ProviderKey): string => PROVIDER_ALIASES[provider] ?? provider
+export function normalizeProviderAlias(provider: ProviderKey): string {
+  return PROVIDER_ALIASES[provider] ?? provider
+}
 
 const PROVIDER_ENDPOINTS: Record<string, Record<ServiceKind, string>> = {
   dashscope: DASHSCOPE_ENDPOINTS,
@@ -138,7 +142,7 @@ export function buildServiceUrl(baseUrl: string, endpoint: string): string {
  * 'qwen' 作为 'dashscope' 的别名处理。
  */
 export function getDefaultEndpoint(provider: ProviderKey, service: ServiceKind): string {
-  return PROVIDER_ENDPOINTS[aliasProvider(provider)]?.[service] ?? MIMO_ENDPOINTS[service]
+  return PROVIDER_ENDPOINTS[normalizeProviderAlias(provider)]?.[service] ?? MIMO_ENDPOINTS[service]
 }
 
 /**
@@ -147,7 +151,7 @@ export function getDefaultEndpoint(provider: ProviderKey, service: ServiceKind):
  * 'qwen' 作为 'dashscope' 的别名处理。
  */
 export function getDefaultModel(provider: ProviderKey, service: ServiceKind): string {
-  return DEFAULT_MODELS[service]?.[aliasProvider(provider)] ?? ''
+  return DEFAULT_MODELS[service]?.[normalizeProviderAlias(provider)] ?? ''
 }
 
 /**
@@ -155,7 +159,7 @@ export function getDefaultModel(provider: ProviderKey, service: ServiceKind): st
  * 'qwen' 作为 'dashscope' 的别名处理。
  */
 export function getDefaultVoice(provider: ProviderKey): string {
-  return DEFAULT_VOICES[aliasProvider(provider)] ?? 'alloy'
+  return DEFAULT_VOICES[normalizeProviderAlias(provider)] ?? 'alloy'
 }
 
 /**

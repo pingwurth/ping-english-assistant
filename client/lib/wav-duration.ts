@@ -38,3 +38,16 @@ export function parseWavDurationMs(buf: ArrayBuffer): number | null {
 export function parseWavDurationWithFallback(buf: ArrayBuffer, fallbackBytesPerSecond: number): number {
   return parseWavDurationMs(buf) ?? Math.max(1, Math.round((buf.byteLength / fallbackBytesPerSecond) * 1000))
 }
+
+/**
+ * TTS 上游 base64 音频 → { audioBuffer, durationMs }（mimo/dashscope 两 provider 共用）。
+ * slice 出精确视图：小 payload（≤4KB）时 Node 从 8KB 池分配，直接取 .buffer 会把
+ * 池内垃圾一起带给上层编码成坏 WAV —— 该 workaround 原先只在一份拷贝里修过，抽到
+ * 唯一实现防再漂移。24kHz mono 16-bit = 48kB/s 为头解析失败时的字节率估算兜底。
+ * 仅 BFF（Node）侧调用；浏览器侧勿用（依赖 Buffer）。
+ */
+export function decodeTtsAudioPayload(base64: string): { audioBuffer: ArrayBuffer; durationMs: number } {
+  const buf = Buffer.from(base64, 'base64')
+  const audioBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+  return { audioBuffer, durationMs: parseWavDurationWithFallback(audioBuffer, 24_000 * 2) }
+}

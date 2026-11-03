@@ -136,6 +136,48 @@ export function detectDirection(texts: string[]): TranslateDirection {
   return cjkCount / texts.length > 0.3 ? 'zh2en' : 'en2zh'
 }
 
+export interface BilingualSrtOutcome {
+  srt: string
+  /** 降级原因（翻译失败保留单语 / 模型漏翻原文回填）——调用方如实展示，不再静默 */
+  warning?: string
+}
+
+/** 判定为用户取消（DOMException AbortError 或 translateTexts 内部的「翻译已取消」Error） */
+function isCancelError(err: unknown): boolean {
+  return (err instanceof DOMException && err.name === 'AbortError') ||
+    (err instanceof Error && err.message === '翻译已取消')
+}
+
+/**
+ * 单语 SRT → 双语 SRT 的统一编排（TTS 页与转写链共用；原两份手写编排的
+ * 中止/降级语义已漂移：一份静默跳过、一份带警告降级）。本函数即此模块头的
+ * 「共享之家」：parse → 按方向取源文本 → detectDirection → translateTexts →
+ * mergeBilingualSrt → 降级保留单语。
+ * 翻译失败（非取消）降级保留单语并带 warning 返回，不抛出；用户取消统一抛
+ * DOMException('AbortError')，由调用方按各自取消语义处理。
+ */
+export async function translateSrtToBilingual(
+  srtText: string,
+  configId: string | undefined,
+  signal: AbortSignal | undefined,
+  onProgress?: (done: number, total: number) => void,
+): Promise<BilingualSrtOutcome> {
+  const { sentences } = parseSubtitle(srtText)
+  if (sentences.length === 0) return { srt: srtText }
+  const texts = sentences.map((s) => s.textEn)
+  const direction = detectDirection(texts)
+  const warnings: string[] = []
+  try {
+    const translations = await translateTexts(texts, configId, direction, signal, onProgress, (filled, total) => {
+      warnings.push(`模型漏翻 ${filled}/${total} 条，对应句保留原文`)
+    })
+    return { srt: mergeBilingualSrt(srtText, translations, direction), warning: warnings[0] }
+  } catch (err) {
+    if (isCancelError(err)) throw new DOMException('翻译已取消', 'AbortError')
+    return { srt: srtText, warning: '翻译失败，已保留单语字幕：' + (err instanceof Error ? err.message : '未知错误') }
+  }
+}
+
 /**
  * 将译文合并回 SRT 字幕，输出双语（英上中下）SRT 文本。
  * - en2zh：保留原 textEn 与 words，textZh = 译文

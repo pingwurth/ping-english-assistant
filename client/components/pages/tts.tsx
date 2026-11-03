@@ -24,9 +24,9 @@ import { formatDuration } from '@/components/shared/player-parts'
 import { TTS_MAX_TEXT_LENGTH } from '@/core/tts/timeline'
 import { writeTtsExport } from '@/lib/tts-export'
 import { downloadBlob } from '@/lib/download'
-import { translateTexts, detectDirection, mergeBilingualSrt } from '@/lib/translate'
+import { translateSrtToBilingual } from '@/lib/translate'
 import { getTranslateEnabled, setTranslateEnabled } from '@/lib/pref-keys'
-import { selectServiceConfigs } from '@/lib/llm-configs'
+import { useServiceConfigs } from '@/lib/use-service-configs'
 import { parseSubtitle } from '@/core/subtitle'
 import { generateKokoroTts, KOKORO_VOICES, type KokoroLoadState } from '@/platform/kokoro-tts'
 
@@ -73,14 +73,53 @@ function dateStamp(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
 }
 
+/** 选择器外壳：带边框 label + focus-ring（模型/音色/语速/翻译模型/翻译开关共用，原五份逐字拷贝） */
+function FieldShell({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+      <span className="shrink-0 whitespace-nowrap text-muted-foreground">{label}：</span>
+      {children}
+    </label>
+  )
+}
+
+/** 常规下拉选择器（FieldShell + select） */
+function FieldSelect({ label, value, onChange, disabled, ariaLabel, title, children }: {
+  label: string
+  value: string | number
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void
+  disabled?: boolean
+  ariaLabel?: string
+  title?: string
+  children: React.ReactNode
+}) {
+  return (
+    <FieldShell label={label}>
+      <select
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        title={title}
+        className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {children}
+      </select>
+    </FieldShell>
+  )
+}
+
 function TTS() {
   const navigate = useNavigate()
   const [text, setText] = useState('You should answer the questions as you listen. Repeat each sentence as clearly as you can.')
   const [engine, setEngine] = useState<TtsEngine>('cloud')
   const [voiceIdx, setVoiceIdx] = useState(0)
   const [speedIdx, setSpeedIdx] = useState(2)
-  const [ttsConfigs, setTtsConfigs] = useState<TtsConfigItem[]>([])
-  const [selectedConfigId, setSelectedConfigId] = useState<string>('')
+  // 模型配置拉取统一走 useServiceConfigs（与转写页/翻译弹窗同一实现；两字段共享一次请求）
+  const ttsSel = useServiceConfigs<TtsConfigItem>(true, 'ttsModel', (c) => c as unknown as TtsConfigItem)
+  const ttsConfigs = ttsSel.configs
+  const selectedConfigId = ttsSel.configId
+  const setSelectedConfigId = ttsSel.setConfigId
   const [cloudVoices, setCloudVoices] = useState<ReadonlyArray<{ id: string; label: string }>>(DEFAULT_CLOUD_VOICES)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [kokoroLoad, setKokoroLoad] = useState<KokoroLoadState>(null)
@@ -89,8 +128,11 @@ function TTS() {
   const [err, setErr] = useState('')
   // 翻译开关与翻译模型配置（与生成错误分离的独立降级提示）
   const [translateEnabled, setTranslateEnabledState] = useState<boolean>(() => getTranslateEnabled())
-  const [translateConfigs, setTranslateConfigs] = useState<Array<{ id: string; name: string; translateModel: string }>>([])
-  const [selectedTranslateConfigId, setSelectedTranslateConfigId] = useState<string>('')
+  const trSel = useServiceConfigs<{ id: string; name: string; translateModel: string }>(true, 'translateModel',
+    (c) => ({ id: c.id, name: String(c.name ?? ''), translateModel: String(c.translateModel ?? '') }))
+  const translateConfigs = trSel.configs
+  const selectedTranslateConfigId = trSel.configId
+  const setSelectedTranslateConfigId = trSel.setConfigId
   const [translateErr, setTranslateErr] = useState('')
   const [translateProgress, setTranslateProgress] = useState<{ done: number; total: number } | null>(null)
   const [gen, setGen] = useState<GenResult | null>(null)
@@ -134,29 +176,20 @@ function TTS() {
     return parseSubtitle(gen.srt).sentences
   }, [gen?.srt])
 
+  // 配置就绪/失败 → 引擎默认与加载标记（取数已上移 useServiceConfigs，这里只做派生：
+  // 有可用 TTS 配置默认 cloud 并带上其音色表，否则/失败回落 kokoro 本地离线）
   useEffect(() => {
-    fetch('/api/settings/llm-configs')
-      .then(res => res.json())
-      .then(data => {
-        // 过滤 + 默认选择统一走 selectServiceConfigs（三处调用方同一默认策略）
-        const tts = selectServiceConfigs<TtsConfigItem>(data, 'ttsModel')
-        setTtsConfigs(tts.list)
-        // 同一响应中顺带提取已配置翻译模型的配置（不发第二次请求）
-        const tr = selectServiceConfigs<{ id: string; name: string; translateModel: string }>(data, 'translateModel')
-        setTranslateConfigs(tr.list)
-        if (tr.preferredId) setSelectedTranslateConfigId(tr.preferredId)
-        const defaultConfig = tts.preferredId ? tts.list.find((c) => c.id === tts.preferredId) : undefined
-        if (defaultConfig) {
-          setSelectedConfigId(defaultConfig.id)
-          if (defaultConfig.ttsVoices?.length) setCloudVoices(defaultConfig.ttsVoices)
-          setEngine('cloud')
-        } else {
-          setEngine('kokoro')
-        }
-      })
-      .catch(() => setEngine('kokoro'))
-      .finally(() => setSettingsLoaded(true))
-  }, [])
+    if (ttsSel.status === 'ready') {
+      const defaultConfig = ttsSel.preferredId ? ttsConfigs.find((c) => c.id === ttsSel.preferredId) : undefined
+      if (defaultConfig?.ttsVoices?.length) setCloudVoices(defaultConfig.ttsVoices)
+      setEngine(defaultConfig ? 'cloud' : 'kokoro')
+      setSettingsLoaded(true)
+    } else if (ttsSel.status === 'error') {
+      setEngine('kokoro')
+      setSettingsLoaded(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsSel.status])
 
   const handleEngineChange = (value: string) => {
     if (value === ADD_MODEL_VALUE) {
@@ -303,28 +336,24 @@ function TTS() {
 
       setGen(result)
 
-      // 先生成后翻译：开关开启且已选翻译配置时，追加双语字幕；失败降级保留单语
+      // 先生成后翻译：开关开启且已选翻译配置时，追加双语字幕。
+      // 编排统一走 translateSrtToBilingual（与转写链同一实现）：失败降级保留单语并带警告
       if (translateEnabled && selectedTranslateConfigId) {
         try {
-          const { sentences } = parseSubtitle(result.srt)
-          const texts = sentences.map(s => s.textEn)
-          const direction = detectDirection(texts)
-          setTranslateProgress({ done: 0, total: texts.length })
-          const translations = await translateTexts(
-            texts,
+          setTranslateProgress({ done: 0, total: 0 })
+          const outcome = await translateSrtToBilingual(
+            result.srt,
             selectedTranslateConfigId || undefined,
-            direction,
             abort.signal,
             (done, total) => setTranslateProgress({ done, total }),
-            // 部分译文被原文回填：如实提示（不当作失败，双语字幕仍生成）
-            (filled, total) => setTranslateErr(`模型漏翻 ${filled}/${total} 条，缺失行以原文占位`),
           )
           if (abort.signal.aborted) return
-          const bilingual = mergeBilingualSrt(result.srt, translations, direction)
-          setGen({ ...result, srt: bilingual })
+          if (outcome.warning) setTranslateErr(outcome.warning)
+          setGen({ ...result, srt: outcome.srt })
         } catch (te) {
           if (abort.signal.aborted) return
           if (te instanceof DOMException && te.name === 'AbortError') return
+          // 理论不可达（编排函数内部已降级不抛），兜底以防回归
           setTranslateErr('翻译失败，已保留单语字幕：' + (te instanceof Error ? te.message : '未知错误'))
         } finally {
           setTranslateProgress(null)
@@ -419,75 +448,49 @@ function TTS() {
             </div>
 
             <div className="flex flex-wrap gap-3">
-              <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <span className="shrink-0 whitespace-nowrap text-muted-foreground">模型：</span>
-                <select
-                  value={isKokoro ? 'kokoro' : selectedConfigId}
-                  onChange={(e) => handleEngineChange(e.target.value)}
-                  disabled={generating || !settingsLoaded}
-                  aria-label="选择语音模型"
-                  title={currentModelOption?.label}
-                  className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {settingsLoaded && modelOptions.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <span className="shrink-0 whitespace-nowrap text-muted-foreground">音色：</span>
-                <select
-                  value={voiceIdx}
-                  onChange={(e) => setVoiceIdx(Number(e.target.value))}
-                  disabled={generating}
-                  aria-label="选择音色"
-                  title={voice?.label}
-                  className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {voices.map((v, i) => (
-                    <option key={v.id} value={i}>{v.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <span className="shrink-0 whitespace-nowrap text-muted-foreground">语速：</span>
-                <select
-                  value={speedIdx}
-                  onChange={(e) => setSpeedIdx(Number(e.target.value))}
-                  disabled={generating}
-                  aria-label="选择语速"
-                  className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {SPEEDS.map((s, i) => (
-                    <option key={s} value={i}>{s}x</option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <span className="shrink-0 whitespace-nowrap text-muted-foreground">翻译：</span>
+              <FieldSelect
+                label="模型"
+                value={isKokoro ? 'kokoro' : selectedConfigId}
+                onChange={(e) => handleEngineChange(e.target.value)}
+                disabled={generating || !settingsLoaded}
+                ariaLabel="选择语音模型"
+                title={currentModelOption?.label}
+              >
+                {settingsLoaded && modelOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </FieldSelect>
+              <FieldSelect label="音色" value={voiceIdx} onChange={(e) => setVoiceIdx(Number(e.target.value))} disabled={generating} ariaLabel="选择音色" title={voice?.label}>
+                {voices.map((v, i) => (
+                  <option key={v.id} value={i}>{v.label}</option>
+                ))}
+              </FieldSelect>
+              <FieldSelect label="语速" value={speedIdx} onChange={(e) => setSpeedIdx(Number(e.target.value))} disabled={generating} ariaLabel="选择语速">
+                {SPEEDS.map((s, i) => (
+                  <option key={s} value={i}>{s}x</option>
+                ))}
+              </FieldSelect>
+              <FieldShell label="翻译">
                 <Switch
                   checked={translateEnabled}
                   onCheckedChange={handleTranslateToggle}
                   disabled={generating}
                   aria-label="生成后翻译为双语字幕"
                 />
-              </label>
+              </FieldShell>
               {translateEnabled && translateConfigs.length > 0 && (
-                <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                  <span className="shrink-0 whitespace-nowrap text-muted-foreground">翻译模型：</span>
-                  <select
-                    value={selectedTranslateConfigId}
-                    onChange={(e) => setSelectedTranslateConfigId(e.target.value)}
-                    disabled={generating || !settingsLoaded}
-                    aria-label="选择翻译模型"
-                    title={selectedTranslateConfig ? `${selectedTranslateConfig.translateModel} · ${selectedTranslateConfig.name}` : undefined}
-                    className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {translateConfigs.map((c) => (
-                      <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
-                    ))}
-                  </select>
-                </label>
+                <FieldSelect
+                  label="翻译模型"
+                  value={selectedTranslateConfigId}
+                  onChange={(e) => setSelectedTranslateConfigId(e.target.value)}
+                  disabled={generating || !settingsLoaded}
+                  ariaLabel="选择翻译模型"
+                  title={selectedTranslateConfig ? `${selectedTranslateConfig.translateModel} · ${selectedTranslateConfig.name}` : undefined}
+                >
+                  {translateConfigs.map((c) => (
+                    <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
+                  ))}
+                </FieldSelect>
               )}
               {generating
                 ? <Button variant="secondary" className="hover:bg-destructive/15 hover:text-destructive dark:hover:bg-destructive/25" onClick={cancelGenerate}><Square data-icon="inline-start" />取消生成</Button>

@@ -6,7 +6,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { readEffectiveLlmSettings, readLlmConfigById, readLocalServices } from '@/lib/server-settings'
+import { readEffectiveLlmSettings, readLlmConfigById, resolveLocalServiceUrl } from '@/lib/server-settings'
 import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import { parseWavDurationMs } from '@/lib/wav-duration'
 import { groupWordsToSegments, type WordTimestamp } from '@/lib/llm/asr-audio'
@@ -14,7 +14,6 @@ import { transcribe, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { AsrModelConfig, AsrSegment } from '@/lib/llm'
 import {
   getDefaultModel,
-  DEFAULT_WHISPER_ALIGN_URL,
   WHISPER_ALIGN_ENDPOINT,
   buildServiceUrl,
 } from '@/lib/service-endpoints'
@@ -197,9 +196,9 @@ export async function POST(request: Request) {
     // 模型实际可能不带 → 转写「成功」却产出空 SRT（2026-11 全仓复审）。只要识别出了
     // 文本而 segments 为空，一律走 WhisperX 对齐 / 比例分配兜底。
     if (result.segments.length === 0 && result.text.trim()) {
-      // 尝试 WhisperX 对齐（地址优先取设置页「本地服务配置」的 localServices 段）
-      const localServices = await readLocalServices()
-      const alignUrl = localServices.whisperAlignUrl || settings.whisperAlignUrl || DEFAULT_WHISPER_ALIGN_URL
+      // 尝试 WhisperX 对齐（地址优先级统一走 resolveLocalServiceUrl：
+      // localServices 段 → 本次选中配置的 legacy 字段 → 默认地址）
+      const alignUrl = await resolveLocalServiceUrl('align', settings.whisperAlignUrl)
       const words = await alignWithWhisperX(audioFile, result.text.trim(), alignUrl)
 
       if (words && words.length > 0) {

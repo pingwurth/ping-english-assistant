@@ -36,6 +36,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
+import { InlineMarkdown } from '@/components/shared/markdown-text'
 import { getServices } from '@/services'
 import { initVocab, vocabStore } from '@/stores/vocab-store'
 import { useStore } from '@/stores/store'
@@ -62,24 +63,7 @@ const difficultyLabel: Record<string, { text: string; variant: 'default' | 'seco
   hard: { text: '困难', variant: 'destructive' },
 }
 
-/** 渲染含 ** 加粗的文本 */
-function BoldText({ text }: { text: string }) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g)
-  return (
-    <>
-      {parts.map((part, i) => {
-        if (part.startsWith('**') && part.endsWith('**')) {
-          return (
-            <strong key={i} className="font-semibold text-primary">
-              {part.slice(2, -2)}
-            </strong>
-          )
-        }
-        return <span key={i}>{part}</span>
-      })}
-    </>
-  )
-}
+
 
 // ─── 卡片组件 ───
 
@@ -217,7 +201,7 @@ function ExamplesCard({ data }: { data?: MnemonicCard['examples'] }) {
         <div key={i} className="space-y-1">
           <div className="text-sm">
             <span className="mr-2 text-xs text-muted-foreground">{i + 1}.</span>
-            <BoldText text={ex.sentence} />
+            <InlineMarkdown src={ex.sentence} />
           </div>
           <div className="pl-5 text-sm text-muted-foreground">{ex.translation}</div>
           {ex.usage_note && (

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef } from 'react'
 
 interface BackgroundCarouselProps {
   /** 图片路径数组 */
@@ -12,9 +12,10 @@ interface BackgroundCarouselProps {
 }
 
 /**
- * 背景图片轮播组件
- * 自动循环显示图片数组，使用淡入淡出过渡效果
- * 图片预加载确保流畅切换
+ * 背景图片轮播组件：自动循环、淡入淡出。
+ * 只挂载「当前 + 下一张（预载）+ 过渡中的旧图」：全量 26 张 ~1.2MB PNG 常驻会占用
+ * ~112MB 解码位图与 26 个合成层，且首屏 26 路并发请求挤占媒体/字幕加载
+ * （2026-11 全仓复审）。
  */
 export function BackgroundCarousel({
   images,
@@ -23,48 +24,29 @@ export function BackgroundCarousel({
   className = '',
 }: BackgroundCarouselProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [isLoaded, setIsLoaded] = useState(false)
+  /** 过渡中的旧图 index；淡出完成后置回 null 卸载 */
+  const [fadeFrom, setFadeFrom] = useState<number | null>(null)
+  /** 已解码完成的图片 index（当前图就绪才淡入，替代原全局 isLoaded 门控） */
+  const [loadedSet, setLoadedSet] = useState<ReadonlySet<number>>(new Set())
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const loadedImagesRef = useRef<Set<number>>(new Set())
+  const lastIndexRef = useRef(0)
 
-  // 预加载图片
+  // currentIndex 变化：保留旧图参与淡出，过渡结束（含余量）后卸载
   useEffect(() => {
-    if (images.length === 0) return
+    const outgoing = lastIndexRef.current
+    lastIndexRef.current = currentIndex
+    if (outgoing === currentIndex) return
+    setFadeFrom(outgoing)
+    const t = setTimeout(() => setFadeFrom(null), transitionDuration + 200)
+    return () => clearTimeout(t)
+  }, [currentIndex, transitionDuration])
 
-    const preloadImage = (index: number) => {
-      if (loadedImagesRef.current.has(index)) return
-
-      const img = new Image()
-      img.src = images[index]
-      img.onload = () => {
-        loadedImagesRef.current.add(index)
-        // 首张图片加载完成后显示
-        if (index === 0) {
-          setIsLoaded(true)
-        }
-      }
-      img.onerror = () => {
-        // 加载失败也标记为已尝试，避免重复加载
-        loadedImagesRef.current.add(index)
-        if (index === 0) {
-          setIsLoaded(true)
-        }
-      }
-    }
-
-    // 预加载所有图片
-    images.forEach((_, index) => preloadImage(index))
-  }, [images])
-
-  // 自动轮播定时器
+  // 自动轮播定时器（单张不启动）
   useEffect(() => {
-    // 单张图片不启动定时器
     if (images.length <= 1) return
-
     timerRef.current = setInterval(() => {
       setCurrentIndex((prev) => (prev + 1) % images.length)
     }, interval)
-
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current)
@@ -72,6 +54,10 @@ export function BackgroundCarousel({
       }
     }
   }, [images.length, interval])
+
+  const markLoaded = (index: number) => {
+    setLoadedSet((prev) => (prev.has(index) ? prev : new Set(prev).add(index)))
+  }
 
   // 空数组时显示默认背景
   if (images.length === 0) {
@@ -92,24 +78,30 @@ export function BackgroundCarousel({
     )
   }
 
+  // 只挂载当前、下一张（预载，保证切换瞬间即可淡入）与过渡中的旧图
+  const nextIndex = (currentIndex + 1) % images.length
+  const visible = new Set([currentIndex, nextIndex])
+  if (fadeFrom != null) visible.add(fadeFrom)
+
   return (
     <div className={className}>
-      {images.map((src, index) => (
-        <img
-          key={src}
-          src={src}
-          className={`absolute inset-0 h-full w-full object-cover transition-opacity ${
-            isLoaded ? '' : 'opacity-0'
-          }`}
-          style={{
-            transitionDuration: `${transitionDuration}ms`,
-            opacity: index === currentIndex && isLoaded ? 1 : 0,
-            willChange: 'opacity',
-          }}
-          alt=""
-          draggable={false}
-        />
-      ))}
+      {images.map((src, index) =>
+        visible.has(index) ? (
+          <img
+            key={src}
+            src={src}
+            className="absolute inset-0 h-full w-full object-cover transition-opacity"
+            style={{
+              transitionDuration: `${transitionDuration}ms`,
+              opacity: index === currentIndex && loadedSet.has(index) ? 1 : 0,
+            }}
+            onLoad={() => markLoaded(index)}
+            onError={() => markLoaded(index)}
+            alt=""
+            draggable={false}
+          />
+        ) : null,
+      )}
     </div>
   )
 }

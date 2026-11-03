@@ -39,6 +39,46 @@ async function refresh(): Promise<void> {
   vocabStore.set({ ready: true, books, entries })
 }
 
+/* ─── 增量补丁：CRUD 不再全量重读 IDB（与 material-store 同模式）───
+ * refresh() 会把全部词条（各带完整来源句与 LLM 释义，数百字节/条）重新反序列化并
+ * 安装全新 state 身份；useStore 无 selector，所有订阅者随之重渲染——重度用户
+ * 每点一次加词都付 O(N)。CRUD 就地补丁内存态并保持排序；全量 refresh 留给初始化。
+ */
+
+/** 就地替换一批同 id 词条（addedAt 不变，位置不动） */
+function patchEntries(updated: VocabEntry[]): void {
+  if (updated.length === 0) return
+  const byId = new Map(updated.map((e) => [e.id, e]))
+  const state = vocabStore.get()
+  vocabStore.set({ ...state, ready: true, entries: state.entries.map((e) => byId.get(e.id) ?? e) })
+}
+
+/** 就地更新/插入单条词条：新增（addedAt 最新）置顶，更新原位替换 */
+function patchEntry(entry: VocabEntry): void {
+  const state = vocabStore.get()
+  if (!state.entries.some((e) => e.id === entry.id)) {
+    vocabStore.set({ ...state, ready: true, entries: [entry, ...state.entries] })
+    return
+  }
+  patchEntries([entry])
+}
+
+/** 就地移除若干词条（按 id 集合） */
+function dropEntries(ids: Set<string>): void {
+  if (ids.size === 0) return
+  const state = vocabStore.get()
+  vocabStore.set({ ...state, entries: state.entries.filter((e) => !ids.has(e.id)) })
+}
+
+/** 就地更新/插入生词本（保持 createdAt 升序） */
+function patchBook(book: VocabBook): void {
+  const state = vocabStore.get()
+  const exists = state.books.some((b) => b.id === book.id)
+  const books = (exists ? state.books.map((b) => (b.id === book.id ? book : b)) : [...state.books, book])
+    .sort((a, b) => a.createdAt - b.createdAt)
+  vocabStore.set({ ...state, ready: true, books })
+}
+
 /** 确保默认生词本存在 */
 async function ensureDefaultBook(): Promise<void> {
   const existing = await recordsStore.get<VocabBook>(RECORD_KEYS.vocabBook(DEFAULT_BOOK_ID))
@@ -94,7 +134,7 @@ export async function createBook(name: string): Promise<VocabBook> {
     updatedAt: now,
   }
   await recordsStore.put(RECORD_KEYS.vocabBook(book.id), book)
-  await refresh()
+  patchBook(book)
   return book
 }
 
@@ -107,7 +147,13 @@ export async function removeBook(bookId: string): Promise<void> {
   const { entries } = vocabStore.get()
   const toDelete = entries.filter((e) => e.bookId === bookId)
   await Promise.all(toDelete.map(deleteEntryRecords))
-  await refresh()
+  // 就地补丁：移除本与旗下词条
+  const state = vocabStore.get()
+  vocabStore.set({
+    ...state,
+    books: state.books.filter((b) => b.id !== bookId),
+    entries: state.entries.filter((e) => e.bookId !== bookId),
+  })
 }
 
 /** 重命名生词本 */
@@ -117,7 +163,7 @@ export async function renameBook(bookId: string, name: string): Promise<void> {
   if (!book) return
   const updated: VocabBook = { ...book, name: name.trim(), updatedAt: Date.now() }
   await recordsStore.put(RECORD_KEYS.vocabBook(bookId), updated)
-  await refresh()
+  patchBook(updated)
 }
 
 /** 获取所有生词本 */
@@ -138,7 +184,7 @@ export async function addEntry(entry: Omit<VocabEntry, 'id' | 'addedAt' | 'frequ
     text: entry.text.trim(),
   }
   await recordsStore.put(RECORD_KEYS.vocabEntry(newEntry.id), newEntry)
-  await refresh()
+  patchEntry(newEntry)
   return newEntry
 }
 
@@ -148,7 +194,7 @@ export async function removeEntry(entryId: string): Promise<void> {
   const entry = vocabStore.get().entries.find((e) => e.id === entryId)
   if (entry) await deleteEntryRecords(entry)
   else await recordsStore.delete(RECORD_KEYS.vocabEntry(entryId))
-  await refresh()
+  dropEntries(new Set([entryId]))
 }
 
 /** 更新词条 */
@@ -158,7 +204,7 @@ export async function updateEntry(entryId: string, updates: Partial<Pick<VocabEn
   if (!entry) return
   const updated: VocabEntry = { ...entry, ...updates }
   await recordsStore.put(RECORD_KEYS.vocabEntry(entryId), updated)
-  await refresh()
+  patchEntry(updated)
 }
 
 /** 获取指定生词本下的所有词条 */
@@ -173,7 +219,7 @@ export async function clearEntriesByBook(bookId: string): Promise<void> {
   const toDelete = entries.filter((e) => e.bookId === bookId)
   if (toDelete.length === 0) return
   await Promise.all(toDelete.map(deleteEntryRecords))
-  await refresh()
+  dropEntries(new Set(toDelete.map((e) => e.id)))
 }
 
 /**
@@ -212,7 +258,7 @@ export async function shiftVocabEntriesAfterDeletion(materialId: string, deleted
   // 单事务提交：逐条 put 中途失败（崩溃/关页）会留下部分平移的永久错位（2026-11 全仓复审）
   if (put.length > 0) {
     await runAtomicOps({ put: { records: put } })
-    await refresh()
+    patchEntries(put.map(([, v]) => v as VocabEntry))
   }
 }
 
@@ -248,7 +294,7 @@ export async function updateFrequencies(words: string[], materialId: string): Pr
 
   if (toUpdate.length === 0) return
 
-  // 批量写入
+  // 批量写入 + 就地补丁（频次字段变化不改变 addedAt，原位替换即可）
   await Promise.all(toUpdate.map((e) => recordsStore.put(RECORD_KEYS.vocabEntry(e.id), e)))
-  await refresh()
+  patchEntries(toUpdate)
 }

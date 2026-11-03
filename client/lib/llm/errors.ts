@@ -36,6 +36,19 @@ export function throwIfAborted(signal?: AbortSignal): void {
 }
 
 /**
+ * 上游 !ok 响应体 → 可读错误摘要（TTS/ASR provider 共用）。
+ * 字段顺序统一为 message > error.message > code > 整体 JSON（原先两份拷贝各自漂移）。
+ */
+export async function readUpstreamErrorDetail(res: Response): Promise<string> {
+  try {
+    const errBody = await res.json()
+    return errBody.message || errBody.error?.message || errBody.code || JSON.stringify(errBody)
+  } catch {
+    return (await res.text().catch(() => '')).slice(0, 500)
+  }
+}
+
+/**
  * LlmError → BFF 统一 JSON 错误响应（评审 #48）。
  * 此前 translate/mnemonic 各自手写 statusMap、transcribe/tts 一律 500，同一
  * 「API Key 未配置」在不同路由返回不同状态码，客户端按状态码区分「去配置」

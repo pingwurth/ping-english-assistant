@@ -2,13 +2,13 @@
  * DashScope ASR Provider —— 阿里云原生 multimodal-generation API
  *
  * 使用 qwen-audio 系列模型的原生 API，返回文本和词级时间戳。
+ * 请求脚手架（鉴权/超时/取消/错误归一/data-URL 构造）见 asr-audio.ts 共享实现。
  */
 
 import type { AsrModelConfig, AsrResult, AsrSegment } from '../types'
-import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
 import { getDefaultModel } from '@/lib/service-endpoints'
-import { groupWordsToSegments, inferMimeType, type WordTimestamp } from '../asr-audio'
+import { groupWordsToSegments, postAsrJson, toAudioDataUrl, type WordTimestamp } from '../asr-audio'
 
 interface DashScopeWord {
   begin_time: number
@@ -16,9 +16,6 @@ interface DashScopeWord {
   text: string
   punctuation?: string
 }
-
-/** ASR 上游硬超时：整段音频转写慢于即时对话，给 180s（与 WhisperX 对齐预算同量级） */
-const ASR_TIMEOUT_MS = 180_000
 
 
 /**
@@ -34,14 +31,6 @@ export async function transcribeDashScope(
   const model = config.model || getDefaultModel('dashscope', 'asr')
   const url = resolveProviderUrl(config.baseUrl, config.endpoint, 'dashscope', 'asr')
 
-  if (!config.apiKey) {
-    throw new LlmError('API_KEY_MISSING', '请先在设置页配置 API Key')
-  }
-
-  const arrayBuffer = await audioFile.arrayBuffer()
-  const base64 = Buffer.from(arrayBuffer).toString('base64')
-  const mime = inferMimeType(audioFile.name, audioFile.type || 'audio/wav')
-
   // DashScope native API 使用 input.messages with input_audio
   const body = {
     model,
@@ -52,9 +41,7 @@ export async function transcribeDashScope(
           content: [
             {
               type: 'input_audio',
-              input_audio: {
-                data: `data:${mime};base64,${base64}`,
-              },
+              input_audio: { data: await toAudioDataUrl(audioFile) },
             },
           ],
         },
@@ -67,27 +54,10 @@ export async function transcribeDashScope(
 
   console.log(`[ASR DashScope] POST ${url} (model=${model}, audio=${(audioFile.size / 1024).toFixed(0)}KB)`)
 
-  // 取消传播 + 硬超时（对齐 TTS 路径评审 #24）：客户端关页/取消后不再干等上游跑完计费
-  const timeoutSignal = AbortSignal.timeout(ASR_TIMEOUT_MS)
-  const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-    signal: combined,
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '')
-    console.error('DashScope ASR error:', response.status, errorText)
-    throw new LlmError('UPSTREAM_ERROR', `转写失败 (${response.status}): ${errorText.slice(0, 200)}`)
+  const result = (await postAsrJson(url, config.apiKey, body, 'DashScope', signal)) as {
+    sentence?: { text?: string; begin_time?: number; end_time?: number; words?: DashScopeWord[] }
+    output?: { text?: string; output?: { sentence?: { text?: string } } }
   }
-
-  const result = await response.json()
 
   // Response format: { sentence: { text, begin_time, end_time, words: [...] } }
   const sentence = result?.sentence

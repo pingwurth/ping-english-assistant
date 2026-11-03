@@ -1,5 +1,6 @@
-/** ASR 上游与 WhisperX 共用的音频元数据 / 词级时间轴工具 */
+/** ASR 上游与 WhisperX 共用的音频元数据 / 词级时间轴 / 请求脚手架工具 */
 import type { AsrSegment } from './types'
+import { LlmError } from './errors'
 
 export interface WordTimestamp {
   word: string
@@ -69,4 +70,48 @@ function buildSegment(words: WordTimestamp[]): AsrSegment {
     endMs: Number.isFinite(rawEnd) ? Math.round((rawEnd as number) * 1000) : 0,
     text: words.map((w) => w.word.trim()).join(' ').trim(),
   }
+}
+
+// ---------------------------------------------------------------------------
+// ASR 上游请求脚手架（mimo / dashscope 两 provider 共用；原两份逐字拷贝已漂移）
+// ---------------------------------------------------------------------------
+
+/** ASR 上游硬超时：整段音频转写慢于即时对话，给 180s（与 WhisperX 对齐预算同量级） */
+export const ASR_TIMEOUT_MS = 180_000
+
+/** File → base64 data:URL（两 provider 请求体里 input_audio.data 的通用形态） */
+export async function toAudioDataUrl(file: File): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer()
+  const base64 = Buffer.from(arrayBuffer).toString('base64')
+  const mime = inferMimeType(file.name, file.type || 'audio/wav')
+  return `data:${mime};base64,${base64}`
+}
+
+/**
+ * Bearer JSON POST + 取消传播 + 硬超时 + !ok 归一错误（ASR 上游通用）。
+ * @param providerLabel 错误文案里的 provider 名（如 'MiMo' / 'DashScope'）
+ */
+export async function postAsrJson(
+  url: string,
+  apiKey: string,
+  body: unknown,
+  providerLabel: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  if (!apiKey) throw new LlmError('API_KEY_MISSING', '请先在设置页配置 API Key')
+  // 取消传播 + 硬超时：客户端关页/取消后不再干等上游跑完计费
+  const timeoutSignal = AbortSignal.timeout(ASR_TIMEOUT_MS)
+  const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: combined,
+  })
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '')
+    console.error(`${providerLabel} ASR error:`, response.status, errorText)
+    throw new LlmError('UPSTREAM_ERROR', `${providerLabel} 转写失败 (${response.status}): ${errorText.slice(0, 200)}`)
+  }
+  return response.json()
 }
