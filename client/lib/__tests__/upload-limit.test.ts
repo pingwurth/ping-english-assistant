@@ -11,7 +11,9 @@ import { MAX_SOE_UPLOAD_BYTES, MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUploa
 function requestWithLength(bytes: number | null): Request {
   const headers = new Headers()
   if (bytes !== null) headers.set('content-length', String(bytes))
-  return { headers } as unknown as Request
+  // 真实 Request（localhost 属 api-guard 默认可信 Host）：/api/soe/evaluate 已接入
+  // 同源守卫（评审 #2），纯 { headers } 伪对象会被拦成 403，无法测到限流后的业务分支
+  return new Request('http://localhost:3000/api/soe/evaluate', { method: 'POST', headers })
 }
 
 describe('rejectOversizedUpload', () => {

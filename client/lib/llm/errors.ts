@@ -22,6 +22,9 @@ export function toLlmError(err: unknown): LlmError {
   if (err instanceof LlmError) return err
   const normalized = toApiError(err)
   if (normalized.code === 'ABORTED') return new LlmError('ABORTED', normalized.message, normalized.detail)
+  // AbortSignal.timeout 的 TimeoutError 经 toApiError 归一为 REQUEST_TIMEOUT，
+  // 保留超时语义而非误归为上游故障（评审 #4：504 映射此前是死码）
+  if (normalized.code === 'REQUEST_TIMEOUT') return new LlmError('REQUEST_TIMEOUT', normalized.message, normalized.detail)
   if (normalized.code === 'NETWORK_ERROR') return new LlmError('UPSTREAM_ERROR', normalized.message, normalized.detail)
   return new LlmError('UPSTREAM_ERROR', normalized.message || '未知错误', normalized.detail)
 }
@@ -59,10 +62,13 @@ export function toLlmErrorResponse(error: LlmError): Response {
     API_KEY_MISSING: 400,
     BASE_URL_MISSING: 400,
     MODEL_NOT_CONFIGURED: 400,
+    PROVIDER_NOT_SUPPORTED: 400,
     RESPONSE_EMPTY: 502,
     RESPONSE_FORMAT_ERROR: 502,
     UPSTREAM_ERROR: 502,
     REQUEST_TIMEOUT: 504,
+    // 取消不是服务故障：落进 ?? 502 会把「用户主动中止」报成 5xx（评审 #9）
+    ABORTED: 499,
   }
   return new Response(JSON.stringify({ error: error.message, code: error.code }), {
     status: statusMap[error.code] ?? 502,

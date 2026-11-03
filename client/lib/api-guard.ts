@@ -132,6 +132,28 @@ export interface SameOriginGuardOptions {
   skipSafeMethods?: boolean
 }
 
+/**
+ * 服务端出网目标（用户可传的 LLM baseUrl）的 SSRF 闸门（评审 #2）。
+ * 本应用默认就要连局域网/本机推理服务，不能按「只允许可路由地址」拦，
+ * 但链路本地段（169.254.0.0/16、fe80::/10）在本地部署中永为用户有意配置、
+ * 在云主机上恰是元数据端点（169.254.169.254）→ 一律拒绝；协议只允 http/https。
+ */
+export function isUnsafeUpstreamUrl(raw: string): boolean {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return true // 不可解析的 baseUrl 同样拒绝，不让它流入 fetch 拼接
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return true
+  // IPv6 字面量在 URL.hostname 里保留方括号（'[fe80::1]'），先去括号再比前缀
+  const h = (u.hostname.startsWith('[') ? u.hostname.slice(1, -1) : u.hostname).toLowerCase()
+  if (h === '169.254.169.254') return true
+  if (h.startsWith('169.254.')) return true
+  if (h.startsWith('fe80') || h.startsWith('0:0:0:0:0:0:fe80') || h === '::' || h === '0:0:0:0:0:0:0:0') return true
+  return false
+}
+
 /** 单一 BFF 同源防护入口：可信 Host + Origin/Host 一致性；通过返回 null */
 export function sameOriginGuard(
   request: Request,

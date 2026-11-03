@@ -5,6 +5,7 @@
  */
 import { NextResponse } from 'next/server'
 import { readSoeConfig, type SoeSettingsConfig } from '@/lib/server-settings'
+import { sameOriginGuard } from '@/lib/api-guard'
 import { MAX_SOE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import { SOE_EVALUATE_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 
@@ -17,6 +18,9 @@ function buildCreds(cfg: SoeSettingsConfig): Record<string, Record<string, strin
 }
 
 export async function POST(req: Request) {
+  // 同源守卫（评审 #2）：本路由会把所选中 provider 的真实密钥转发给评分代理
+  const denied = sameOriginGuard(req)
+  if (denied) return denied
   // formData() 会把整个 multipart 缓冲进内存：按声明体积提前拒绝（c055）
   const oversized = rejectOversizedUpload(req, MAX_SOE_UPLOAD_BYTES)
   if (oversized) return oversized

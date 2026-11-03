@@ -26,6 +26,8 @@ export async function generateTtsMimo(
     throw new LlmError('API_KEY_MISSING', '请先在设置页配置 API Key')
   }
 
+  // MiMo 网关的 /chat/completions 音频模态不保证 speed 字段（评审 #3）：
+  // 与其静默丢弃让用户以为调速生效，不如标 speedApplied=false 交给路由/页面提示
   const requestBody = {
     model,
     messages: [{ role: 'assistant', content: text }],
@@ -57,5 +59,6 @@ export async function generateTtsMimo(
   }
 
   // base64 解码（含 Node 8KB 池 slice 修正）+ 时长解析见 lib/wav-duration 唯一实现
-  return decodeTtsAudioPayload(base64)
+  const decoded = decodeTtsAudioPayload(base64)
+  return { ...decoded, speedApplied: false }
 }

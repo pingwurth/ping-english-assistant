@@ -83,9 +83,9 @@ export async function callLocalTranscribe(file: File, signal?: AbortSignal): Pro
   return res.json()
 }
 
-async function checkLocalServerReady(): Promise<{ connected: boolean; error?: string }> {
+async function checkLocalServerReady(signal?: AbortSignal): Promise<{ connected: boolean; error?: string }> {
   try {
-    const res = await fetch('/api/transcribe/local')
+    const res = await fetch('/api/transcribe/local', { signal })
     const data = await res.json()
     return data
   } catch {
@@ -183,7 +183,10 @@ export function useTranscribe() {
 
     try {
       if (engine === 'local') {
-        const health = await checkLocalServerReady()
+        const health = await checkLocalServerReady(signal)
+        // 取消落在探活窗口时 checkLocalServerReady 把 abort 吞成「连不上」的普通 Error，
+        // 不复查 aborted 就会给已取消的会话弹红色失败（评审 #6，对齐 tts.tsx 同一防线）
+        if (signal?.aborted) return
         if (!health.connected) {
           throw new Error(
             'faster-whisper 服务未启动。请先运行:\n' +
@@ -195,8 +198,11 @@ export function useTranscribe() {
       const res = engine === 'local'
         ? await callLocalTranscribe(file, signal)
         : await callLlmTranscribe(file, signal, configId)
+      // 响应 resolve 与取消几乎同时发生时，不在已取消会话上提交 done（评审 #6）
+      if (signal?.aborted) return
       const srtText = segmentsToSrt(res.segments)
       const { srt: finalSrt, result: finalResult } = await applyTranslation(res.segments, srtText, res.text, signal)
+      if (signal?.aborted) return
       setResult(finalResult)
       setSrt(finalSrt)
       setStatus('done')

@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
+import { sameOriginGuard } from '@/lib/api-guard'
 import { generateTts, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { TtsModelConfig } from '@/lib/llm'
 import {
@@ -24,6 +25,9 @@ import {
 const TTS_REQUEST_TIMEOUT_MS = 300_000
 
 export async function POST(request: Request) {
+  // 同源守卫（评审 #2）：本路由会用用户真实密钥消耗云端 TTS 配额
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   try {
     const body = await request.json()
     const { text, voice, speed, configId } = body as {
@@ -98,7 +102,7 @@ export async function POST(request: Request) {
     } finally {
       clearTimeout(timeout)
     }
-    const { audioBuffer, durationMs: rawDurationMs } = result
+    const { audioBuffer, durationMs: rawDurationMs, speedApplied } = result
     const durationMs = rawDurationMs || 1000
 
     // ── 构建 SRT 字幕 ──────────────────────────────────────
@@ -118,7 +122,9 @@ export async function POST(request: Request) {
     // atob 后逐字节 charCodeAt 重组（千万次迭代阻塞主线程、三份拷贝同时驻留）。
     // JSON 元数据 + 原始音频字节走 multipart，客户端 res.formData() 原生解析。
     const boundary = `----pingeng${taskId}`
-    const meta = JSON.stringify({ taskId, durationMs, sentenceCount: sentences.length, srt })
+    // speedApplied（评审 #3）：MiMo 等 OpenAI-compatible 网关不保证语速参数生效，
+    // 缺省 true；provider 显式标 false 时客户端据此提示「语速未生效」而非静默空转
+    const meta = JSON.stringify({ taskId, durationMs, sentenceCount: sentences.length, srt, speedApplied: speedApplied !== false })
     const multipartBody = new Blob([
       `--${boundary}\r\nContent-Disposition: form-data; name="meta"\r\nContent-Type: application/json; charset=utf-8\r\n\r\n${meta}\r\n`,
       `--${boundary}\r\nContent-Disposition: form-data; name="audio"; filename="tts.wav"\r\nContent-Type: audio/wav\r\n\r\n`,

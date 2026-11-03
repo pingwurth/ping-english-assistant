@@ -19,6 +19,7 @@ import { readFile, writeFile, mkdir, stat, rename } from 'fs/promises'
 import { join, dirname, resolve, sep } from 'path'
 import { Agent, ProxyAgent, fetch as undiciFetch } from 'undici'
 import { readKokoroSettings, DEFAULT_KOKORO_MODEL_ID } from '@/lib/server-settings'
+import { sameOriginGuard } from '@/lib/api-guard'
 import { DEFAULT_HF_BASE } from '@/lib/service-endpoints'
 import { isAllowedKokoroFile } from '@/platform/kokoro-protocol'
 import { parseHfPath, type HfFileRef } from '@/platform/hf-path'
@@ -156,9 +157,12 @@ function downloadShared(ref: HfFileRef, localFile: string): Promise<Buffer> {
 
 /** 探测磁盘缓存：只读本地文件，不会触发下载 */
 export async function HEAD(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
+  // 同源守卫（评审 #2）：本代理可触发磁盘读写与上游下载，不再裸奔
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   const ref = parseHfPath((await params).path, HF_BASE)
   if (!ref) return new NextResponse(null, { status: 400 })
 
@@ -186,9 +190,13 @@ export async function HEAD(
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ) {
+  // 同源守卫（评审 #2）：未命中缓存会向上游下载最多百 MB 并写盘，
+  // 恶意局域网页跨源 GET 可把它当下载/磁盘填充器驱动
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   const ref = parseHfPath((await params).path, HF_BASE)
   if (!ref) {
     return NextResponse.json({ error: 'Invalid HF path' }, { status: 400 })

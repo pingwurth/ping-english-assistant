@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, resolveLocalServiceUrl } from '@/lib/server-settings'
+import { sameOriginGuard } from '@/lib/api-guard'
 import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import {
   DEFAULT_WHISPER_TRANSCRIBE_URL,
@@ -31,6 +32,9 @@ async function getTranscribeUrl(): Promise<string> {
 }
 
 export async function POST(request: Request) {
+  // 同源守卫（评审 #2）：避免恶意局域网页 CSRF 驱动本机 faster-whisper 干跑推理
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   // formData() 会把整个 multipart 缓冲进内存：按声明体积提前拒绝（c055）
   const oversized = rejectOversizedUpload(request, MAX_TRANSCRIBE_UPLOAD_BYTES)
   if (oversized) return oversized
@@ -55,7 +59,10 @@ export async function POST(request: Request) {
     // Forward FormData to the Python transcription server
     const forwardForm = new FormData()
     forwardForm.append('audio', audioFile, audioFile instanceof File ? audioFile.name : 'audio')
-    forwardForm.append('language', formData.get('lang')?.toString() || 'en')
+    // lang 运行时类型校验（与 /api/transcribe 口径对齐）：传 File 等非字符串时
+    // toString() 会得到「[object File]」直接当 language 转发给 Python
+    const langRaw = formData.get('lang')
+    forwardForm.append('language', typeof langRaw === 'string' && langRaw ? langRaw : 'en')
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
@@ -111,18 +118,22 @@ export async function POST(request: Request) {
  *
  * Health check: pings the faster-whisper server and returns its status.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  // 探活 GET 同样收口（评审 #2）：浏览器跨源 GET 带异源 Origin 会被拦；
+  // skipSafeMethods 不适用于本应用——同源无 Origin 的 curl 探测仍然放行
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   const transcribeUrl = await getTranscribeUrl()
 
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000)
 
+    // 探活失败（连接拒绝等）时 fetch 直接抛错，成功路径的 clearTimeout 跑不到；
+    // 与同一仓 transcribe/route.ts 的口径，用 finally 统一清理悬挂定时器（评审 #14）
     const response = await fetch(buildServiceUrl(transcribeUrl, WHISPER_TRANSCRIBE_HEALTH_ENDPOINT), {
       signal: controller.signal,
-    })
-
-    clearTimeout(timeout)
+    }).finally(() => clearTimeout(timeout))
 
     if (!response.ok) {
       return NextResponse.json(

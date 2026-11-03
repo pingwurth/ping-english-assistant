@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
+import { sameOriginGuard } from '@/lib/api-guard'
 import { translateTexts, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { TranslateDirection, TranslateRequest } from '@/types/api'
 
@@ -22,6 +23,9 @@ const REQUEST_TIMEOUT_MS = 120_000
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
+  // 同源守卫（评审 #2）：本路由会用用户真实密钥消耗云端翻译配额
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   // 请求体解析单独 try/catch：非法 JSON 抛出的 SyntaxError 不应被归一为 502 上游错误，而是 400 请求错误
   let body: TranslateRequest
   try {

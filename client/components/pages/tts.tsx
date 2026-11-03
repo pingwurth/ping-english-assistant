@@ -65,6 +65,12 @@ interface GenResult {
   durationMs: number
   sentenceCount: number
   srt: string
+  /** 语速是否真正生效（评审 #3：MiMo 等 OpenAI-compatible 网关不保证 speed，kokoro 本地支持） */
+  speedApplied: boolean
+  /** 生成时刻的快照（评审 #12）：ready 态下用户仍可编辑文本/音色，
+   *  下载文件名与导入材料名必须描述音频真实内容而非当前 state */
+  snapshotText: string
+  snapshotVoiceId: string
 }
 
 function dateStamp(): string {
@@ -73,28 +79,34 @@ function dateStamp(): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
 }
 
-/** 选择器外壳：带边框 label + focus-ring（模型/音色/语速/翻译模型/翻译开关共用，原五份逐字拷贝） */
-function FieldShell({ label, children }: { label: string; children: React.ReactNode }) {
+/** 选择器外壳：带边框 label + focus-ring（模型/音色/语速/翻译模型/翻译开关共用，原五份逐字拷贝）。
+ * labelHint：选中项完整文案常驻展示（评审 #10）—— title 依赖 hover，触屏的 Mobile H5 端
+ * 不可达，truncate 后拿不到全文；可缺省字段在截断风险低时不占版面 */
+function FieldShell({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-      <span className="shrink-0 whitespace-nowrap text-muted-foreground">{label}：</span>
-      {children}
+    <label className="flex max-w-full flex-col items-stretch gap-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+      <span className="flex items-center gap-1.5">
+        <span className="shrink-0 whitespace-nowrap text-muted-foreground">{label}：</span>
+        {children}
+      </span>
+      {hint && <span className="truncate text-xs text-muted-foreground">{hint}</span>}
     </label>
   )
 }
 
 /** 常规下拉选择器（FieldShell + select） */
-function FieldSelect({ label, value, onChange, disabled, ariaLabel, title, children }: {
+function FieldSelect({ label, value, onChange, disabled, ariaLabel, title, hint, children }: {
   label: string
   value: string | number
   onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void
   disabled?: boolean
   ariaLabel?: string
   title?: string
+  hint?: string
   children: React.ReactNode
 }) {
   return (
-    <FieldShell label={label}>
+    <FieldShell label={label} hint={hint}>
       <select
         value={value}
         onChange={onChange}
@@ -265,7 +277,7 @@ function TTS() {
       if (typeof metaRaw !== 'string' || !(audioPart instanceof Blob)) {
         throw new Error('TTS 响应格式异常，请重试')
       }
-      const meta = JSON.parse(metaRaw) as { taskId: string; durationMs: number; sentenceCount: number; srt: string }
+      const meta = JSON.parse(metaRaw) as { taskId: string; durationMs: number; sentenceCount: number; srt: string; speedApplied?: boolean }
       const audioBlob = new Blob([audioPart], { type: 'audio/wav' })
 
       return {
@@ -275,6 +287,9 @@ function TTS() {
         durationMs: meta.durationMs,
         sentenceCount: meta.sentenceCount,
         srt: meta.srt,
+        speedApplied: meta.speedApplied !== false,
+        snapshotText: text,
+        snapshotVoiceId: voice.id,
       }
     } catch (e) {
       clearInterval(simTimer)
@@ -299,6 +314,10 @@ function TTS() {
       durationMs: result.durationMs,
       sentenceCount: result.timings.length,
       srt: result.srt,
+      // kokoro 本地合成真正消费 speed（platform/kokoro-tts），恒生效
+      speedApplied: true,
+      snapshotText: text,
+      snapshotVoiceId: voice.id,
     }
   }
 
@@ -390,7 +409,9 @@ function TTS() {
 
   const saveToDevice = () => {
     if (!gen) return
-    const fileName = `ping-tts-${voice.id}-${dateStamp()}.wav`
+    // 命名取自生成快照（评审 #12）：音色/文本在 ready 态仍可改动，用当前 state
+    // 会造出「文件名描述新内容、音频是旧内容」的错位产物
+    const fileName = `ping-tts-${gen.snapshotVoiceId}-${dateStamp()}.wav`
     downloadBlob(fileName, gen.audio)
     setSavedName(fileName)
   }
@@ -398,7 +419,7 @@ function TTS() {
   const importAsMaterial = async () => {
     if (!gen) return
     await writeTtsExport(gen.taskId, gen.audio, {
-      name: `TTS · ${text.trim().slice(0, 40) || '语音合成'}`.slice(0, 50),
+      name: `TTS · ${gen.snapshotText.trim().slice(0, 40) || '语音合成'}`.slice(0, 50),
       audioFileName: `ping-tts-${gen.taskId}.wav`,
       subtitleText: gen.srt,
       subtitleFormat: 'srt',
@@ -455,12 +476,13 @@ function TTS() {
                 disabled={generating || !settingsLoaded}
                 ariaLabel="选择语音模型"
                 title={currentModelOption?.label}
+                hint={currentModelOption && currentModelOption.label.length > 24 ? currentModelOption.label : undefined}
               >
                 {settingsLoaded && modelOptions.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </FieldSelect>
-              <FieldSelect label="音色" value={voiceIdx} onChange={(e) => setVoiceIdx(Number(e.target.value))} disabled={generating} ariaLabel="选择音色" title={voice?.label}>
+              <FieldSelect label="音色" value={voiceIdx} onChange={(e) => setVoiceIdx(Number(e.target.value))} disabled={generating} ariaLabel="选择音色" title={voice?.label} hint={voice?.label && voice.label.length > 24 ? voice.label : undefined}>
                 {voices.map((v, i) => (
                   <option key={v.id} value={i}>{v.label}</option>
                 ))}
@@ -486,6 +508,7 @@ function TTS() {
                   disabled={generating || !settingsLoaded}
                   ariaLabel="选择翻译模型"
                   title={selectedTranslateConfig ? `${selectedTranslateConfig.translateModel} · ${selectedTranslateConfig.name}` : undefined}
+                  hint={selectedTranslateConfig && `${selectedTranslateConfig.translateModel} · ${selectedTranslateConfig.name}`.length > 24 ? `${selectedTranslateConfig.translateModel} · ${selectedTranslateConfig.name}` : undefined}
                 >
                   {translateConfigs.map((c) => (
                     <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
@@ -559,6 +582,9 @@ function TTS() {
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="secondary">{gen.sentenceCount} 句 · SRT 字幕已生成</Badge>
                   {speaking && <Badge variant="outline">播放中</Badge>}
+                  {!gen.speedApplied && speed !== 1 && (
+                    <span className="text-amber-600 dark:text-amber-400">当前模型不支持语速调节，本次按常速合成（已按实际时长对齐字幕）</span>
+                  )}
                 </div>
                 {previewSentences.length > 0 && (
                   <div className="mt-3 max-h-40 space-y-2 overflow-y-auto rounded-lg bg-background p-3 text-sm">

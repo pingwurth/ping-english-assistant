@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { OPENAI_MODELS_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 import { maskSecret, readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
+import { sameOriginGuard, isUnsafeUpstreamUrl } from '@/lib/api-guard'
 
 interface OpenAIModel {
   id: string
@@ -32,8 +33,12 @@ async function fetchModelList(baseUrl: string, apiKey: string): Promise<Response
 
 /**
  * GET — 用已保存的 legacy llm 配置拉模型列表。
+ * 同源守卫（评审 #2）：本接口会拿真实 apiKey 向已存 baseUrl 出网，
+ * 此前是 api-guard 白名单外少数裸奔路由之一。
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   try {
     const settings = await readEffectiveLlmSettings()
     if (!settings) {
@@ -78,6 +83,10 @@ export async function GET() {
  * 改 baseUrl 则必须重新输入真实 key，避免把掩码或旧配置的 key 发给无关上游。
  */
 export async function POST(request: Request) {
+  // 同源守卫 + 请求体里的 baseUrl 由客户端完全控制，服务端直接 fetch 构成 SSRF 面
+  //（text/plain 简请不触发预检，恶意局域网页可盲打链路本地/元数据地址，评审 #2）
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   try {
     const body = (await request.json().catch(() => null)) as {
       baseUrl?: unknown
@@ -105,6 +114,9 @@ export async function POST(request: Request) {
 
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: 'Missing required fields: baseUrl, apiKey' }, { status: 400 })
+    }
+    if (isUnsafeUpstreamUrl(baseUrl)) {
+      return NextResponse.json({ error: 'Base URL 协议或地址不被允许（仅 http/https，禁止链路本地/元数据地址）' }, { status: 400 })
     }
 
     const response = await fetchModelList(baseUrl, apiKey)

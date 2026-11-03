@@ -6,8 +6,8 @@
  */
 
 import type { AsrModelConfig, AsrResult } from '../types'
+import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
-import { getDefaultModel } from '@/lib/service-endpoints'
 import { postAsrJson, toAudioDataUrl } from '../asr-audio'
 
 /**
@@ -21,7 +21,12 @@ export async function transcribeMimo(
   config: AsrModelConfig,
   signal?: AbortSignal,
 ): Promise<AsrResult> {
-  const model = config.model || getDefaultModel('mimo', 'asr')
+  // 配置解析只有一处真源（评审 #8）：路由层已保证 model 非空，未知 provider 回落到
+  // 本实现时不再兜底成 mimo 默认模型名发给用户自建 baseUrl
+  if (!config.model) {
+    throw new LlmError('MODEL_NOT_CONFIGURED', '请先在设置页配置转写（ASR）模型')
+  }
+  const model = config.model
   const url = resolveProviderUrl(config.baseUrl, config.endpoint, 'mimo', 'asr')
 
   const body = {

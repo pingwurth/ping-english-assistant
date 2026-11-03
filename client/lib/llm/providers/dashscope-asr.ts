@@ -6,8 +6,8 @@
  */
 
 import type { AsrModelConfig, AsrResult, AsrSegment } from '../types'
+import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
-import { getDefaultModel } from '@/lib/service-endpoints'
 import { groupWordsToSegments, postAsrJson, toAudioDataUrl, type WordTimestamp } from '../asr-audio'
 
 interface DashScopeWord {
@@ -28,7 +28,12 @@ export async function transcribeDashScope(
   config: AsrModelConfig,
   signal?: AbortSignal,
 ): Promise<AsrResult> {
-  const model = config.model || getDefaultModel('dashscope', 'asr')
+  // 配置解析只有一处真源（评审 #8）：路由层已保证 model 非空，这里不再拿
+  // 别家默认模型名二次兜底 —— 兜底会把 qwen 模型发给用户自建 baseUrl
+  if (!config.model) {
+    throw new LlmError('MODEL_NOT_CONFIGURED', '请先在设置页配置转写（ASR）模型')
+  }
+  const model = config.model
   const url = resolveProviderUrl(config.baseUrl, config.endpoint, 'dashscope', 'asr')
 
   // DashScope native API 使用 input.messages with input_audio

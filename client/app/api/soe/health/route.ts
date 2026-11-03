@@ -4,9 +4,13 @@
  */
 import { NextResponse } from 'next/server'
 import { readSoeConfig } from '@/lib/server-settings'
+import { sameOriginGuard } from '@/lib/api-guard'
 import { SOE_HEALTH_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 
-export async function GET() {
+export async function GET(request: Request) {
+  // 同源守卫（评审 #2）：避免恶意局域网页探测代理地址与在线状态
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   const cfg = await readSoeConfig()
   if (!cfg || cfg.provider === 'mock' || !cfg.proxyUrl) {
     return NextResponse.json({ ok: false })

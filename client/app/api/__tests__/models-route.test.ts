@@ -19,10 +19,10 @@ beforeEach(async () => {
   route = await import('@/app/api/models/route')
 })
 
-function makeRequest(body: unknown): Request {
+function makeRequest(body: unknown, origin?: string): Request {
   return new Request('http://localhost:3000/api/models', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(origin ? { origin } : {}) },
     body: JSON.stringify(body),
   })
 }
@@ -65,6 +65,24 @@ describe('POST /api/models 编辑配置探测', () => {
     }))
     expect(res.status).toBe(400)
     expect(await res.json()).toEqual({ error: 'Base URL 已修改；请重新输入 API Key 后再探测模型列表' })
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('元数据/链路本地 baseUrl 被 SSRF 闸门拒绝且不出网（复审 #2）', async () => {
+    const res = await route.POST(makeRequest({
+      baseUrl: 'http://169.254.169.254',
+      apiKey: 'x',
+    }))
+    expect(res.status).toBe(400)
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('跨源 Origin 被同源守卫拦下 403（复审 #2 接线验证）', async () => {
+    const res = await route.POST(makeRequest(
+      { baseUrl: 'https://api.example.com/v1', apiKey: 'x' },
+      'http://evil.example.com',
+    ))
+    expect(res.status).toBe(403)
     expect(global.fetch).not.toHaveBeenCalled()
   })
 })

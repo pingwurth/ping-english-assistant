@@ -190,6 +190,11 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
   const doneCount = sentenceStatuses.filter(s => s === 'done').length
   const hasTranslations = doneCount > 0
   const isToastError = globalStatus === 'error'
+  // 选中配置完整文案（评审 #7）：下拉 truncate 后悬停 title 补全，与 TTS/转写页同口径
+  const selectedConfigLabel = (() => {
+    const c = configs.find(c => c.id === selectedConfigId)
+    return c ? `${c.translateModel} · ${c.name}` : undefined
+  })()
 
   return (
     <>
@@ -241,11 +246,13 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <TranslateDirectionToggle value={direction} onChange={handleDirectionChange} />
+              {/* 与 TTS/转写页同口径（评审 #7 漏改补齐）：长文案悬停 title + 截断不撑破容器 */}
               <select
                 value={selectedConfigId}
                 onChange={e => setSelectedConfigId(e.target.value)}
                 disabled={configs.length === 0}
-                className="h-9 rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+                title={selectedConfigLabel}
+                className="h-9 min-w-0 max-w-full truncate rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
               >
                 {configs.length === 0 ? (
                   <option value="">未配置翻译模型</option>

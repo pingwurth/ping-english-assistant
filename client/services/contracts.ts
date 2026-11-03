@@ -41,9 +41,14 @@ export class ApiError extends Error implements ApiErrorShape {
 /** 载荷形态别名（与 types/api.ts 的 ApiError 接口一致） */
 export type ApiErrorPayload = ApiErrorShape
 
-/** 将任意未知错误归一为 ApiError（中止 → code 'ABORTED'） */
+/** 将任意未知错误归一为 ApiError（中止 → code 'ABORTED'；硬超时 → 'REQUEST_TIMEOUT'） */
 export function toApiError(err: unknown): ApiError {
   if (err instanceof ApiError) return err
+  // AbortSignal.timeout() 的 abort reason 是 TimeoutError（不是 AbortError），
+  // 不单独识别会让超时被归成 INTERNAL/ABORTED（评审 #4：全仓曾无任何 REQUEST_TIMEOUT 抛出点）
+  if (err instanceof Error && err.name === 'TimeoutError') {
+    return new ApiError('REQUEST_TIMEOUT', '请求超时', err)
+  }
   if (typeof DOMException !== 'undefined' && err instanceof DOMException && err.name === 'AbortError') {
     return new ApiError('ABORTED', '操作已取消', err)
   }

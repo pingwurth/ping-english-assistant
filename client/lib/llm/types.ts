@@ -62,6 +62,12 @@ export interface AsrResult {
 export interface TtsResult {
   audioBuffer: ArrayBuffer
   durationMs: number
+  /**
+   * 语速是否真正作用于本次合成（评审 #3）：上游 OpenAI-compatible /audio/speech
+   * 的 speed 参数不被 MiMo 网关保证支持，provider 层显式标 false，
+   * 路由/页面据此提示用户，而不是让语速控件静默空转。缺省视为已应用。
+   */
+  speedApplied?: boolean
 }
 
 // ---------------------------------------------------------------------------

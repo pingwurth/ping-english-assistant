@@ -1,6 +1,6 @@
 /** ASR 上游与 WhisperX 共用的音频元数据 / 词级时间轴 / 请求脚手架工具 */
 import type { AsrSegment } from './types'
-import { LlmError } from './errors'
+import { LlmError, toLlmError } from './errors'
 
 export interface WordTimestamp {
   word: string
@@ -107,6 +107,10 @@ export async function postAsrJson(
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: combined,
+  }).catch((err: unknown) => {
+    // fetch 抛出的 TimeoutError（硬超时）/ AbortError（客户端取消）经归一转为
+    // LlmError，路由层才能给出 504/499 而不是被当成未知异常回 500（评审 #4）
+    throw toLlmError(err)
   })
   if (!response.ok) {
     const errorText = await response.text().catch(() => '')

@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById, resolveLocalServiceUrl } from '@/lib/server-settings'
+import { sameOriginGuard } from '@/lib/api-guard'
 import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import { parseWavDurationMs } from '@/lib/wav-duration'
 import { groupWordsToSegments, type WordTimestamp } from '@/lib/llm/asr-audio'
@@ -149,6 +150,10 @@ function estimateAudioDurationMs(buffer: ArrayBuffer, file: File): number {
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
+  // 同源守卫（评审 #2）：本路由会用用户真实密钥消耗云端配额，属 api-guard
+  // 既定威胁模型内必须收口的写操作（同层 settings 路由已全部接入）
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   // formData() 会把整个 multipart 缓冲进内存：按声明体积提前拒绝（c055）
   const oversized = rejectOversizedUpload(request, MAX_TRANSCRIBE_UPLOAD_BYTES)
   if (oversized) return oversized
@@ -179,11 +184,21 @@ export async function POST(request: Request) {
     }
 
     // ── 构建 ASR 配置 ───────────────────────────────────────
+    // 快速失败（对齐同层 TTS 路由口径，评审 #8）：local/未知 provider 无默认模型时
+    // getDefaultModel 回空串，不能拿空 model 去请求上游 —— provider 内部的二次
+    // 兜底会把别家默认模型名发给用户自建 baseUrl，产出不可归因的 4xx
+    const asrModel = settings.asrModel || getDefaultModel(settings.provider || 'dashscope', 'asr')
+    if (!asrModel) {
+      return NextResponse.json(
+        { error: '请先在设置页配置转写（ASR）模型', code: 'MODEL_NOT_CONFIGURED' },
+        { status: 400 },
+      )
+    }
     const asrConfig: AsrModelConfig = {
       provider: settings.provider || 'dashscope',
       baseUrl: settings.baseUrl,
       apiKey: settings.apiKey,
-      model: settings.asrModel || getDefaultModel(settings.provider || 'dashscope', 'asr'),
+      model: asrModel,
       endpoint: settings.asrEndpoint,
       whisperAlignUrl: settings.whisperAlignUrl,
     }

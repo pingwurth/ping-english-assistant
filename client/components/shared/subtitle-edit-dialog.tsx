@@ -159,6 +159,12 @@ export function SubtitleEditDialog({ open, onOpenChange, sentence, onSave, prevS
     onOpenChange(false)
   }, [sentence, timeValid, textEn, textZh, startMs, endMs, onSave, onOpenChange])
 
+  // 选中配置完整文案（评审 #7）：下拉 truncate 后悬停 title 补全，与 TTS/转写页同口径
+  const selectedConfigLabel = (() => {
+    const c = configs.find(c => c.id === configId)
+    return c ? `${c.translateModel} · ${c.name}` : undefined
+  })()
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogHeader>
@@ -171,11 +177,13 @@ export function SubtitleEditDialog({ open, onOpenChange, sentence, onSave, prevS
             <div className="flex flex-wrap items-center gap-2">
               <Languages className="size-4 shrink-0 text-muted-foreground" />
               <TranslateDirectionToggle value={direction} onChange={setDirection} />
+              {/* 与 TTS/转写页同口径（评审 #7 漏改补齐）：长文案悬停 title + 截断 */}
               <select
                 value={configId}
                 onChange={(e) => setConfigId(e.target.value)}
                 disabled={configs.length === 0}
-                className="h-9 min-w-40 flex-1 rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+                title={selectedConfigLabel}
+                className="h-9 min-w-40 flex-1 truncate rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
               >
                 {configs.length === 0 ? (
                   <option value="">未配置翻译模型</option>

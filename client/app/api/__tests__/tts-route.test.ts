@@ -28,10 +28,10 @@ beforeEach(async () => {
   route = await import('@/app/api/tts/route')
 })
 
-function makeRequest(text: string): Request {
+function makeRequest(text: string, origin?: string): Request {
   return new Request('http://localhost:3000/api/tts', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(origin ? { origin } : {}) },
     body: JSON.stringify({ text, voice: 'alloy', speed: 1.0 }),
   })
 }
@@ -82,5 +82,29 @@ describe('POST /api/tts multipart 响应（评审 #53）', () => {
     const res = await route.POST(makeRequest('Hello world test.'))
     expect(res.status).toBe(400)
     expect(llmMocks.generateTts).not.toHaveBeenCalled()
+  })
+
+  it('跨源 Origin 被同源守卫拦下 403，不消耗密钥配额（复审 #2 接线验证）', async () => {
+    const res = await route.POST(makeRequest('Hello world test.', 'http://evil.example.com'))
+    expect(res.status).toBe(403)
+    expect(llmMocks.generateTts).not.toHaveBeenCalled()
+  })
+
+  it('provider 标 speedApplied:false → meta 透传 false；未标缺省 true（复审 #3）', async () => {
+    serverSettings.readEffectiveLlmSettings.mockResolvedValue({
+      provider: 'mimo', baseUrl: 'https://api.example.com/v1', apiKey: 'real-key',
+    })
+    const audioBytes = new Uint8Array([1, 2, 3])
+    llmMocks.generateTts.mockResolvedValue({ audioBuffer: audioBytes.buffer, durationMs: 1000, speedApplied: false })
+    const res = await route.POST(makeRequest('Hello world test.'))
+    const fd = await res.formData()
+    const meta = JSON.parse(String(fd.get('meta'))) as { speedApplied: boolean }
+    expect(meta.speedApplied).toBe(false)
+
+    llmMocks.generateTts.mockResolvedValue({ audioBuffer: audioBytes.buffer, durationMs: 1000 })
+    const res2 = await route.POST(makeRequest('Hello world test.'))
+    const fd2 = await res2.formData()
+    const meta2 = JSON.parse(String(fd2.get('meta'))) as { speedApplied: boolean }
+    expect(meta2.speedApplied).toBe(true)
   })
 })

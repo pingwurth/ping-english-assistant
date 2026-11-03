@@ -10,6 +10,7 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigs, readLlmConfigById } from '@/lib/server-settings'
+import { sameOriginGuard } from '@/lib/api-guard'
 import {
   generateMnemonicCardStream,
   generateAssociation,
@@ -42,6 +43,9 @@ interface MnemonicRequest {
 // ---------------------------------------------------------------------------
 
 export async function POST(request: Request) {
+  // 同源守卫（评审 #2）：本路由会用用户真实密钥消耗云端助记配额
+  const denied = sameOriginGuard(request)
+  if (denied) return denied
   let body: MnemonicRequest
   try {
     body = (await request.json()) as MnemonicRequest
