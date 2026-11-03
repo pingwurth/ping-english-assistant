@@ -374,6 +374,9 @@ function TTS() {
   if (goImport) return <Navigate to={goImport} replace />
 
   const generating = phase === 'generating'
+  // 下拉截断后的完整文案（title 悬停可见）
+  const currentModelOption = modelOptions.find(o => o.value === (isKokoro ? 'kokoro' : selectedConfigId))
+  const selectedTranslateConfig = translateConfigs.find(c => c.id === selectedTranslateConfigId)
   // 生成按钮：云端需有选中配置；本地 kokoro 随时可用；翻译开启时需已配置翻译模型
   const canGenerate = !overLimit && !!text.trim() && (engine === 'kokoro' || ttsConfigs.length > 0)
     && !(translateEnabled && translateConfigs.length === 0)
@@ -409,50 +412,52 @@ function TTS() {
             </div>
 
             <div className="flex flex-wrap gap-3">
-              <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <span className="text-muted-foreground">模型：</span>
+              <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <span className="shrink-0 whitespace-nowrap text-muted-foreground">模型：</span>
                 <select
                   value={isKokoro ? 'kokoro' : selectedConfigId}
                   onChange={(e) => handleEngineChange(e.target.value)}
                   disabled={generating || !settingsLoaded}
                   aria-label="选择语音模型"
-                  className="bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  title={currentModelOption?.label}
+                  className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {settingsLoaded && modelOptions.map((o) => (
                     <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>
               </label>
-              <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <span className="text-muted-foreground">音色：</span>
+              <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <span className="shrink-0 whitespace-nowrap text-muted-foreground">音色：</span>
                 <select
                   value={voiceIdx}
                   onChange={(e) => setVoiceIdx(Number(e.target.value))}
                   disabled={generating}
                   aria-label="选择音色"
-                  className="bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  title={voice?.label}
+                  className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {voices.map((v, i) => (
                     <option key={v.id} value={i}>{v.label}</option>
                   ))}
                 </select>
               </label>
-              <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <span className="text-muted-foreground">语速：</span>
+              <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <span className="shrink-0 whitespace-nowrap text-muted-foreground">语速：</span>
                 <select
                   value={speedIdx}
                   onChange={(e) => setSpeedIdx(Number(e.target.value))}
                   disabled={generating}
                   aria-label="选择语速"
-                  className="bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {SPEEDS.map((s, i) => (
                     <option key={s} value={i}>{s}x</option>
                   ))}
                 </select>
               </label>
-              <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                <span className="text-muted-foreground">翻译：</span>
+              <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                <span className="shrink-0 whitespace-nowrap text-muted-foreground">翻译：</span>
                 <Switch
                   checked={translateEnabled}
                   onCheckedChange={handleTranslateToggle}
@@ -461,14 +466,15 @@ function TTS() {
                 />
               </label>
               {translateEnabled && translateConfigs.length > 0 && (
-                <label className="flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                  <span className="text-muted-foreground">翻译模型：</span>
+                <label className="flex max-w-full items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                  <span className="shrink-0 whitespace-nowrap text-muted-foreground">翻译模型：</span>
                   <select
                     value={selectedTranslateConfigId}
                     onChange={(e) => setSelectedTranslateConfigId(e.target.value)}
                     disabled={generating || !settingsLoaded}
                     aria-label="选择翻译模型"
-                    className="bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    title={selectedTranslateConfig ? `${selectedTranslateConfig.translateModel} · ${selectedTranslateConfig.name}` : undefined}
+                    className="min-w-0 truncate bg-transparent text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {translateConfigs.map((c) => (
                       <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>

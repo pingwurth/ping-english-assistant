@@ -352,6 +352,8 @@ export function TranscribeControls({
   onStart: () => void
   onCancel: () => void
 }) {
+  // 下拉截断后的完整文案（title 悬停可见）
+  const selectedTranslateConfig = translateConfigs.find(c => c.id === selectedTranslateConfigId)
   return (
     <>
       <MethodSelector method={method} setMethod={onMethodChange} />
@@ -366,14 +368,15 @@ export function TranscribeControls({
       {(method === 'model' || method === 'local') && (
         <div className="flex flex-col gap-2 rounded-xl bg-muted p-4">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">翻译</span>
+            <span className="shrink-0 whitespace-nowrap text-sm font-medium">翻译</span>
             <Switch checked={translateEnabled} onCheckedChange={onTranslateEnabledChange} aria-label="翻译开关" />
             {translateEnabled && (
               <select
                 value={selectedTranslateConfigId || ''}
                 onChange={e => onTranslateConfigChange(e.target.value)}
                 disabled={translateConfigs.length === 0}
-                className="rounded-md border border-input bg-background px-2 py-1 text-xs disabled:opacity-50"
+                title={selectedTranslateConfig ? `${selectedTranslateConfig.translateModel} · ${selectedTranslateConfig.name}` : undefined}
+                className="min-w-0 truncate rounded-md border border-input bg-background px-2 py-1 text-xs disabled:opacity-50"
               >
                 {translateConfigs.map(c => (
                   <option key={c.id} value={c.id}>{c.translateModel} · {c.name}</option>
@@ -438,6 +441,8 @@ export function MethodHint({ method, onConfigureLlm, asrConfigs, selectedAsrConf
   selectedAsrConfigId?: string
   onAsrConfigChange?: (id: string) => void
 }) {
+  // 下拉截断后的完整文案（title 悬停可见）
+  const selectedAsrConfig = asrConfigs?.find(c => c.id === selectedAsrConfigId)
   if (method === 'local') {
     return (
       <div className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">
@@ -455,11 +460,12 @@ export function MethodHint({ method, onConfigureLlm, asrConfigs, selectedAsrConf
         <p className="mt-1">自动识别语言、断句并生成时间轴字幕。音频会发送到云端模型处理。</p>
         {asrConfigs && asrConfigs.length > 0 && (
           <div className="mt-3 flex items-center gap-2">
-            <span className="text-xs text-primary/70">ASR 模型：</span>
+            <span className="shrink-0 whitespace-nowrap text-xs text-primary/70">ASR 模型：</span>
             <select
               value={selectedAsrConfigId || ''}
               onChange={e => onAsrConfigChange?.(e.target.value)}
-              className="rounded-md border border-primary/20 bg-background px-2 py-1 text-xs"
+              title={selectedAsrConfig ? `${selectedAsrConfig.asrModel} · ${selectedAsrConfig.name}` : undefined}
+              className="min-w-0 truncate rounded-md border border-primary/20 bg-background px-2 py-1 text-xs"
             >
               {asrConfigs.map(c => (
                 <option key={c.id} value={c.id}>{c.asrModel} · {c.name}</option>
