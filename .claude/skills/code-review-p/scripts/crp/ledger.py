@@ -30,6 +30,15 @@ def norm_file(f: object, root: str = "") -> str:
     return p
 
 
+def norm_root(state) -> str:
+    """路径归一根: 仓库顶层(repo.root)—— 子目录启动时 finder 回显的绝对路径
+    剥前缀不再错误(P8 回修: 原版取 repo.cwd=启动目录, 子目录启动同一缺陷以
+    两种拼写入账); 旧 state 无 root 回退 cwd(降级同旧版行为)。
+    """
+    repo = getattr(state, "repo", None) or {}
+    return repo.get("root") or repo.get("cwd", "")
+
+
 # --------------------------------------------------------------------------- #
 # 摘要归一与 token 化(与 JS normSummary/tokensOf 对齐)
 # --------------------------------------------------------------------------- #
@@ -97,10 +106,17 @@ def overlap_toks(a: set[str], b: set[str]) -> bool:
 
 
 def find_dup(seen: list[dict], cand: dict) -> Optional[dict]:
-    """在曾见台账中找同缺陷条目: 同 file + 行号 ±DEDUP_LINE_BAND + 摘要重叠。"""
+    """在曾见台账中找同缺陷条目: 同 file + 行号 ±DEDUP_LINE_BAND + 摘要重叠。
+
+    P7 回修: status=='dup' 的台账行不作锚 —— JS 的 seen 只收 fresh(非传递),
+    原版 Python 把 dup 行也当锚(传递), 渐进漂移链(10/12/14)两载体分类不同;
+    对齐为非传递(dup 行已由其锚代表), 共享 fixture 链式用例锁死。
+    """
     toks = tokens_of(cand.get("summary", ""))
     cline = cand.get("line") or 0
     for p in seen:
+        if p.get("status") == "dup":
+            continue
         if p.get("file") != cand.get("file"):
             continue
         if abs((p.get("line") or 0) - cline) > config.DEDUP_LINE_BAND:
@@ -113,6 +129,12 @@ def find_dup(seen: list[dict], cand: dict) -> Optional[dict]:
 # --------------------------------------------------------------------------- #
 # 候选 schema 校验(全有或全无; 拒收不截断)
 # --------------------------------------------------------------------------- #
+def default_angle_coverage(ran: bool = False) -> dict:
+    """coverage 角度条目的唯一形状(P7 回修: journal/ledger 两处字面量已分叉
+    —— journal 版多 dropped_invalid 且 ran 默认 True, ledger 版反之)。"""
+    return {"ran": ran, "raw": 0, "fresh": 0, "dropped": 0, "dropped_invalid": 0}
+
+
 def validate_candidate(c: object, where: str) -> list[str]:
     """单条候选校验; 返回错误列表(空 = 通过)。"""
     errs: list[str] = []
@@ -163,6 +185,12 @@ def validate_candidates_file(data: object) -> list[str]:
         angle = item.get("angle")
         if not isinstance(angle, str) or not angle.strip():
             errs.append(f"{w}: angle 必须是非空字符串")
+        # P4 回修: coverage 形状校验 —— 'coverage': null 原版过校验后在锁内
+        # AttributeError, exit-2 内部错误而非全有或全无的 exit-3 拒收
+        # (get 分不清缺省与 null, 用 in 判定键存在)
+        if "coverage" in item and not isinstance(item.get("coverage"), dict):
+            errs.append(f"{w}: coverage 必须是对象(如 {{\"ran\": true}}), "
+                        f"得到 {type(item.get('coverage')).__name__}")
         cands = item.get("candidates")
         if not isinstance(cands, list):
             errs.append(f"{w}: candidates 必须是数组")
@@ -183,7 +211,6 @@ class IngestResult:
     fresh_ids: list[str] = field(default_factory=list)
     dup_count: int = 0
     dropped_over_cap: int = 0
-    errors: list[str] = field(default_factory=list)
 
 
 def next_id(state) -> str:
@@ -194,10 +221,10 @@ def ingest_candidates(state, data: dict, *, origin: str, round_no: int) -> Inges
     """把 candidates 提交并入台账(调用方已通过 validate_candidates_file)。
 
     每角度批次: 路径归一 → 超 8 条丢弃计数 → 逐条去重 → 分配 id 入账;
-    coverage/账目随之更新。已通过 candidate_by_id 幂等保护由 submit 处理器负责。
+    coverage/账目随之更新。幂等保护(同轮同字节重投吸收)由 submit 处理器负责。
     """
     result = IngestResult()
-    root = (state.repo or {}).get("cwd", "")
+    root = norm_root(state)
     acc = state.accounting
     fresh_for_round = 0
     dup_for_round = 0
@@ -205,8 +232,8 @@ def ingest_candidates(state, data: dict, *, origin: str, round_no: int) -> Inges
     for item in data.get("items", []):
         angle = item.get("angle", "?")
         cov = state.coverage.setdefault("angles", {}).setdefault(
-            angle, {"ran": False, "raw": 0, "fresh": 0, "dropped": 0})
-        cov["ran"] = cov.get("ran") or bool(item.get("coverage", {}).get("ran", True))
+            angle, default_angle_coverage(False))
+        cov["ran"] = cov.get("ran") or bool((item.get("coverage") or {}).get("ran", True))
         cands = item.get("candidates") or []
         if len(cands) > config.MAX_CANDIDATES_PER_ANGLE:
             result.dropped_over_cap += len(cands) - config.MAX_CANDIDATES_PER_ANGLE
@@ -242,7 +269,7 @@ def ingest_candidates(state, data: dict, *, origin: str, round_no: int) -> Inges
                 "status": "fresh", "dup_of": None,
                 "votes": [], "verdict": None, "evidence": "",
                 "severity_final": c.get("severity", "P3"),
-                "kept": False, "drop_reason": None, "stale": False, "rank": None,
+                "kept": False, "drop_reason": None, "stale": False,
             }
             state.candidates.append(entry)
             result.fresh_ids.append(cid)

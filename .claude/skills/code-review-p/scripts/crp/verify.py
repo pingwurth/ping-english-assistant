@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import config
+from .logutil import module_logger
 from .models import State
 
 
@@ -32,7 +33,10 @@ def aggregate_verdict(votes: list[dict], high: bool) -> str:
     if refuted > len(votes) / 2:
         return "REFUTED"         # 严格多数; 平局存活
     confirmed = sum(1 for v in votes if v.get("verdict") == "CONFIRMED")
-    return "CONFIRMED" if confirmed >= (len(votes) + 1) // 2 else "PLAUSIBLE"
+    # P7 回修: 严格多数才 CONFIRMED —— 原版 confirmed >= (n+1)//2 在偶数票对峙
+    # (2 票 1C+1R、4 票 2C+2R)时聚合为 CONFIRMED, 违反三处文档"平局 = 不确定
+    # → PLAUSIBLE"; deep-review.js 同公式同错(已同步, 共享 fixture 锁死)。
+    return "CONFIRMED" if confirmed * 2 > len(votes) else "PLAUSIBLE"
 
 
 def validate_votes_file(data: object, state: State) -> list[str]:
@@ -45,6 +49,14 @@ def validate_votes_file(data: object, state: State) -> list[str]:
     if len(votes) > config.MAX_VOTES_PER_FILE:
         return [f"votes 数 {len(votes)} 超单文件上限 {config.MAX_VOTES_PER_FILE}"]
     pending = {p["id"]: p for p in (state.cursor.get("pending_verify") or [])}
+    # P1 回修: (id, lens) 唯一性 —— 重复透镜票会在法定人数里双计, 把 REFUTED
+    # 翻成 CONFIRMED。既查文件内重复, 也查候选已入账的票(跨文件重复投票)。
+    voted: dict[str, set[str]] = {}
+    for c in state.candidates:
+        lenses = {v.get("lens") for v in (c.get("votes") or [])}
+        if lenses:
+            voted[c.get("id")] = lenses
+    seen: set[tuple[str, str]] = set()
     errs: list[str] = []
     for i, v in enumerate(votes):
         w = f"votes[{i}]"
@@ -69,6 +81,15 @@ def validate_votes_file(data: object, state: State) -> list[str]:
             errs.append(f"{w}: severity 必须是 {'/'.join(config.SEVERITIES)}")
         if v.get("source") not in ("agent", "inline"):
             errs.append(f"{w}: source 必须是 agent|inline")
+        if (isinstance(cid, str) and cid
+                and v.get("lens") in config.LENSES and cid in pending):
+            lens = v.get("lens")
+            if (cid, lens) in seen:
+                errs.append(f"{w}: 重复票 (id={cid}, lens={lens}) —— 每候选每透镜恰一票")
+            elif lens in voted.get(cid, set()):
+                errs.append(f"{w}: 候选 {cid} 的 {lens} 透镜已有票(不得重复投票)")
+            else:
+                seen.add((cid, lens))
     return errs
 
 
@@ -76,7 +97,6 @@ def validate_votes_file(data: object, state: State) -> list[str]:
 class VoteOutcome:
     finalized: list[str] = field(default_factory=list)   # 本批完成终裁的 id
     upgraded: list[str] = field(default_factory=list)    # 升级补透镜的 id
-    errors: list[str] = field(default_factory=list)
 
 
 def _best_vote(votes: list[dict], verdict: str) -> Optional[dict]:
@@ -138,7 +158,8 @@ def apply_votes(state: State, votes: list[dict]) -> VoteOutcome:
     for v in votes:
         cand = cand_by_id.get(v["id"])
         if cand is None:
-            outcome.errors.append(f"候选 {v['id']} 不在台账")
+            # 校验器保证 pending id 必在台账; 此分支仅为防御 —— 记日志不静默
+            module_logger().warning(f"票候选 {v['id']} 不在台账, 丢弃该票")
             continue
         cand.setdefault("votes", []).append({
             "lens": v.get("lens"), "verdict": v.get("verdict"),

@@ -9,16 +9,15 @@ from __future__ import annotations
 import os
 
 SKILL_NAME = "code-review-p"
-ENGINE_NAME = "crp"
 ENTRY_FILENAME = "crp.py"
 
 # --------------------------------------------------------------------------- #
 # 运行目录(被审仓库之外 —— 只读纪律 + 不污染 Phase 0 自身依赖的 ?? 检测)
 # --------------------------------------------------------------------------- #
 STATE_FILENAME = "state.json"
+META_FILENAME = "meta.json"  # 运行列举轻量边车(list_runs 不再全量解析 state.json)
 LOGS_SUBDIR = "logs"    # 每子命令日志(协议块缺失时读尾部 50 行)
 IN_SUBDIR = "in"        # LLM 提交物(overlay.json / brief.md / candidates-*.json …)
-WORK_SUBDIR = "work"    # 引擎产出给 LLM 的输入(gap digest / 验证批次)
 OUT_SUBDIR = "out"      # 报告与台账导出
 
 # 状态根目录: CRP_HOME > (Windows: %LOCALAPPDATA%) > XDG_STATE_HOME > ~/.local/state
@@ -27,7 +26,7 @@ CRP_HOME_ENV = "CRP_HOME"
 CRP_MAX_ROUNDS_ENV = "CRP_MAX_ROUNDS"
 # 并发上限环境覆盖(钳制 [MAX_CONCURRENT_MIN, MAX_CONCURRENT_MAX]) —— 限流保护
 CRP_MAX_CONCURRENT_ENV = "CRP_MAX_CONCURRENT"
-# 载体 1 总量预算环境覆盖(下限 MAX_AGENTS_MIN)
+# 载体 1 总量预算环境覆盖(下限 1 —— 与 deep-review.js 同口径: 限流收紧不得静默抬回)
 CRP_MAX_AGENTS_ENV = "CRP_MAX_AGENTS"
 
 RUN_ID_PREFIX = "crp"
@@ -128,7 +127,7 @@ def default_max_agents(n_angles: int) -> int:
 DEFAULT_MAX_CONCURRENT = 4
 MAX_CONCURRENT_MIN = 1
 MAX_CONCURRENT_MAX = 16
-MAX_AGENTS_MIN = 12  # 与 deep-review.js 的 Math.max(12, ...) 对齐
+MIN_AGENT_BUDGET = 1  # 与 deep-review.js 的 Math.max(1, args?.maxAgents ?? …) 对齐
 
 
 def max_concurrent_agents() -> int:
@@ -147,7 +146,9 @@ def agent_budget(n_angles: int) -> int:
     raw = os.environ.get(CRP_MAX_AGENTS_ENV)
     if raw:
         try:
-            return max(MAX_AGENTS_MIN, int(raw))
+            # P12(c025): 下限 1 与 JS 同口径 —— 原版 max(12, raw) 把限流用户收紧的
+            # 1-11 静默抬回 12, 而 JS 侧已删同款地板, 文档化 env 旋钮静默失效
+            return max(MIN_AGENT_BUDGET, int(raw))
         except (TypeError, ValueError):
             pass
     return default_max_agents(n_angles)
@@ -179,6 +180,10 @@ OVERLAY_CANDIDATE_PATHS = (".claude/code-review-p.md", "code-review-p.md")
 HEURISTIC_GATE_FILES = ("Makefile", "makefile", "GNUmakefile", "justfile", "package.json")
 HEURISTIC_GATE_DIR = ".github/workflows"
 HEURISTIC_GATE_PATTERN = r"check|lint|test|verify|migration"  # re.IGNORECASE
+# untracked 行数统计的防灌水闸(P3 回修): 超过尺寸上限或首段含 NUL(二进制,
+# 与 git 的判定同源)按 0 计 —— 编译产物不得把 insertions 顶穿 fan-out 阈值
+UNTRACKED_INSERTIONS_MAX_BYTES = 1_000_000
+BINARY_SNIFF_BYTES = 8192
 
 # --------------------------------------------------------------------------- #
 # brief(六节契约; 语言中立校验)
@@ -187,28 +192,12 @@ BRIEF_MIN_SECTIONS = 6    # markdown ## 节数下限(六节; 区域 brief 可更
 BRIEF_SOFT_LINE_LIMIT = 30  # 超限仅警告(advisory)
 
 # --------------------------------------------------------------------------- #
-# 报告
-# --------------------------------------------------------------------------- #
-REPORT_TABLE_COLUMNS = ("#", "Location", "Sev", "Finding")
-
-# --------------------------------------------------------------------------- #
 # state.json schema 版本(顺序迁移; 每次结构变更递增并追加迁移函数)
 # --------------------------------------------------------------------------- #
-STATE_SCHEMA_VERSION = 1
-
-# phase 取值(引擎状态机)
-PHASES = ("scope", "overlay", "gates", "brief", "carrier", "sweep",
-          "verify", "report", "fix", "fix_review", "done", "aborted")
-# cursor.awaiting 取值(提交种类 + answer)
-AWAITING_KINDS = ("overlay", "brief", "candidates", "verdicts", "details",
-                  "carrier", "fix_outcomes", "answer")
-ROUND_KINDS = ("sweep", "gap", "fix_review")
+STATE_SCHEMA_VERSION = 2  # v2: sweep_plan 并发/预算键 + repo.root 回填(见 state._MIGRATIONS)
 
 # ask_user key 取值
 QUESTION_KEYS = ("scope", "gates", "drift", "run")
-# resume option 枚举(next-step.schema.json 同步)
-RESUME_OPTIONS = ("approve_all", "skip_all", "choice", "new_scope",
-                  "resume_old_scope", "resume_run", "terminate")
 
 # --------------------------------------------------------------------------- #
 # 日志格式

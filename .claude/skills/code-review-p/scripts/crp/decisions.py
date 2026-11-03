@@ -28,10 +28,6 @@ class RouteCtx:
     def in_dir(self) -> Path:
         return self.run_dir / config.IN_SUBDIR
 
-    @property
-    def work_dir(self) -> Path:
-        return self.run_dir / config.WORK_SUBDIR
-
     def refs(self, name: str) -> str:
         return str(self.skill_root / "references" / name)
 
@@ -183,7 +179,7 @@ def brief_work(state: State, ctx: RouteCtx) -> Decision:
 
 
 def gates_question(state: State, ctx: RouteCtx) -> Decision:
-    """A4: 门禁确认前置 —— 恰好一次批量 ask_user(brief 之后)。"""
+    """A4: 门禁确认 —— 每次 brief 之后恰一次批量 ask_user(重导范围后重提取并重问)。"""
     ov = state.overlay or {}
     undecided = [g for g in (ov.get("gates") or [])
                  if g.get("approval") == "unset" and g.get("semantics") != "write"]
@@ -248,6 +244,28 @@ def carrier_work(state: State, ctx: RouteCtx) -> Decision:
 # --------------------------------------------------------------------------- #
 # 扫描与验证 do_work
 # --------------------------------------------------------------------------- #
+def _cap(plan_val, override):
+    """override 为合法正整数时取 min(只收紧不放宽), 否则用 plan 值。"""
+    if isinstance(override, int) and not isinstance(override, bool) and override >= 1:
+        return min(plan_val, override) if isinstance(plan_val, int) else override
+    return plan_val
+
+
+def effective_limits(state: State) -> tuple[Optional[int], int]:
+    """生效的 (max_agents, max_concurrent)。
+
+    P2 回修: carrier 提交的 max_agents/max_concurrent 原版校验入库后无任何
+    消费(死旋钮 —— 限流环境按 submissions.md 提交 {"max_concurrent": 1} 后
+    扫描/验证指令与载体 1 workflow 参数照读计划值)。现在与扫描计划取 min,
+    只收紧不放宽; 载体未提交覆盖时即计划值。
+    """
+    plan = state.sweep_plan or {}
+    carrier = state.carrier or {}
+    mc_plan = plan.get("max_concurrent") or config.max_concurrent_agents()
+    return (_cap(plan.get("max_agents"), carrier.get("max_agents")),
+            _cap(mc_plan, carrier.get("max_concurrent")))
+
+
 def _gap_digest(state: State) -> str:
     """gap 轮的 already-found digest: kept 逐条(≤50), 之后按文件卷展。
 
@@ -291,7 +309,7 @@ def sweep_work(state: State, ctx: RouteCtx) -> Decision:
 
     # 初扫(fix_review 也是一轮全角度 quick 语义扫描)
     angles = pending or plan.get("angles") or []
-    max_conc = plan.get("max_concurrent") or config.max_concurrent_agents()
+    max_agents_eff, max_conc = effective_limits(state)
     common = (
         "逐角度生成候选: 生成自由、不做过滤(置信度/严重度只记录不拦截); "
         "同一行不同机制 = 两条候选; 每角度上限 8 条。\n"
@@ -299,17 +317,28 @@ def sweep_work(state: State, ctx: RouteCtx) -> Decision:
         "候选 file 一律仓库相对路径(正斜杠); cleanup(I)/altitude(J)/conventions(K) 的 "
         "failure_scenario 写具体成本而非崩溃。\n"
         f"spawn 子代理(载体 2)必须分波: 同时在飞 ≤ {max_conc}"
-        "(限流保护), 一个完成再补一个 —— 不要一次扇出全部角度。"
+        "(限流保护), 一个完成再补一个 —— 不要一次扇出全部角度; "
+        f"总 spawn 预算 ≤ {max_agents_eff} 个 agent(含 refuter)。"
     )
-    if carrier_no == 1:
+    # P1 回修: 载体 1 只服务初扫轮 —— fix_review 轮下发 carrier1 会因 submit
+    # 的种类核对只认 phase=='sweep' 而无限错序 exit-3 循环(LLM 逐字执行协议
+    # 永远无法满足引擎); 复审轮(quick 语义单轮)固定走常规 candidates 提交。
+    if carrier_no == 1 and round_kind != "fix_review":
         output = str(ctx.in_dir / "04-carrier1-transcript-dir.txt")
+        # P7 回修: dryRequired 下发(原版 JS 硬编码 dry<2 的 deep 语义, standard
+        # 被多跑一整轮 gap); quick 传 verify:false 免对抗验证(引擎 floor-only
+        # 摄取, 反驳预算不再白烧)。
+        quick_arg = ", verify: false" if state.mode == "quick" else ""
         instructions = (
             "载体 1(Workflow 工具, 仅主会话): 以 scriptPath 调用已安装的 "
             "workflows/deep-review.js, args 携带 "
             "{brief: <02-brief.md 全文>, scope: <scope_command>, cwd: <仓库绝对路径>, "
             f"angles: {angles}, maxRounds: {plan.get('max_rounds')}, "
-            f"maxAgents: {plan.get('max_agents')}, concurrency: {max_conc}}}。\n"
-            "运行结束后, 把工具结果中的 transcriptDir 路径原样写入 output 文件(单行)。\n"
+            f"dryRequired: {plan.get('dry_required')}, "
+            f"maxAgents: {max_agents_eff}, concurrency: {max_conc}{quick_arg}}}。\n"
+            + ("quick 模式: verify:false —— workflow 不跑对抗验证, 引擎按 floor-only 摄取。\n"
+               if state.mode == "quick" else "")
+            + "运行结束后, 把工具结果中的 transcriptDir 路径原样写入 output 文件(单行)。\n"
             "若 journal 不可读, 改写压缩 journal JSON 到同一文件(引擎按内容嗅探)。"
         )
         return Decision(
@@ -353,7 +382,7 @@ def verify_work(state: State, ctx: RouteCtx) -> Decision:
             "summary": c.get("summary"), "failure_scenario": c.get("failure_scenario"),
             "severity": c.get("severity"), "lenses": lenses,
         })
-    max_conc = (state.sweep_plan or {}).get("max_concurrent") or config.max_concurrent_agents()
+    max_agents_eff, max_conc = effective_limits(state)
     instructions = (
         "对抗验证: 逐候选逐透镜尝试**反驳**。读真实代码并引证原文; 检查别处守卫"
         "(调用方/包装器/框架默认/类型系统); 能否精确命名触发输入态; 可廉价实证则实证"
@@ -363,7 +392,7 @@ def verify_work(state: State, ctx: RouteCtx) -> Decision:
         f"透镜: correctness=代码是否如 finding 所称 / reproduction=构造具体触发 / "
         f"security=真实信任边界与影响。\n"
         f"spawn 子代理分波进行: 同时在飞 ≤ {max_conc}"
-        "(限流保护), 一个完成再补一个。\n"
+        f"(限流保护), 总预算 ≤ {max_agents_eff} 个 agent, 一个完成再补一个。\n"
         f"批次 {len(batch)}/{len(pending)}; P0/P1 需全部所列透镜各一票。"
     )
     return _do_work(
@@ -427,6 +456,17 @@ def decide_next(state: State, ctx: RouteCtx) -> Decision:
                     reason="状态机异常", question=f"未知 phase {phase}")
 
 
+def kept_context(kept: list[dict]) -> list[dict]:
+    """kept 候选的 LLM 上下文形状 —— report_work 与 fix_work 共用。
+
+    P8 回修: 原两处逐字重建的 comprehension, 加字段只改一份时 --fix 阶段
+    会对着与 details 阶段不同的候选视图编造 outcomes。
+    """
+    return [{"id": c["id"], "severity": c.get("severity_final"),
+             "location": f"{c['file']}:{c['line']}", "summary": c["summary"]}
+            for c in kept]
+
+
 def report_work(state: State, ctx: RouteCtx) -> Decision:
     """报告细节 do_work: 台账已定(kept 名单), LLM 补散文。"""
     kept = [c for c in state.candidates if c.get("kept")]
@@ -444,9 +484,7 @@ def report_work(state: State, ctx: RouteCtx) -> Decision:
     ]
     return _do_work(
         "details", "\n".join(parts), ctx,
-        context={"kept": [{"id": c["id"], "severity": c.get("severity_final"),
-                           "location": f"{c['file']}:{c['line']}", "summary": c["summary"]}
-                          for c in kept],
+        context={"kept": kept_context(kept),
                  "coverage_required": bool(state.scope.get("repo_mode")
                                            or state.scope.get("whole_file_mode"))},
         shape=SHA_DETAILS, summary="等待报告细节", seq="05")
@@ -468,9 +506,7 @@ def fix_work(state: State, ctx: RouteCtx) -> Decision:
             "修完逐条记录 outcome: fixed / skipped(原因) / no_change_needed; "
             "修复前重跑覆盖该条的门禁, 绿了才算 fixed。"
         ),
-        context={"kept": [{"id": c["id"], "severity": c.get("severity_final"),
-                           "location": f"{c['file']}:{c['line']}", "summary": c["summary"]}
-                          for c in kept]},
+        context={"kept": kept_context(kept)},
         output=str(output),
         shape='{"outcomes": [{"id": "c001", "outcome": "fixed", "reason": "", "gate_results": "make check ✓"}]}',
         submit=_submit_cmd(ctx, "fix-outcomes", output),

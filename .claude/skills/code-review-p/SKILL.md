@@ -62,19 +62,27 @@ Discipline: parse only the marked block; if it is missing, read the tail
 hand-edit `state.json`. Never substitute your own procedure for a protocol
 route — a missing block or a bypassed step is a terminate condition, not an
 improvisation prompt. State lives **outside the reviewed repo** (read-only
-discipline): `<state-home>/code-review-p/<repo-slug>/<run-id>/`, `CRP_HOME`
-overrides; `in/` holds your submissions, `out/` the report and ledger export.
+discipline): `<state-home>/code-review-p/<repo-slug>/<run-id>/`; `CRP_HOME`
+overrides the whole skill state root (runs live at `<CRP_HOME>/<repo-slug>/…` —
+no extra `code-review-p/` segment). `in/` holds your submissions, `out/` the
+report and ledger export.
 
 ## 2 — Command surface
 
 ```bash
 python3 scripts/crp.py start  [--mode quick|standard|deep] [--target <branch|PR|range|path|repo>] [--fix] [--run-dir D] [--force]
-python3 scripts/crp.py resume [--run-dir D]          # the universal router
+python3 scripts/crp.py resume [--run-dir D]          # the universal router (`next` is an alias)
 python3 scripts/crp.py submit --kind <overlay|brief|candidates|verdicts|details|carrier|fix-outcomes> --file F [--run-dir D]
 python3 scripts/crp.py submit --kind carrier1 --transcript-dir D [--run-dir D]   # Workflow journal ingest
 python3 scripts/crp.py answer --run-dir D --key <scope|gates|drift|run> --choice <option> [--value V]
 python3 scripts/crp.py status | runs | report
 ```
+
+An answer is only legal while its question is pending: replaying a stale
+ask_user answer (e.g. re-pasting it after a 429 interruption) is rejected with
+exit 3 and routed back through `resume` — it can never teleport the state
+machine. (Exception: the `start` reroute question's `run` answer is idempotent
+— a replay just routes to `resume` again and exits 0.)
 
 (On hosts where the interpreter is named differently use `python`/`py -3`.)
 
@@ -126,8 +134,8 @@ sync pairs, doc claims); section 5 marks read-only vs write.
 Project config: repo overlay (`.claude/code-review-p.md`) → CLAUDE.md/AGENTS.md
 → heuristic gate scan. The engine determines overlay trust; an untrusted
 overlay's exclusions are **suspended** (they become review targets, not scope
-cuts) and its gates need user confirmation — one batched ask_user after the
-brief, never repeated. [references/project-config.md](references/project-config.md).
+cuts) and its gates need user confirmation — one batched ask_user after each
+brief (a scope re-import after drift re-extracts the overlay and re-asks). [references/project-config.md](references/project-config.md).
 
 ## 5 — Phase 2: candidate sweep (generate; do NOT filter)
 
@@ -225,7 +233,8 @@ Only with the explicit flag — the reviewer is read-only until then:
    follows.
 3. Re-run the checks covering each fix before counting it fixed.
 4. Submit outcomes (`fixed` / `skipped` + why / `no_change_needed`); the
-   engine then runs one quick-effort re-review round of the fix diff and the
+   engine then runs one quick-effort re-review round of the fix diff (a regular
+   candidates submission — the workflow carrier is not re-invoked) and the
    final report carries per-finding outcomes.
 
 ## 10 — Fallback: no python3
