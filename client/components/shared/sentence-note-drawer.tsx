@@ -1,8 +1,9 @@
 /**
  * 句子笔记抽屉 —— 播放页"边听边记"的书写面（UI 定稿自 /prototype/sentence-notes 原型）。
  *
- * 形态：左侧开口（盖住媒体区，右侧字幕列表保持可见），右缘拖拽调宽（双击复位）；
- *       编辑/预览左右分栏（窄屏 <768px 退回上下分栏），视图三态：仅编辑/双栏/仅预览；
+ * 形态：底部弹出（盖住页面下方，上方播放区保持可见），上缘拖拽调高（双击复位）；
+ *       编辑/预览左右分栏（窄屏 <768px 退回上下分栏），视图三态：仅编辑/双栏/仅预览，
+ *       弹出时按内容定初始视图——空笔记直接进编辑、已有笔记先看预览，此后可手动切换（会话内保留）；
  *       分隔条拖拽调预览占比（双击复位，编辑器保底），左右默认 1:1、上下默认 1:2。
  * 行为：内容受控（调用方负责持久化，抽屉本身不落盘）；打开期间锚定目标句不随播放切走；
  *       Esc / 点遮罩 / 完成 关闭；双栏下编辑/预览滚动按百分比互同步（先滚的一侧持有同步权，
@@ -20,10 +21,10 @@ import { enclosingCenter } from '@/core/markdown/note-markdown'
 import { formatDuration } from '@/components/shared/player-parts'
 import type { SubtitleSentence } from '@/types/subtitle'
 
-/** 抽屉宽度：默认 80vw，夹在 [MIN, MAX_RATIO×vw]；双击拖柄复位 */
-const DEFAULT_WIDTH_RATIO = 0.8
-const MIN_WIDTH = 360
-const MAX_WIDTH_RATIO = 0.85
+/** 抽屉高度：默认 90vh，夹在 [MIN, MAX_RATIO×vh]（上限略高于默认值，上拖仍有余量）；双击拖柄复位 */
+const DEFAULT_HEIGHT_RATIO = 0.9
+const MIN_HEIGHT = 360
+const MAX_HEIGHT_RATIO = 0.95
 /** 预览区高度（窄屏上下分栏用）：初始按 编辑器:预览 = 1:2 计算（双击分隔条复位同款），
  *  最小 96px；上界由"编辑器保底 ~180px"动态夹紧——短视口时保底优先于 1:2 比例 */
 const FALLBACK_PREVIEW_H = 220
@@ -45,14 +46,14 @@ const MD_PLACEHOLDER = '记点什么…（支持 Markdown：**粗** ==高亮== `
 const CENTER_SNIPPET = '::: center\n居中文本\n:::'
 const TABLE_SNIPPET = '| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n|  |  |  |'
 
-function defaultWidth(): number {
+function defaultHeight(): number {
   if (typeof window === 'undefined') return 560
-  return Math.max(MIN_WIDTH, Math.round(window.innerWidth * DEFAULT_WIDTH_RATIO))
+  return Math.max(MIN_HEIGHT, Math.round(window.innerHeight * DEFAULT_HEIGHT_RATIO))
 }
 
-function maxWidth(): number {
-  if (typeof window === 'undefined') return 1080
-  return Math.round(window.innerWidth * MAX_WIDTH_RATIO)
+function maxHeight(): number {
+  if (typeof window === 'undefined') return 720
+  return Math.round(window.innerHeight * MAX_HEIGHT_RATIO)
 }
 
 /** 主体内容盒高度：clientHeight 含 p-5 上下 padding，扣除后才是编辑器+分隔条+预览的分配空间 */
@@ -247,14 +248,14 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
   onLocate: () => void
   onClose: () => void
 }) {
-  // 视图三态（仅编辑 / 双栏 / 仅预览）；会话内保留，不落盘
+  // 视图三态（仅编辑 / 双栏 / 仅预览）；每次弹出按内容定初态，打开期间的手动切换会话内保留，不落盘
   const [mode, setMode] = useState<NoteViewMode>('split')
   // 窄屏（<768px，与页脚提示的 md: 断点一致）：双栏退回上下布局——手机上左右放不下
   const [narrow, setNarrow] = useState(false)
-  // 抽屉宽度（右缘拖拽）
-  const [width, setWidth] = useState(defaultWidth)
-  const [draggingWidth, setDraggingWidth] = useState(false)
-  const edgeDrag = useRef<{ startX: number; startW: number } | null>(null)
+  // 抽屉高度（上缘拖拽）
+  const [height, setHeight] = useState(defaultHeight)
+  const [draggingHeight, setDraggingHeight] = useState(false)
+  const edgeDrag = useRef<{ startY: number; startH: number } | null>(null)
   // 预览高度（窄屏上下分栏，分隔条拖拽）；null = 尚未初始化，首次打开时按 1:2 测量设定
   const [previewH, setPreviewH] = useState<number | null>(null)
   const [draggingPH, setDraggingPH] = useState(false)
@@ -296,16 +297,18 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
   }, [])
 
   // 窄/宽切换时重夹上一布局留下的定尺寸——否则桌面高度下定的 previewH 会撑爆
-  // 窄屏内容盒，把编辑器压没（previewW 同理反向）；夹紧幂等，正常值不受影响
+  // 窄屏内容盒，把编辑器压没（previewW 同理反向）；进出双栏（mode 变化）时同样
+  // 重夹：单栏期间主体盒尺寸变化不会被察觉；夹紧幂等，正常值不受影响
   useEffect(() => {
     setPreviewH((h) => (h == null ? h : clampPreviewH(h)))
     setPreviewW((w) => (w == null ? w : clampPreviewW(w)))
-  }, [narrow])
+  }, [narrow, mode])
 
-  /** 预览高夹紧：[MIN_PREVIEW_H, 可用高 - 编辑器保底]（可用高不足时上界退到下界） */
+  /** 预览高夹紧：[MIN_PREVIEW_H, 可用高 - 编辑器保底]（可用高不足时上界退到下界）；
+   *  主体盒不可测（抽屉未开、ref 脱挂）时原值返回——夹紧须幂等收敛，不能把好值改坏 */
   const clampPreviewH = (h: number): number => {
     const usable = contentHeightOf(bodyRef.current) - SEPARATOR_H
-    if (usable <= 0) return FALLBACK_PREVIEW_H
+    if (usable <= 0) return h
     const max = Math.max(MIN_PREVIEW_H, usable - MIN_EDITOR_H)
     return Math.round(Math.max(MIN_PREVIEW_H, Math.min(max, h)))
   }
@@ -318,10 +321,10 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
   }
 
   /** 预览宽夹紧：常规夹在 [MIN_PREVIEW_W, 可用宽 - 编辑器保底]；可用宽不足两者之和
-   *  （极窄抽屉）时下界退化为对半——不溢出优先于保底 */
+   *  （极窄抽屉）时下界退化为对半——不溢出优先于保底；主体盒不可测时原值返回（同 clampPreviewH） */
   const clampPreviewW = (w: number): number => {
     const usable = contentWidthOf(bodyRef.current) - SEPARATOR_W
-    if (usable <= 0) return FALLBACK_PREVIEW_W
+    if (usable <= 0) return w
     const min = Math.min(MIN_PREVIEW_W, Math.round(usable / 2))
     const max = Math.max(min, usable - MIN_EDITOR_W)
     return Math.round(Math.max(min, Math.min(max, w)))
@@ -329,6 +332,14 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
 
   /** 默认预览宽：编辑器:预览 = 1:1 对半，再经 clampPreviewW 夹紧 */
   const defaultPreviewW = () => clampPreviewW((contentWidthOf(bodyRef.current) - SEPARATOR_W) / 2)
+
+  // 弹出瞬间按当时内容定初始视图（渲染期同步设定，避免先渲染默认 split 再切换的一帧闪烁）：
+  // 空笔记 → 仅编辑（直接写），已有笔记 → 仅预览（先读）；关闭后再弹出则按新内容重新判定
+  const wasOpenRef = useRef(false)
+  if (open !== wasOpenRef.current) {
+    wasOpenRef.current = open
+    if (open) setMode(content.trim() ? 'preview' : 'editor')
+  }
 
   // 首次打开按实测尺寸设定初始比例；此后保留用户拖拽值，双击分隔条才重算复位
   useEffect(() => {
@@ -353,8 +364,8 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
         role="dialog"
         aria-modal="true"
         aria-label={`句子 ${target.index + 1} 的笔记`}
-        className="absolute inset-y-0 left-0 flex flex-col bg-card shadow-2xl select-none"
-        style={{ width: `${Math.min(width, maxWidth())}px`, userSelect: draggingWidth || draggingPH || draggingPW ? 'none' : 'text' }}
+        className="absolute inset-x-0 bottom-0 flex flex-col overflow-hidden rounded-t-2xl bg-card shadow-2xl select-none"
+        style={{ height: `${Math.min(height, maxHeight())}px`, userSelect: draggingHeight || draggingPH || draggingPW ? 'none' : 'text' }}
       >
         {/* 头部：锚定句信息 */}
         <div className="border-b p-5 pr-12">
@@ -456,8 +467,8 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
 
         {/* 底部 */}
         <div className="flex items-center gap-2 border-t px-5 py-3 text-xs text-muted-foreground">
-          <span className="hidden md:inline">{mode === 'split' ? '拖动抽屉右缘调宽度 · 拖动分隔条调预览宽度' : '拖动抽屉右缘调宽度'}</span>
-          <span className="md:hidden">{mode === 'split' ? '拖动右缘/分隔条调整' : '拖动右缘调整'}</span>
+          <span className="hidden md:inline">{mode === 'split' ? '拖动抽屉上缘调高度 · 拖动分隔条调预览宽度' : '拖动抽屉上缘调高度'}</span>
+          <span className="md:hidden">{mode === 'split' ? '拖动上缘/分隔条调整' : '拖动上缘调整'}</span>
           <span className="flex-1" />
           {content.trim() && (
             <Button variant="ghost" size="xs" onClick={onDelete}><Trash2 data-icon="inline-start" />删除本句笔记</Button>
@@ -469,29 +480,29 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
           <X className="size-4" aria-hidden />
         </button>
 
-        {/* 右缘宽度拖拽柄 */}
+        {/* 上缘高度拖拽柄 */}
         <div
           role="separator"
-          aria-orientation="vertical"
-          aria-label="拖拽调整抽屉宽度"
-          title="拖动调整宽度（双击复位）"
+          aria-orientation="horizontal"
+          aria-label="拖拽调整抽屉高度"
+          title="拖动调整高度（双击复位）"
           tabIndex={0}
-          className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize transition-colors hover:bg-primary/40 data-[dragging=true]:bg-primary/60"
-          data-dragging={draggingWidth ? 'true' : undefined}
-          onDoubleClick={() => setWidth(defaultWidth())}
+          className="absolute inset-x-0 top-0 z-10 h-1.5 cursor-row-resize transition-colors hover:bg-primary/40 data-[dragging=true]:bg-primary/60"
+          data-dragging={draggingHeight ? 'true' : undefined}
+          onDoubleClick={() => setHeight(defaultHeight())}
           onPointerDown={(e) => {
             e.currentTarget.setPointerCapture(e.pointerId)
-            edgeDrag.current = { startX: e.clientX, startW: width }
-            setDraggingWidth(true)
+            edgeDrag.current = { startY: e.clientY, startH: height }
+            setDraggingHeight(true)
           }}
           onPointerMove={(e) => {
             const d = edgeDrag.current
             if (!d) return
-            setWidth(Math.max(MIN_WIDTH, Math.min(maxWidth(), d.startW + (e.clientX - d.startX))))
-            // 抽屉收窄会压缩左右分栏的可用宽，同步重夹预览宽——否则编辑器被压没
-            setPreviewW((w) => (w == null || narrow ? w : clampPreviewW(w)))
+            setHeight(Math.max(MIN_HEIGHT, Math.min(maxHeight(), d.startH - (e.clientY - d.startY))))
+            // 抽屉变矮会压缩上下分栏（窄屏）的可用高，同步重夹预览高——否则编辑器被压没
+            setPreviewH((h) => (h == null || !narrow ? h : clampPreviewH(h)))
           }}
-          onPointerUp={() => { edgeDrag.current = null; setDraggingWidth(false) }}
+          onPointerUp={() => { edgeDrag.current = null; setDraggingHeight(false) }}
         />
       </div>
     </div>
