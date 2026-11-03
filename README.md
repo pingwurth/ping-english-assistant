@@ -111,7 +111,7 @@ Core（平台无关纯 TS）→ Platform（浏览器实现）→ Services（AI �
 |------|------|------|
 | Core | `core/` | 平台无关纯 TS（字幕解析、训练逻辑、WAV 编码），可在 Node 中运行测试 |
 | Platform | `platform/` | 浏览器实现（HTMLAudioElement 控制器、getUserMedia 录音、IndexedDB 存储） |
-| Services | `services/` | AI 服务契约（ASR、SOE、TTS、报告），接口定义在 `contracts.ts`，mock 在 `mock/` |
+| Services | `services/` | AI 服务契约（SOE 评分、生词助记），接口定义在 `contracts.ts`，实现在 `mock/`（助记实际转发 BFF）；ASR/TTS 走 `lib/llm` + BFF 路由，不经契约层 |
 | Stores | `stores/` | 自研 `createStore` + `useStore`（基于 React `useSyncExternalStore`），无外部依赖 |
 | Components | `components/` | 页面组件（P0-P11）、共享组件、shadcn/ui 基础组件 |
 | Types | `types/` | Material、Subtitle、Training、Progress、API 类型定义 |

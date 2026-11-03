@@ -24,7 +24,7 @@ import {
 // ---------------------------------------------------------------------------
 
 
-/** Call local WhisperX alignment service to get word-level timestamps */
+/** 调用本地 WhisperX 对齐服务取词级时间戳 */
 async function alignWithWhisperX(
   audioFile: File,
   text: string,
@@ -75,7 +75,7 @@ async function alignWithWhisperX(
 // Fallback: sentence splitting + proportional timestamp distribution
 // ---------------------------------------------------------------------------
 
-/** Split text into sentences by punctuation */
+/** 按标点切分句子 */
 function splitIntoSentences(text: string): string[] {
   const raw = text.split(/(?<=[.!?])\s+/)
   const sentences: string[] = []
@@ -113,7 +113,7 @@ function splitIntoSentences(text: string): string[] {
   return merged.length > 0 ? merged : [text.trim()]
 }
 
-/** Distribute timestamps proportionally by word count */
+/** 按词数比例分配时间戳 */
 function distributeTimestamps(sentences: string[], totalDurationMs: number): AsrSegment[] {
   if (sentences.length === 0) return []
 
@@ -136,7 +136,7 @@ function distributeTimestamps(sentences: string[], totalDurationMs: number): Asr
   return segments
 }
 
-/** Estimate audio duration from file headers or file size */
+/** 从文件头（WAV）或按体积估算音频时长 */
 function estimateAudioDurationMs(buffer: ArrayBuffer, file: File): number {
   const wavMs = parseWavDurationMs(buffer)
   if (wavMs !== null) return wavMs

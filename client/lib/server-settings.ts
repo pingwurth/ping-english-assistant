@@ -33,7 +33,7 @@ export interface LlmSettings {
   whisperTranscribeUrl?: string
 }
 
-/** Multi-model config entry — extends LlmSettings with identity and display name */
+/** 多模型配置项 —— 在 LlmSettings 之上增加身份与显示名 */
 export interface LlmConfig extends LlmSettings {
   id: string
   name: string
@@ -129,7 +129,7 @@ function generateConfigId(): string {
   return `cfg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 }
 
-/** Read all configs; auto-migrate from legacy `llm` on first access */
+/** 读取全部配置；首次访问时自动从 legacy `llm` 单配置迁移 */
 export async function readLlmConfigs(): Promise<LlmConfigsResult> {
   // 走串行队列与写路径互斥；只有真正发生 migrate 时才回写
   return enqueueMutation(async () => {
@@ -176,7 +176,7 @@ export async function readLlmConfigs(): Promise<LlmConfigsResult> {
   })
 }
 
-/** Add a new config and return its id */
+/** 新增配置并返回其 id */
 export async function addLlmConfig(config: Omit<LlmConfig, 'id'>): Promise<string> {
   return mutateRaw((raw) => {
     const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
@@ -192,7 +192,7 @@ export async function addLlmConfig(config: Omit<LlmConfig, 'id'>): Promise<strin
   })
 }
 
-/** Update an existing config by id */
+/** 按 id 更新既有配置 */
 export async function updateLlmConfig(id: string, patch: Partial<LlmConfig>): Promise<boolean> {
   return mutateRaw((raw) => {
     const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
@@ -217,7 +217,7 @@ export async function updateLlmConfig(id: string, patch: Partial<LlmConfig>): Pr
   })
 }
 
-/** Delete a config by id */
+/** 按 id 删除配置 */
 export async function deleteLlmConfig(id: string): Promise<boolean> {
   return mutateRaw((raw) => {
     const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
@@ -237,7 +237,7 @@ export async function deleteLlmConfig(id: string): Promise<boolean> {
   })
 }
 
-/** Set a config as the default */
+/** 将某配置设为默认 */
 export async function setDefaultLlmConfig(id: string): Promise<boolean> {
   return mutateRaw((raw) => {
     const configs = (raw.llmConfigs as LlmConfig[] | undefined) ?? []
@@ -249,14 +249,14 @@ export async function setDefaultLlmConfig(id: string): Promise<boolean> {
   })
 }
 
-/** Read a single config by id, returned as LlmSettings (no id/name) */
+/** 按 id 读取单条配置，返回 LlmSettings 形态（不带 id/name） */
 export async function readLlmConfigById(id: string): Promise<LlmSettings | null> {
   const { configs } = await readLlmConfigs()
   const config = configs.find(c => c.id === id)
   return config ? toLlmSettings(config) : null
 }
 
-/** Strip identity fields to produce the service-layer settings shape */
+/** 剥掉身份字段，产出服务层 settings 形态 */
 function toLlmSettings(config: LlmConfig): LlmSettings {
   const { id: _id, name: _name, ...settings } = config
   return settings

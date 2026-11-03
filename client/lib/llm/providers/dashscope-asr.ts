@@ -136,7 +136,7 @@ export async function transcribeDashScope(
 // 内部工具
 // ---------------------------------------------------------------------------
 
-/** Infer audio format from filename extension for DashScope parameters */
+/** 按文件扩展名推断音频格式（DashScope 参数用） */
 function inferAudioFormat(filename: string): string {
   const ext = filename.split('.').pop()?.toLowerCase()
   const map: Record<string, string> = {

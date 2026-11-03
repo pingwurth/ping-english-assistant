@@ -15,7 +15,7 @@ pnpm install          # install deps (pnpm, not npm)
 pnpm dev              # next dev — localhost:3000
 pnpm build            # next build
 pnpm test             # vitest run (node env; core/services/platform/lib/stores/app-api unit tests)
-npx tsc --noEmit      # typecheck (no dedicated script)
+pnpm typecheck        # tsc --noEmit (script in package.json; same as AGENTS.md)
 ```
 
 Server (`server/`):
@@ -27,7 +27,7 @@ Server (`server/`):
 SOE proxy (`server/`, Node.js 20+, Fastify 5):
 ```bash
 pnpm install            # in server/
-pnpm start              # soe proxy on :8788 (SOE_PROVIDER=mock|azure|tencent, see server/.env.example)
+pnpm start              # soe proxy on :8788 (SOE_PROVIDER=mock|azure|tencent|iflytek, see server/.env.example)
 pnpm check              # tsc --noEmit
 ```
 
@@ -58,7 +58,7 @@ Client-side routing via react-router-dom 7.x. Local-first: all user data in brow
 
 ### Key Patterns
 
-- **Service contracts**: Interfaces in `services/contracts.ts` (ASR, SOE, TTS, Reports). Mocks always returned now; future `NEXT_PUBLIC_SERVICE_MODE` env var switches to real API.
+- **Service contracts**: `services/contracts.ts` defines `SoeService` + `MnemonicService` only. `getSoeService()` (services/index.ts) resolves mock pseudo-scoring vs. BFF-proxied real scoring from settings.json; the "mock" mnemonic actually forwards to `/api/mnemonic`. ASR/TTS/reports do NOT go through contracts: ASR is `lib/llm/asr-service.ts` + BFF routes, TTS is `pages/tts.tsx` → `POST /api/tts`. (TtsService contract & ServiceMode scaffolding removed 2026-11 as dead paths.)
 - **Stores**: `createStore` + `useStore` (wraps React `useSyncExternalStore`). `material-store.ts` handles CRUD + seed data auto-injection on first load.
 - **Records store** (IDB v3): per-material reads go through the `materialId` value index (`recordsStore.getEntriesByMaterial`) or primary-key prefix ranges (`getAllEntriesByPrefix`) — never full-store materialization. `train:` records are written only via `appendTrainingRecord` (stores/training-record-store.ts): keeps the latest 100 per material×mode (prune-on-write + startup sweep).
 - **Player**: `SentencePlayer` abstraction in `core/player/`. Seek has drift compensation (`SEEK_DRIFT_THRESHOLD_MS = 300ms`).

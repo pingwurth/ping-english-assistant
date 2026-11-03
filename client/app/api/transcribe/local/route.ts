@@ -11,14 +11,13 @@ import {
 /**
  * POST /api/transcribe/local
  *
- * Proxy route: forwards multipart audio to the local faster-whisper
- * transcription server (transcribe_server.py).
+ * 代理路由：把 multipart 音频转发给本地 faster-whisper 转写服务（transcribe_server.py）。
  */
 
 const TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes for long audio
 
 /**
- * Read the transcription server URL from settings.
+ * 从设置读取转写服务地址。
  * 设置页「本地服务配置」写入 localServices 段（唯一有效写入口），
  * legacy llm.whisperTranscribeUrl 仅作历史数据 fallback。
  */
