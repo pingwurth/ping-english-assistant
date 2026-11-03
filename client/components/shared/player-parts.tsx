@@ -175,7 +175,7 @@ function SubtitleListImpl({ mode, active, onSelect, items = sentences, favoriteI
   const markManual = () => { if (!programmaticRef.current) manualUntilRef.current = Date.now() + 5000 }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col rounded-2xl border bg-card">
+    <section className="flex min-h-0 flex-1 flex-col rounded-2xl border bg-card max-lg:max-h-[65vh]">
       <div className="flex items-center justify-between border-b p-4">
         <h2 className="font-serif text-xl">字幕</h2>
         <div className="flex items-center gap-1">
