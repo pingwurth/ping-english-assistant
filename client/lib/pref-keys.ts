@@ -5,11 +5,11 @@
 
 import { getPref, setPref } from '@/platform/storage/prefs'
 
-export type PrefRate = 0.75 | 1 | 1.25
+export type PrefRate = 0.5 | 0.75 | 1 | 1.25 | 1.5 | 2
 export type PrefLoop = 0 | 1 | 3 | 'inf'
 
 /** 默认倍速循环序列（与播放器倍速按钮同档位） */
-export const PREF_RATES: PrefRate[] = [0.75, 1, 1.25]
+export const PREF_RATES: PrefRate[] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 /** 单句循环次数档位：关(0) / 1 / 3 / ∞ */
 export const PREF_LOOPS: PrefLoop[] = [0, 1, 3, 'inf']
 

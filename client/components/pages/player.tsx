@@ -34,8 +34,8 @@ import { copyText } from '@/lib/clipboard'
 import type { LearningProgress } from '@/types/progress'
 import type { SubtitleData, SubtitleMode, SubtitleSentence } from '@/types/subtitle'
 
-/** 倍速循环序列（原型阶段三档） */
-const RATES = [0.75, 1, 1.25]
+/** 倍速循环序列（0.5 ~ 2.0 六档，与 PREF_RATES 同档位） */
+const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2]
 /** 学习进度写入节流：5s（播放过的句子增量持久化） */
 const PROGRESS_FLUSH_MS = 5000
 /** 复制原文时的前缀（仅原文；译文按原样复制） */
