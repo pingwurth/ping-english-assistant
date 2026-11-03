@@ -202,3 +202,15 @@
   0%, 100% { box-shadow: 0 0 0 0 transparent; }
   30%, 70% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 50%, transparent); }
 }
+
+/* 播放页：复制成功悬浮提示（弹出 → 停留 → 上浮淡出；配合 1.4s 定时卸载，translate 常驻锚定在按钮上方居中） */
+.animate-copy-tip {
+  animation: copy-tip 1.4s ease-out forwards;
+}
+
+@keyframes copy-tip {
+  0% { opacity: 0; transform: translate(-50%, -60%) scale(0.85); }
+  18% { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+  70% { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -130%) scale(0.95); }
+}

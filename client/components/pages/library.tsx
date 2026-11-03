@@ -59,8 +59,8 @@ function Library() {
       <div className="mx-auto max-w-[1440px] px-4 py-10 md:px-8">
         <PageIntro title="材料库">
           <div className="flex gap-2">
-            <Link to="/tts"><Button variant="outline"><WandSparkles data-icon="inline-start" />Text‑to‑Speech</Button></Link>
-            <Link to="/transcribe"><Button variant="outline"><FileAudio data-icon="inline-start" />Speech‑to‑Text</Button></Link>
+            <Link to="/tts"><Button variant="outline"><WandSparkles data-icon="inline-start" />TTS</Button></Link>
+            <Link to="/transcribe"><Button variant="outline"><FileAudio data-icon="inline-start" />STT</Button></Link>
             <Link to="/import"><Button><Plus data-icon="inline-start" />导入材料</Button></Link>
           </div>
         </PageIntro>

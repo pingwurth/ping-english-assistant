@@ -175,19 +175,19 @@ function SubtitleListImpl({ mode, active, onSelect, items = sentences, favoriteI
   const markManual = () => { if (!programmaticRef.current) manualUntilRef.current = Date.now() + 5000 }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col rounded-2xl border bg-card max-lg:max-h-[65vh]">
-      <div className="flex items-center justify-between border-b p-4">
+    <section className="flex min-h-0 flex-1 flex-col rounded-2xl border bg-card max-lg:max-h-[80vh]">
+      <div className="flex items-center justify-between border-b px-3 py-2">
         <h2 className="font-serif text-xl">字幕</h2>
         <div className="flex items-center gap-1">
           {onExportSubtitle && (
-            <Button variant="ghost" size="icon" title="导出字幕" onClick={onExportSubtitle}>
+            <Button variant="ghost" size="icon-sm" title="导出字幕" onClick={onExportSubtitle}>
               <Download className="size-4" />
             </Button>
           )}
           {onImportSubtitle && (
             <>
               <input ref={fileInputRef} type="file" accept=".srt,.lrc" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { onImportSubtitle(f); e.target.value = '' } }} />
-              <Button variant="ghost" size="icon" title="导入字幕文件" onClick={() => fileInputRef.current?.click()}>
+              <Button variant="ghost" size="icon-sm" title="导入字幕文件" onClick={() => fileInputRef.current?.click()}>
                 <Upload className="size-4" />
               </Button>
             </>
@@ -198,7 +198,7 @@ function SubtitleListImpl({ mode, active, onSelect, items = sentences, favoriteI
             </Button>
           )}
           {onTranslate && (
-            <Button variant="ghost" size="icon" title="翻译全部字幕" onClick={onTranslate}>
+            <Button variant="ghost" size="icon-sm" title="翻译全部字幕" onClick={onTranslate}>
               <Languages className="size-4" />
             </Button>
           )}
@@ -236,7 +236,7 @@ function SubtitleListImpl({ mode, active, onSelect, items = sentences, favoriteI
               {favoriteIndexes?.has(s.index) && <span aria-label="已收藏" className="text-primary">★</span>}
               {noteIndexes?.has(s.index) && onOpenNote && (
                 <Button variant="secondary" size="icon" className="size-6" aria-label={`查看句子 ${s.index + 1} 的笔记`} title="查看笔记" onClick={(e) => { e.stopPropagation(); onOpenNote(s.index) }}>
-                  <StickyNote className="size-3 text-primary" />
+                  <StickyNote className="size-3 text-green-600 dark:text-green-400" />
                 </Button>
               )}
             </div>
