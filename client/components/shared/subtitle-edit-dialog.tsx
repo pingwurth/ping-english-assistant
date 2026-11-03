@@ -16,6 +16,12 @@ interface SubtitleEditDialogProps {
   onOpenChange: (open: boolean) => void
   sentence: SubtitleSentence | null
   onSave: (updated: SubtitleSentence) => void
+  /** 上一句 startMs（首句为 undefined）：新起始必须严格晚于它 */
+  prevStartMs?: number
+  /** 下一句 startMs（末句为 undefined）：新起始必须严格早于它。
+   *  两条边界保证保存后句子数组仍按 startMs 有序 —— SentencePlayer.locateSentence
+   *  的二分查找、进度/收藏/笔记的句序映射都依赖该有序性（2026-11 全仓复审）。 */
+  nextStartMs?: number
 }
 
 /** ms → "mm:ss,mmm" 简写格式（供输入框展示） */
@@ -52,7 +58,7 @@ function inputToMs(raw: string): number | null {
  * 单句翻译由原独立的「翻译当前句」浮窗迁移至此：方向可手动切换（英→中 / 中→英），
  * 译文直接写入对应文本框，随「保存」一并落盘，避免两处入口产生两份译文状态。
  */
-export function SubtitleEditDialog({ open, onOpenChange, sentence, onSave }: SubtitleEditDialogProps) {
+export function SubtitleEditDialog({ open, onOpenChange, sentence, onSave, prevStartMs, nextStartMs }: SubtitleEditDialogProps) {
   const [textEn, setTextEn] = useState('')
   const [textZh, setTextZh] = useState('')
   const [startInput, setStartInput] = useState('')
@@ -93,7 +99,11 @@ export function SubtitleEditDialog({ open, onOpenChange, sentence, onSave }: Sub
 
   const startMs = inputToMs(startInput)
   const endMs = inputToMs(endInput)
-  const timeValid = startMs != null && endMs != null && startMs < endMs
+  // 邻句边界（见 props 注释）：起始时间必须严格落在 (prevStartMs, nextStartMs) 开区间内。
+  // 输入格式尚不完整（startMs == null）时不构成错误，由 timeValid 的非空判断兜住。
+  const orderError = startMs != null &&
+    ((prevStartMs != null && startMs <= prevStartMs) || (nextStartMs != null && startMs >= nextStartMs))
+  const timeValid = startMs != null && endMs != null && startMs < endMs && !orderError
 
   // 时间输入变化时校验
   const handleStartChange = useCallback((v: string) => {
@@ -233,6 +243,11 @@ export function SubtitleEditDialog({ open, onOpenChange, sentence, onSave }: Sub
             </div>
           </div>
           {timeError && <p className="text-sm text-destructive">开始时间必须早于结束时间</p>}
+          {!timeError && orderError && (
+            <p className="text-sm text-destructive">
+              起始时间需晚于上一句{prevStartMs != null ? `（${msToInput(prevStartMs)}）` : ''}且早于下一句{nextStartMs != null ? `（${msToInput(nextStartMs)}）` : ''}，保存失序时间轴会破坏句子定位与既有笔记/收藏的对应关系
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
             <Button onClick={handleSave} disabled={!textEn.trim() || !timeValid}>保存</Button>

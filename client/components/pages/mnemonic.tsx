@@ -6,7 +6,7 @@
  * 加载逻辑：
  * 1. 从 URL 获取 entryId → vocabStore.getEntryById 获取词条
  * 2. 检查 mnemonicStore 缓存 → 有则直接渲染
- * 3. 无缓存 → 调用 mnemonicService.generateCard() → 渲染 + 存缓存
+ * 3. 无缓存 → 调用 mnemonicService.generateCardStream() 流式渲染 + 存缓存
  * 4. difficulty=hard 时自动展开联想区域
  */
 
@@ -353,13 +353,19 @@ function ExercisesSection({
   const [evaluation, setEvaluation] = useState<SentenceEvaluation | null>(null)
   const [evaluating, setEvaluating] = useState(false)
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null)
+  // 失败进入 error 态由用户重试（与 AssociationCard 同型）：裸 try/finally 会让
+  // LLM/BFF/存储失败变成 unhandled rejection，按钮静默恢复，用户零反馈
+  const [error, setError] = useState<string | null>(null)
 
   const generateExercises = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
       const result = await services.mnemonic.generateExercises(word, meaning, collocations, difficulty)
       setExercises(result)
       await saveExercises(entryId, result)
+    } catch (err) {
+      setError(err instanceof Error && err.message ? `生成练习题失败：${err.message}` : '生成练习题失败，请重试')
     } finally {
       setLoading(false)
     }
@@ -368,9 +374,12 @@ function ExercisesSection({
   const submitSentence = useCallback(async () => {
     if (!userSentence.trim()) return
     setEvaluating(true)
+    setError(null)
     try {
       const result = await services.mnemonic.evaluateSentence(word, meaning, userSentence)
       setEvaluation(result)
+    } catch (err) {
+      setError(err instanceof Error && err.message ? `批改失败：${err.message}` : '批改失败，请重试')
     } finally {
       setEvaluating(false)
     }
@@ -386,6 +395,7 @@ function ExercisesSection({
         <CardDescription>主动提取 + 输出，从被动词汇到主动词汇</CardDescription>
       </CardHeader>
       <CardContent>
+        {error && <div className="text-xs text-destructive">{error}</div>}
         {exercises ? (
           <div className="space-y-6">
             {/* 填空题 */}
@@ -527,8 +537,13 @@ export function MnemonicPage() {
   // 评审 P1：每轮流式持独立 AbortController —— 切换词条/卸载/发起新一轮时
   // abort 旧流，SSE 事件不再跨词条污染状态，后台也不再继续消费整条 LLM 流
   const abortRef = useRef<AbortController | null>(null)
+  /** 流式轮次序号：新一轮开始时自增；旧轮 finally 仅在无新轮时复位 streaming ——
+   *  既防旧轮复位覆盖新轮的 setStreaming(true)，也防 stale 轮跳过复位把 刷新/重试
+   *  按钮永久禁用（2026-11 全仓复审，同路由复用组件的潜伏路径） */
+  const streamSeqRef = useRef(0)
 
   const streamCard = useCallback(async (found: VocabEntry) => {
+    const seq = ++streamSeqRef.current
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
@@ -584,7 +599,9 @@ export function MnemonicPage() {
       // abort 引起的中断不是错误
       if (!isStale()) setError('生成失败，请重试')
     } finally {
-      if (!isStale()) {
+      // 按「仍是最新一轮」复位（而不是按 aborted）：被 abort 且没有新轮接手时
+      //（如切到已缓存词条）也要复位 streaming，否则按钮永久禁用
+      if (streamSeqRef.current === seq) {
         setStreaming(false)
         setLoading(false)
       }

@@ -150,4 +150,6 @@ export interface TranslateRequest {
 export interface TranslateResponse {
   /** 与输入 texts 等长的译文数组 */
   translations: string[]
+  /** 模型漏翻、缺失位被原文回填的条数（>0 时才返回；上层据此提示“部分未翻”） */
+  filledWithSource?: number
 }

@@ -7,12 +7,15 @@
 
 import type { TtsSentenceTiming } from '@/core/tts/timeline'
 
+/** 主 onnx 权重文件（~89MB 体积大头；主线程用它做磁盘缓存 HEAD 探测，worker 用它判定下载完成） */
+export const KOKORO_MAIN_ONNX_FILE = 'onnx/model_quantized.onnx'
+
 /** Kokoro q8 量化模型必需的非音色文件（与实际 transformers.js 加载清单一致） */
 export const KOKORO_MODEL_FILES = [
   'config.json',
   'tokenizer.json',
   'tokenizer_config.json',
-  'onnx/model_quantized.onnx',
+  KOKORO_MAIN_ONNX_FILE,
 ] as const
 
 /** 内置美式英文音色；HF 代理只允许下载这些 voice 文件。 */

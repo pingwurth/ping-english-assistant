@@ -151,23 +151,28 @@ function LocalServicesSection() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState('')
+  const [error, setError] = useState('')
 
   useEffect(() => {
     fetch('/api/settings/local-services')
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
       .then(data => {
         setWhisperAlignUrl(data.whisperAlignUrl || '')
         setWhisperTranscribeUrl(data.whisperTranscribeUrl || '')
       })
-      .catch(() => {})
+      .catch(() => setError('本地服务配置读取失败，下方显示的可能是默认值'))
       .finally(() => setLoading(false))
   }, [])
 
   const handleSave = useCallback(async () => {
     setSaving(true)
     setSuccess('')
+    setError('')
     try {
-      await fetch('/api/settings/local-services', {
+      const res = await fetch('/api/settings/local-services', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -175,9 +180,14 @@ function LocalServicesSection() {
           whisperTranscribeUrl: whisperTranscribeUrl.trim() || undefined,
         }),
       })
+      // fetch 只在网络层 reject：403（公网/隧道主机被同源守卫拦下）或 5xx 时
+      // res.ok 为 false，必须如实报错而不是提示「已保存」（2026-11 全仓复审）
+      if (!res.ok) throw new Error(`保存失败（HTTP ${res.status}）`)
       setSuccess('已保存')
       setTimeout(() => setSuccess(''), 3000)
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败')
+    }
     finally { setSaving(false) }
   }, [whisperAlignUrl, whisperTranscribeUrl])
 
@@ -223,6 +233,7 @@ function LocalServicesSection() {
         </div>
 
         {success && <p className="text-sm text-emerald-600">{success}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
         <Button onClick={handleSave} disabled={saving}>{saving ? '保存中...' : '保存'}</Button>
       </CardContent>
     </Card>

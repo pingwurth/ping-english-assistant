@@ -7,6 +7,7 @@
 
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
+import { shiftIndexedRecordsAfterDeletion } from '@/stores/shift-records'
 import type { SentenceNote } from '@/types/note'
 
 const NOTE_PREFIX = RECORD_KEY_PREFIXES.note
@@ -59,23 +60,9 @@ export async function deleteSentenceNote(materialId: string, sentenceIndex: numb
 
 /**
  * 删句后平移笔记：被删句的笔记移除，其后所有笔记句序号 -1（与字幕重排后的 index 对齐）。
- * 受影响区间（被删句及其后）的旧 key 全部删除后重写——被删句自己的 key 也必须删，
- * 否则残留的笔记会附到"顶替它位置的那句"上（幽灵笔记）。
+ * 受影响区间（被删句及其后）的旧 key 在单事务内删除后重写——被删句自己的 key 也必须删，
+ * 否则残留的笔记会附到"顶替它位置的那句"上（幽灵笔记）。原子性见共享实现 shift-records.ts。
  */
 export async function shiftNotesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
-  const notes = await listNotes(materialId)
-  const affected = notes.filter((n) => n.sentenceIndex >= deletedIndex)
-  const after = affected.filter((n) => n.sentenceIndex > deletedIndex)
-
-  // 先删除全部受影响旧 key，再写入平移 key；handwritten IDB wrapper 每次写入一个事务，
-  // Promise.all 中同 key delete/put 的顺序不可预测，后提交的 delete 会丢笔记。
-  for (const note of affected) {
-    await recordsStore.delete(RECORD_KEYS.note(materialId, note.sentenceIndex))
-  }
-  for (const note of after) {
-    await recordsStore.put(
-      RECORD_KEYS.note(materialId, note.sentenceIndex - 1),
-      { ...note, sentenceIndex: note.sentenceIndex - 1 },
-    )
-  }
+  await shiftIndexedRecordsAfterDeletion(await listNotes(materialId), materialId, deletedIndex, RECORD_KEYS.note)
 }

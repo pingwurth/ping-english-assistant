@@ -7,6 +7,7 @@
 
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
+import { shiftIndexedRecordsAfterDeletion } from '@/stores/shift-records'
 import type { Favorite } from '@/types/progress'
 
 const FAV_PREFIX = RECORD_KEY_PREFIXES.favorite
@@ -47,20 +48,8 @@ export async function favoriteSentenceIndexes(materialId: string): Promise<numbe
 /**
  * 删句后平移收藏：被删句的收藏移除，其后句序号 -1（与字幕重排后的 index 对齐）。
  * 不平移的话收藏会静默指向错位的句子、被删句的收藏永久残留。
+ * 原子性（单事务删+写）见共享实现 shift-records.ts 的说明。
  */
 export async function shiftFavoritesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
-  const favorites = await listFavorites(materialId)
-  const affected = favorites.filter((f) => f.sentenceIndex >= deletedIndex)
-  const after = affected.filter((f) => f.sentenceIndex > deletedIndex)
-
-  // 先删除全部受影响旧 key，再写入平移 key；连续序号平移时同 key delete/put 顺序不可预测。
-  for (const favorite of affected) {
-    await recordsStore.delete(RECORD_KEYS.favorite(materialId, favorite.sentenceIndex))
-  }
-  for (const favorite of after) {
-    await recordsStore.put(
-      RECORD_KEYS.favorite(materialId, favorite.sentenceIndex - 1),
-      { ...favorite, sentenceIndex: favorite.sentenceIndex - 1 },
-    )
-  }
+  await shiftIndexedRecordsAfterDeletion(await listFavorites(materialId), materialId, deletedIndex, RECORD_KEYS.favorite)
 }

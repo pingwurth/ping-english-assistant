@@ -103,15 +103,22 @@ export function buildSoeRoute(registry: SoeProviderRegistry, env: Env): FastifyP
         })
       }
 
-      // 客户端断开 → 中止上游（socket close 才代表连接中断；req.raw 'close' 在 body 读完后也会触发，不可用）
+      // 客户端断开 → 中止上游（socket close 才代表连接中断；req.raw 'close' 在 body 读完后也会触发，不可用）。
+      // 评分完成后必须摘除监听：BFF 走 undici keep-alive 复用同一条 TCP 连接，不摘的话
+      // 每次评分都累积一个 close 监听器（约 11 次后 MaxListenersExceededWarning，且各闭包
+      // 持住自己的 reply/AbortController 直到连接关闭）
       const ac = new AbortController()
-      req.raw.socket.once('close', () => {
+      const onSocketClose = () => {
         if (!reply.sent) ac.abort()
-      })
-
-      req.log.info({ soe: name, requestCreds: Boolean(creds), bytes: audio.length, refText: refText.slice(0, 60) }, 'soe evaluate')
-      const result = await provider.evaluate({ audio, refText, evalMode: 'sentence' }, ac.signal)
-      return await reply.status(200).send(result)
+      }
+      req.raw.socket.once('close', onSocketClose)
+      try {
+        req.log.info({ soe: name, requestCreds: Boolean(creds), bytes: audio.length, refText: refText.slice(0, 60) }, 'soe evaluate')
+        const result = await provider.evaluate({ audio, refText, evalMode: 'sentence' }, ac.signal)
+        return await reply.status(200).send(result)
+      } finally {
+        req.raw.socket.removeListener('close', onSocketClose)
+      }
     })
   }
 }

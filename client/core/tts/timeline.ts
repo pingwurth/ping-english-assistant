@@ -19,7 +19,9 @@ export interface TtsSentenceTiming {
   endMs: number
 }
 
-/** 按 [.!?;:\n] 分句：标点归属前句；空白/纯标点片段丢弃 */
+/** 按 [.!?;:\n] 分句：标点归属前句；空白/纯标点片段丢弃。
+ *  数字语境例外：10:30 / $3.50 / 3.5 中的 . : ; 不是句界 —— 切开会让本地 TTS
+ *  把一个数字读成多句（句间插 120ms 静音、韵律重置），SRT cue 边界也落在数字中间。 */
 export function splitTtsSentences(text: string): string[] {
   const out: string[] = []
   let buf = ''
@@ -27,11 +29,17 @@ export function splitTtsSentences(text: string): string[] {
     const sentence = raw.trim()
     if (sentence && /[\p{L}\p{N}]/u.test(sentence)) out.push(sentence)
   }
-  for (const ch of text) {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!
     buf += ch
     if (SENTENCE_SPLIT_RE.test(ch)) {
-      push(buf)
-      buf = ''
+      const prev = text[i - 1]
+      const next = text[i + 1]
+      const betweenDigits = !!prev && !!next && /[0-9]/.test(prev) && /[0-9]/.test(next)
+      if (!betweenDigits) {
+        push(buf)
+        buf = ''
+      }
     }
   }
   push(buf)

@@ -16,6 +16,7 @@ import type { LearningProgress } from '@/types/progress'
 import type { Material, MaterialCollection } from '@/types/material'
 import type { SubtitleData } from '@/types/subtitle'
 import { blobsStore, materialsStore, recordsStore, runAtomicOps } from '@/platform/storage/idb'
+import { getPref, removePref } from '@/platform/storage/prefs'
 import { MATERIAL_OWNED_RECORD_PREFIXES, RECORD_KEYS, RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import { seedMaterials, seedSentences } from '@/data/seed'
 import { createStore } from '@/stores/store'
@@ -202,6 +203,9 @@ export async function removeMaterial(id: string): Promise<void> {
   // 生词词频撤账：回收该材料对 frequency 的贡献（评审 #19，否则删除材料后词频永久虚高，
   // 违反 types/vocabulary.ts「frequency = materialCounts 各值之和」不变量）
   await updateFrequencies([], id)
+  // 训练材料偏好若指向被删材料则一并清除：否则训练页下次静默回落演示材料 mock-001，
+  // 后续训练成绩会被记到演示材料名下（2026-11 全仓复审）
+  if (getPref<string>('training-material', '') === id) removePref('training-material')
   dropRecord(id)
 }
 

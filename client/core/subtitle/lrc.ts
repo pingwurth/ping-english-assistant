@@ -17,9 +17,22 @@ const LRC_HEAD_TAGS_RE = /^(?:\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]|\[\w+:[^\]]*\]
 const LRC_INLINE_TS_RE = /\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/g
 /** 增强型 LRC（A2）逐词时间标签：剥离并把两侧空白收敛为一个空格 */
 const LRC_WORD_TS_RE = /\s*<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>\s*/g
+/** [offset:±ms] 全局时间轴平移（LRC 规范标签）：正值提前（有效时间 = 标签时间 − offset），负值延后 */
+const LRC_OFFSET_RE = /\[offset:([+-]?\d+(?:\.\d+)?)\]/i
 
 export function parseLrc(text: string): RawBlock[] {
   const lines = text.split(/\r?\n/)
+  // [offset:] 预扫描（惯例在文件头部；出现在任意行均生效，首个为准）：
+  // 此前该标签被当普通元数据丢弃、数值无人消费，带 offset 的 LRC 全部时间轴错位
+  let offsetMs = 0
+  for (const raw of lines) {
+    const m = raw.trim().match(LRC_OFFSET_RE)
+    if (m) {
+      const v = Number(m[1])
+      if (Number.isFinite(v)) offsetMs = Math.round(v)
+      break
+    }
+  }
   const blocks: RawBlock[] = []
   lines.forEach((raw, i) => {
     const line = raw.trim()
@@ -32,7 +45,7 @@ export function parseLrc(text: string): RawBlock[] {
       .replace(LRC_WORD_TS_RE, ' ')
       .trim()
     if (!content) return
-    for (const startMs of stamps) blocks.push({ startMs, endMs: -1, lines: [content], lineNo: i + 1 })
+    for (const startMs of stamps) blocks.push({ startMs: Math.max(0, startMs - offsetMs), endMs: -1, lines: [content], lineNo: i + 1 })
   })
   if (blocks.length === 0) throw new SubtitleParseError('未解析到任何歌词行', 1)
   return blocks

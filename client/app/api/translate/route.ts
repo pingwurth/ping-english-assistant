@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     const combined = AbortSignal.any([request.signal, controller.signal])
 
     try {
-      const translations = await translateTexts(
+      const { translations, filledWithSource } = await translateTexts(
         texts,
         {
           provider: settings.provider || 'dashscope',
@@ -103,7 +103,8 @@ export async function POST(request: Request) {
         combined,
       )
 
-      return NextResponse.json({ translations })
+      // filledWithSource > 0 = 有缺失位被原文回填：透传给客户端展示“部分未翻”警告
+      return NextResponse.json({ translations, ...(filledWithSource > 0 ? { filledWithSource } : {}) })
     } catch (err) {
       // 客户端主动断开
       if (request.signal.aborted) {

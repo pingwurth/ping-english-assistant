@@ -46,8 +46,8 @@ export async function translateTexts(
   texts: string[],
   config: TranslateConfig,
   signal?: AbortSignal,
-): Promise<string[]> {
-  if (texts.length === 0) return []
+): Promise<{ translations: string[]; filledWithSource: number }> {
+  if (texts.length === 0) return { translations: [], filledWithSource: 0 }
   if (texts.length > MAX_TEXTS) {
     throw new LlmError('UPSTREAM_ERROR', `单次翻译最多 ${MAX_TEXTS} 条文本`)
   }
@@ -72,15 +72,19 @@ export async function translateTexts(
   const isLocalBaseUrl = /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\])(:\d+)?([/?#]|$)/i.test(config.baseUrl)
   const CONCURRENCY = 3
   const results: string[] = new Array(texts.length)
+  // 「缺失位用原文回填」的累计条数：回填是既定降级策略，但必须让调用方知道
+  // （否则 15 条只翻出 1 条的“双语字幕”看起来与成功无异）
+  let filledWithSource = 0
 
   if (isLocalBaseUrl || chunks.length === 1) {
     let idx = 0
     for (const chunk of chunks) {
       signal?.throwIfAborted()
       const chunkResult = await translateSingleChunk(chunk, targetLang, model, signal)
-      for (const t of chunkResult) results[idx++] = t
+      filledWithSource += chunkResult.filledWithSource
+      for (const t of chunkResult.translations) results[idx++] = t
     }
-    return results
+    return { translations: results, filledWithSource }
   }
 
   // 简单工作池：固定并发数消费块队列，结果按原顺序归位（进度语义与串行一致）
@@ -91,11 +95,12 @@ export async function translateTexts(
       if (i >= chunks.length) return
       signal?.throwIfAborted()
       const chunkResult = await translateSingleChunk(chunks[i]!, targetLang, model, signal)
-      for (let k = 0; k < chunkResult.length; k++) results[i * LLM_CHUNK_SIZE + k] = chunkResult[k]!
+      filledWithSource += chunkResult.filledWithSource
+      for (let k = 0; k < chunkResult.translations.length; k++) results[i * LLM_CHUNK_SIZE + k] = chunkResult.translations[k]!
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, chunks.length) }, () => worker()))
-  return results
+  return { translations: results, filledWithSource }
 }
 
 /**
@@ -106,7 +111,7 @@ async function translateSingleChunk(
   targetLang: string,
   model: ChatOpenAI,
   signal?: AbortSignal,
-): Promise<string[]> {
+): Promise<{ translations: string[]; filledWithSource: number }> {
   console.log(`[Translate] 发送翻译请求: ${texts.length} 条文本, 目标语言: ${targetLang}`)
   // 只记摘要不记全文：用户材料可能含隐私内容，且整段 JSON 全量落日志噪声极大
   console.log(`[Translate] 首条预览: ${texts[0]?.slice(0, 100) ?? '(空)'}...`)
@@ -156,7 +161,7 @@ async function translateSingleChunk(
       const translations = extractTranslations(content, texts.length)
       if (translations) {
         console.log(`[Translate] 翻译成功: ${translations.length} 条`)
-        return translations
+        return { translations, filledWithSource: 0 }
       }
 
       // 条数不一致：检查是否拿到大部分结果（≥90%），是则降级回填
@@ -169,7 +174,7 @@ async function translateSingleChunk(
           console.warn(
             `[Translate] 降级回填: 模型返回了 ${found}/${texts.length} 条 (${Math.round(ratio * 100)}%), ${texts.length - found} 条缺失位置使用原文`,
           )
-          return filled
+          return { translations: filled, filledWithSource: texts.length - found }
         }
       }
 
@@ -190,7 +195,8 @@ async function translateSingleChunk(
     }
   }
 
-  // 最终降级：若模型返回了带序号的部分结果，按序号对齐并回填缺失位置
+  // 最终降级：若模型返回了带序号的部分结果，按序号对齐并回填缺失位置。
+  // 无比例门槛 —— 1/15 也放行（文档化的回填策略），filledWithSource 让上层可见。
   if (lastContent) {
     const partial = extractNumberedTranslationsPartial(lastContent, texts.length)
     if (partial) {
@@ -202,7 +208,7 @@ async function translateSingleChunk(
           `${missingCount} 条缺失位置使用原文填充`,
         )
       }
-      return filled
+      return { translations: filled, filledWithSource: missingCount }
     }
   }
 
@@ -330,7 +336,9 @@ function parseCjkArray(raw: string, expectedLength: number): string[] | null {
     }
   }
 
-  if (items.length !== expectedLength) return null
+  // expectedLength 为 Infinity 时只做计数（countParsedItems 语义：不做长度校验）；
+  // 不放行的话该分支恒 null，CJK 数组的「只返回了 ? 条」重试提示永远拿不到真实数字
+  if (expectedLength !== Number.POSITIVE_INFINITY && items.length !== expectedLength) return null
   if (!items.every((s) => s.trim().length > 0)) return null
   return items.map((s) => s.trim())
 }

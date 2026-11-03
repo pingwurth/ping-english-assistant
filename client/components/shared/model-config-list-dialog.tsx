@@ -608,6 +608,8 @@ function KokoroConfigCard() {
 interface SoeConfig {
   provider: 'mock' | 'azure' | 'tencent' | 'iflytek'
   proxyUrl: string
+  /** 代理共享密钥（server/.env SOE_SHARED_TOKEN；GET 回填为掩码，保存时原样回传保留真值） */
+  sharedToken?: string
   azure?: { key?: string; region?: string; host?: string }
   tencent?: { appId?: string; secretId?: string; secretKey?: string }
   iflytek?: { appId?: string; apiKey?: string; apiSecret?: string }
@@ -656,10 +658,14 @@ function SoeConfigCard() {
     void checkHealth()
   }, [checkHealth])
 
+  /** 代理共享密钥（server/.env SOE_SHARED_TOKEN；跨机部署代理开启鉴权时必填，本机回环可留空） */
+  const [editToken, setEditToken] = useState('')
+
   const handleEdit = () => {
     const c = config ?? { provider: 'mock' as const, proxyUrl: DEFAULT_SOE_PROXY_URL }
     setEditProvider(c.provider)
     setEditProxyUrl(c.proxyUrl)
+    setEditToken(c.sharedToken ?? '')
     setEditAzure({ key: c.azure?.key ?? '', region: c.azure?.region ?? '', host: c.azure?.host ?? '' })
     setEditTencent({ appId: c.tencent?.appId ?? '', secretId: c.tencent?.secretId ?? '', secretKey: c.tencent?.secretKey ?? '' })
     setEditIflytek({ appId: c.iflytek?.appId ?? '', apiKey: c.iflytek?.apiKey ?? '', apiSecret: c.iflytek?.apiSecret ?? '' })
@@ -681,6 +687,7 @@ function SoeConfigCard() {
       const body: SoeConfig = {
         provider: editProvider,
         proxyUrl: editProxyUrl.trim() || DEFAULT_SOE_PROXY_URL,
+        sharedToken: editToken.trim() || undefined,
         azure: editProvider === 'azure' ? editAzure : config?.azure,
         tencent: editProvider === 'tencent' ? editTencent : config?.tencent,
         iflytek: editProvider === 'iflytek' ? editIflytek : config?.iflytek,
@@ -747,6 +754,17 @@ function SoeConfigCard() {
                   placeholder={DEFAULT_SOE_PROXY_URL}
                 />
               </div>
+              {editProvider !== 'mock' && (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium">共享密钥（可选）</label>
+                  <Input
+                    type="password"
+                    value={editToken}
+                    onChange={(e) => setEditToken(e.target.value)}
+                    placeholder="代理 server 的 SOE_SHARED_TOKEN；本机回环部署可留空"
+                  />
+                </div>
+              )}
 
               {editProvider === 'azure' && (
                 <div className="flex flex-col gap-2">
@@ -866,6 +884,7 @@ function SoeConfigCard() {
                 <span>Azure：{config && soeCredsOk(config, 'azure') ? '已配置' : '未配置'}</span>
                 <span>科大讯飞：{config && soeCredsOk(config, 'iflytek') ? '已配置' : '未配置'}</span>
                 <span>腾讯云：{config && soeCredsOk(config, 'tencent') ? '已配置' : '未配置'}</span>
+                <span>共享密钥：{config?.sharedToken ? '已配置' : '未配置'}</span>
               </div>
             </div>
           )}

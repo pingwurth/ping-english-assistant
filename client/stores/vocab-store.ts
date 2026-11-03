@@ -7,7 +7,7 @@
 
 import type { VocabBook, VocabEntry } from '@/types/vocabulary'
 import { DEFAULT_BOOK_ID } from '@/types/vocabulary'
-import { recordsStore } from '@/platform/storage/idb'
+import { recordsStore, runAtomicOps } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import { createStore } from '@/stores/store'
 
@@ -197,21 +197,23 @@ export async function shiftVocabEntriesAfterDeletion(materialId: string, deleted
   // materialId 索引点查：只物化该材料的记录（词条键 vocabentry:{entryId} 不含材料 id，
   // 原先只能全库物化后逐条比对）
   const entries = await recordsStore.getEntriesByMaterial(materialId)
-  let changed = false
+  const put: Array<readonly [string, unknown]> = []
   for (const [key, value] of entries) {
     if (!key.startsWith(RECORD_KEY_PREFIXES.vocabEntry)) continue
     const entry = value as VocabEntry | undefined
     if (!entry || typeof entry.sentenceIndex !== 'number') continue
 
     if (entry.sentenceIndex === deletedIndex) {
-      await recordsStore.put(key, { ...entry, sentenceIndex: -1 } satisfies VocabEntry)
-      changed = true
+      put.push([key, { ...entry, sentenceIndex: -1 } satisfies VocabEntry])
     } else if (entry.sentenceIndex > deletedIndex) {
-      await recordsStore.put(key, { ...entry, sentenceIndex: entry.sentenceIndex - 1 } satisfies VocabEntry)
-      changed = true
+      put.push([key, { ...entry, sentenceIndex: entry.sentenceIndex - 1 } satisfies VocabEntry])
     }
   }
-  if (changed) await refresh()
+  // 单事务提交：逐条 put 中途失败（崩溃/关页）会留下部分平移的永久错位（2026-11 全仓复审）
+  if (put.length > 0) {
+    await runAtomicOps({ put: { records: put } })
+    await refresh()
+  }
 }
 
 /**

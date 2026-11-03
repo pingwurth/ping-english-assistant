@@ -82,7 +82,7 @@ export function normalizeProvider(provider: string): string {
   if (!provider) return 'mimo'
   // 'qwen' 是配置对话框对 DashScope 的别名（默认 provider 即 qwen，见 service-endpoints 注释）。
   // 不归一的话 ASR dispatch 会把它当未知 provider 落到无时间戳的 mimo 分支，
-  // 且 getAsrProviderType 返回 'standard' 跳过全部时间戳后处理 → 转写成功但 SRT 为空。
+  // 丢掉 DashScope 原生时间戳（路由后处理只能用 WhisperX/比例分配兜底）。
   if (provider === 'qwen') return 'dashscope'
   return provider
 }

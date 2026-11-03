@@ -24,6 +24,7 @@ import type {
   KokoroWorkerRequest,
   KokoroWorkerResponse,
 } from './kokoro-protocol'
+import { KOKORO_MAIN_ONNX_FILE } from './kokoro-protocol'
 
 export type { KokoroLoadEvent, KokoroLoadPhase, KokoroLoadState } from './kokoro-protocol'
 
@@ -155,6 +156,23 @@ export function preloadKokoroModel(): void {
     ensureWorker()
   } catch (err) {
     console.warn('[kokoro-tts] 预加载失败（不影响后续使用）:', err)
+  }
+}
+
+/**
+ * 仅当模型已在磁盘缓存时预加载（应用挂载预热用，HEAD 探测不触发下载）。
+ * 读缓存只是本地磁盘流，代价可接受；未缓存（首跑）不在挂载时发起 ~89MB 网络下载
+ * 与 WASM 会话常驻 —— 留给用户真正打开 TTS 页再拉（2026-11 全仓复审）。
+ */
+export async function preloadKokoroModelIfCached(): Promise<void> {
+  try {
+    const res = await fetch(`/api/hf/${currentModelId}/resolve/main/${KOKORO_MAIN_ONNX_FILE}`, {
+      method: 'HEAD',
+      cache: 'no-store',
+    })
+    if (res.ok && res.headers.get('x-cache') === 'HIT') preloadKokoroModel()
+  } catch {
+    /* 探测失败就不预热：首次合成时自然加载 */
   }
 }
 

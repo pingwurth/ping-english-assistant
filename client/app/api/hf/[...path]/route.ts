@@ -17,8 +17,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { readFile, writeFile, mkdir, stat, rename } from 'fs/promises'
 import { join, dirname, resolve, sep } from 'path'
-import { ProxyAgent, fetch as undiciFetch } from 'undici'
-import { readKokoroSettings } from '@/lib/server-settings'
+import { Agent, ProxyAgent, fetch as undiciFetch } from 'undici'
+import { readKokoroSettings, DEFAULT_KOKORO_MODEL_ID } from '@/lib/server-settings'
 import { DEFAULT_HF_BASE } from '@/lib/service-endpoints'
 import { isAllowedKokoroFile } from '@/platform/kokoro-protocol'
 import { parseHfPath, type HfFileRef } from '@/platform/hf-path'
@@ -32,7 +32,18 @@ const UPSTREAM_ATTEMPTS = 2
 const MAX_HF_FILE_BYTES = 128 * 1024 * 1024
 
 const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
-const proxyAgent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined
+/**
+ * 上游拉取超时：undici 默认 headers/body 各 300s，卡死的 CDN 会把模型加载冻结
+ * 5-10 分钟且无取消路径（2026-11 全仓复审）。headers 30s；body 60s 是「分块间隔」
+ * 超时 —— 慢而不停的下载不会被误杀，只有彻底断流才掐断。
+ * 注意 inflight 去重让多个请求共享同一下载任务，故不绑定单个请求的 signal（取消
+ * 一个请求不应连坐其他等待者），悬挂由这里的超时兜底。
+ */
+const UPSTREAM_HEADERS_TIMEOUT_MS = 30_000
+const UPSTREAM_BODY_TIMEOUT_MS = 60_000
+const upstreamDispatcher = proxyUrl
+  ? new ProxyAgent({ uri: proxyUrl, headersTimeout: UPSTREAM_HEADERS_TIMEOUT_MS, bodyTimeout: UPSTREAM_BODY_TIMEOUT_MS })
+  : new Agent({ headersTimeout: UPSTREAM_HEADERS_TIMEOUT_MS, bodyTimeout: UPSTREAM_BODY_TIMEOUT_MS })
 
 /**
  * 解析磁盘缓存绝对路径。除路径 containment 外，还只接受：
@@ -42,7 +53,10 @@ const proxyAgent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined
 async function localFileOf(ref: HfFileRef): Promise<string | null> {
   const { modelId: configuredModelId, modelPath } = await readKokoroSettings()
   if (configuredModelId.split('/').some((seg) => !seg || seg === '.' || seg === '..')) return null
-  if (ref.modelId !== configuredModelId) return null
+  // 放行 configuredModelId 与默认仓库两个 repo：kokoro-js 1.2.1 把音色包拉取硬编码到
+  // onnx-community/Kokoro-82M-v1.0-ONNX（与可配置的 modelId 无关）—— 不放行的话任何
+  // 自定义 modelId 都能正常下载模型本体，却在合成阶段的音色下载上 100% 403（2026-11 全仓复审）
+  if (ref.modelId !== configuredModelId && ref.modelId !== DEFAULT_KOKORO_MODEL_ID) return null
   if (!isAllowedKokoroFile(ref.file)) return null
 
   const cacheRoot = resolve(modelPath)
@@ -234,7 +248,7 @@ async function fetchUpstream(url: string): Promise<Awaited<ReturnType<typeof und
 
   for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
     try {
-      const resp = await undiciFetch(url, proxyAgent ? { dispatcher: proxyAgent } : {})
+      const resp = await undiciFetch(url, { dispatcher: upstreamDispatcher })
       if (resp.status === 200) return resp
       if (resp.status >= 400 && resp.status < 500) return resp
       lastErr = new Error(`HuggingFace returned ${resp.status}`)

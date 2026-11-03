@@ -289,6 +289,8 @@ export interface KokoroSettings {
 }
 
 const DEFAULT_KOKORO_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX'
+/** kokoro-js 1.2.1 把音色包拉取硬编码到默认仓库（与可配置的 modelId 无关），HF 代理需同样放行该 repo */
+export { DEFAULT_KOKORO_MODEL_ID }
 const DEFAULT_KOKORO_MODEL_PATH = join(SETTINGS_DIR, 'kokoro-models')
 
 export async function readKokoroSettings(): Promise<KokoroSettings> {
@@ -300,8 +302,14 @@ export async function readKokoroSettings(): Promise<KokoroSettings> {
     modelId: (k?.modelId as string) || DEFAULT_KOKORO_MODEL_ID,
     modelPath: (k?.modelPath as string) || DEFAULT_KOKORO_MODEL_PATH,
   }
-  // 确保模型目录存在
-  await mkdir(settings.modelPath, { recursive: true })
+  // 确保模型目录存在（尽力而为）：读路径不做强依赖 —— 不可写/非目录的 modelPath 若
+  // 在此抛错，会把设置读取与 HF 模型下载一并 500/400 挡死（2026-11 全仓复审）；
+  // 真正必须成功的 mkdir 在首次下载落盘时（hf route 的 downloadAndCache）
+  try {
+    await mkdir(settings.modelPath, { recursive: true })
+  } catch {
+    /* 预创建失败：交给写路径暴露真实错误 */
+  }
   return settings
 }
 
@@ -317,6 +325,8 @@ export async function writeKokoroSettings(settings: KokoroSettings): Promise<voi
 export interface SoeSettingsConfig {
   provider: 'mock' | 'azure' | 'tencent' | 'iflytek'
   proxyUrl: string
+  /** 代理共享密钥（server/.env 的 SOE_SHARED_TOKEN）：配置后 BFF 转发评分请求时携带 x-soe-token 头 */
+  sharedToken?: string
   azure?: { key: string; region: string; host: string }
   tencent?: { appId: string; secretId: string; secretKey: string }
   iflytek?: { appId: string; apiKey: string; apiSecret: string }

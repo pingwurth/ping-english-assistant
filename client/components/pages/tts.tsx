@@ -294,7 +294,12 @@ function TTS() {
       const result = engine === 'kokoro'
         ? await generateLocal(abort)
         : await generateCloud(abort, estimatedSentences)
-      if (abort.signal.aborted) return
+      if (abort.signal.aborted) {
+        // 取消落在了产物完成之后：ObjectURL 从未进入 gen state，唯一的 revoke 点
+        // （[gen?.url] effect）看不到它 —— 就地释放，避免多 MB blob URL 悬挂到页面结束
+        URL.revokeObjectURL(result.url)
+        return
+      }
 
       setGen(result)
 
@@ -311,6 +316,8 @@ function TTS() {
             direction,
             abort.signal,
             (done, total) => setTranslateProgress({ done, total }),
+            // 部分译文被原文回填：如实提示（不当作失败，双语字幕仍生成）
+            (filled, total) => setTranslateErr(`模型漏翻 ${filled}/${total} 条，缺失行以原文占位`),
           )
           if (abort.signal.aborted) return
           const bilingual = mergeBilingualSrt(result.srt, translations, direction)

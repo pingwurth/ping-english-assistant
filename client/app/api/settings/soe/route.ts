@@ -14,6 +14,7 @@ const DEFAULT_CONFIG: SoeSettingsConfig = { provider: 'mock', proxyUrl: DEFAULT_
 /** GET 返回前掩码密钥字段 */
 function maskSoeCreds(config: SoeSettingsConfig): SoeSettingsConfig {
   const out: SoeSettingsConfig = { ...config }
+  if (out.sharedToken) out.sharedToken = maskSecret(out.sharedToken)
   if (out.azure?.key) out.azure = { ...out.azure, key: maskSecret(out.azure.key) }
   if (out.tencent) {
     out.tencent = {
@@ -56,6 +57,15 @@ function normalizeCreds(
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+/** sharedToken 归一：非空字符串生效（掩码原样回传 → 保留已存真值）；空/缺省 → 未配置（清除） */
+function normalizeSharedToken(incoming: unknown, stored?: string): string | undefined {
+  if (typeof incoming !== 'string') return undefined
+  const v = incoming.trim()
+  if (!v) return undefined
+  if (stored && v === maskSecret(stored)) return stored
+  return v
+}
+
 export async function GET(request: Request) {
   const denied = sameOriginGuard(request)
   if (denied) return denied
@@ -72,7 +82,7 @@ export async function PUT(request: Request) {
   if (denied) return denied
   try {
     const body = await request.json()
-    const { provider, proxyUrl, azure, tencent, iflytek } = body ?? {}
+    const { provider, proxyUrl, sharedToken, azure, tencent, iflytek } = body ?? {}
 
     if (typeof provider !== 'string' || !PROVIDERS.has(provider)) {
       return NextResponse.json({ error: 'provider 必须是 mock/azure/tencent/iflytek 之一' }, { status: 400 })
@@ -85,6 +95,7 @@ export async function PUT(request: Request) {
     const config: SoeSettingsConfig = {
       provider: provider as SoeSettingsConfig['provider'],
       proxyUrl: proxyUrl.trim(),
+      sharedToken: normalizeSharedToken(sharedToken, stored?.sharedToken),
       azure: normalizeCreds(azure, ['key', 'region', 'host'], stored?.azure) as SoeSettingsConfig['azure'],
       tencent: normalizeCreds(tencent, ['appId', 'secretId', 'secretKey'], stored?.tencent) as SoeSettingsConfig['tencent'],
       iflytek: normalizeCreds(iflytek, ['appId', 'apiKey', 'apiSecret'], stored?.iflytek) as SoeSettingsConfig['iflytek'],

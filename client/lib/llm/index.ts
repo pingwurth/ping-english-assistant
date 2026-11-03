@@ -6,7 +6,7 @@ export { createChatModel, normalizeProvider, isDashScopeNative, isOpenAICompatib
 export { LlmError, toLlmError, throwIfAborted, toLlmErrorResponse } from './errors'
 export { translateTexts, detectDirection } from './chat-service'
 export { generateMnemonicCard, generateMnemonicCardStream, generateAssociation, generateMnemonicExercises, evaluateSentence } from './mnemonic-service'
-export { transcribe, getAsrProviderType } from './asr-service'
+export { transcribe } from './asr-service'
 export { generateTts } from './tts-service'
 export type {
   LlmProviderConfig,

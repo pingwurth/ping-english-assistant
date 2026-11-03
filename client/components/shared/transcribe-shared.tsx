@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch'
 import { splitWords, exportSrtRows, formatSrtTimestamp } from '@/core/subtitle'
 import { detectDirection, translateTexts, mergeBilingualSrt, buildBilingualPreview } from '@/lib/translate'
 import { selectServiceConfigs } from '@/lib/llm-configs'
+import { probeMediaDuration } from '@/platform/media-probe'
 import type { SubtitleSentence } from '@/types/subtitle'
 import type { AsrTranscribeSegment } from '@/types/api'
 
@@ -43,6 +44,10 @@ export async function callLlmTranscribe(file: File, signal?: AbortSignal, config
   formData.append('audio', file)
   formData.append('lang', 'en')
   if (configId) formData.append('configId', configId)
+  // 客户端实测时长（媒体 metadata）随请求上传：服务端比例分配兜底的时间轴质量完全
+  // 取决于时长精度，按字节数估算只对 ~128kbps 近似（256kbps MP3 会估出 2 倍时长）
+  const durationMs = await probeMediaDuration(file)
+  if (durationMs != null) formData.append('durationMs', String(durationMs))
 
   const res = await fetch('/api/transcribe', {
     method: 'POST',
@@ -165,7 +170,15 @@ export function useTranscribe() {
     try {
       const texts = segments.map(s => s.text)
       const direction = detectDirection(texts)
-      const translations = await translateTexts(texts, translateConfigIdRef.current || undefined, direction, signal)
+      const translations = await translateTexts(
+        texts,
+        translateConfigIdRef.current || undefined,
+        direction,
+        signal,
+        undefined,
+        // 部分译文被原文回填：如实提示（静默的半翻译双语字幕看起来与成功无异）
+        (filled, total) => setTranslateWarning(`模型漏翻 ${filled}/${total} 条，对应句保留原文，可稍后重翻`),
+      )
 
       // 双语 SRT：复用既有单语 SRT + mergeBilingualSrt（英上中下）
       const bilingualSrt = mergeBilingualSrt(srtText, translations, direction)

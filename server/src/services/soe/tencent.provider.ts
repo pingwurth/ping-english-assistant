@@ -20,8 +20,10 @@ import { buildTencentSoeWsUrl } from './tencent-ws-auth'
 import { withSoeRetry } from './soe-retry'
 import type { SoeEvaluateResponse, SoeInput, SoeProvider } from './soe-provider'
 
-/** OEN 录音模式整段音频上限：60s @16kHz/16bit/mono ≈ 1.92MB */
-const MAX_AUDIO_BYTES = 1_920_000
+/** OEN 录音模式整段音频上限：60s @16kHz/16bit/mono ≈ 1.92MB 纯 PCM。
+ *  校验对象是整段 WAV（含 44B 头与自动停止时延的少量过冲），按 62s 计留余量 ——
+ *  否则客户端 60s 自动停止的合法录音恰好压线被拒（2026-11 全仓复审）。 */
+const MAX_AUDIO_BYTES = 1_984_000
 
 /** 腾讯 OEN WS 文本帧中我们关心的子集 */
 interface SoeWsMessage {
@@ -52,7 +54,7 @@ export function createTencentSoeProvider(env: Env): SoeProvider {
   const evaluate = async (input: SoeInput, signal?: AbortSignal): Promise<SoeEvaluateResponse> => {
     // 录音模式整段上限提前拒绝（确定性失败，重试无意义）
     if (input.audio.length > MAX_AUDIO_BYTES) {
-      throw apiError(ERR.PAYLOAD_TOO_LARGE, '腾讯 SOE 录音模式整段音频上限约 60s（1.92MB），请缩短录音', {
+      throw apiError(ERR.PAYLOAD_TOO_LARGE, '腾讯 SOE 录音模式整段音频上限约 60s，请缩短录音', {
         bytes: input.audio.length,
       })
     }

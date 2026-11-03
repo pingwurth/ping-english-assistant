@@ -39,17 +39,25 @@ export async function POST(request: Request) {
   if (oversized) return oversized
   try {
     const formData = await request.formData()
-    const audioFile = formData.get('audio') as File | null
+    const audioFile = formData.get('audio')
 
-    if (!audioFile) {
-      return NextResponse.json({ error: 'Missing audio file' }, { status: 400 })
+    if (!(audioFile instanceof Blob)) {
+      return NextResponse.json({ error: 'Missing or invalid audio file' }, { status: 400 })
+    }
+    // 真实字节二次闸（与 /api/transcribe 对齐）：chunked 上传不带 Content-Length 可绕过
+    // 声明预检，按已解析出的实际体积拦截，避免超大音频整段缓冲后转发给 whisper 服务
+    if (audioFile.size > MAX_TRANSCRIBE_UPLOAD_BYTES) {
+      return NextResponse.json(
+        { error: `上传内容过大（上限 ${Math.round(MAX_TRANSCRIBE_UPLOAD_BYTES / 1048576)} MB）` },
+        { status: 413 },
+      )
     }
 
     const transcribeUrl = await getTranscribeUrl()
 
     // Forward FormData to the Python transcription server
     const forwardForm = new FormData()
-    forwardForm.append('audio', audioFile)
+    forwardForm.append('audio', audioFile, audioFile instanceof File ? audioFile.name : 'audio')
     forwardForm.append('language', formData.get('lang')?.toString() || 'en')
 
     const controller = new AbortController()

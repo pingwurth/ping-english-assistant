@@ -37,8 +37,6 @@ function TrainingCenter() {
   const [favCount, setFavCount] = useState(0)
   const [scope, setScope] = useState<PrefTrainingScope>(() => getTrainingScope())
 
-  // 训练页（P4/P5）据此读取当前材料与范围
-  useEffect(() => { setPref('training-material', materialId) }, [materialId])
   const changeScope = useCallback((next: PrefTrainingScope) => {
     setScope(next)
     setTrainingScope(next)
@@ -51,6 +49,9 @@ function TrainingCenter() {
       if (cancelled) return
       setRecord(rec ?? null)
       if (!rec) return
+      // 材料确实存在才写偏好（P4/P5 训练页据此取当前材料）：挂载即写会让悬空 id
+      // （已删材料/失效链接）毒化偏好，训练页静默回落演示材料并把成绩记到它名下
+      setPref('training-material', materialId)
       const [latest, favorites] = await Promise.all([
         getLatestTrainingRecordsByMaterial(materialId),
         recordsStore.getAllEntriesByPrefix(`${RECORD_KEY_PREFIXES.favorite}${materialId}:`),

@@ -46,21 +46,3 @@ export async function transcribe(
       return transcribeMimo(audioFile, config, signal)
   }
 }
-
-/**
- * 检测 ASR provider 类型
- *
- * 用于 API 路由中判断是否为 multimodal 模型（决定是否需要 WhisperX 对齐）。
- * multimodal: 原生音频/多模态 chat 模型（dashscope 及未知 provider 的 MiMo fallback），可能需要 WhisperX 对齐
- * standard:   已确认自带时间轴的标准 ASR（当前仅显式扩展点，默认未知 provider 不落入此类型）
- */
-export function getAsrProviderType(settings: { provider: string; asrModel?: string | null }): 'multimodal' | 'standard' {
-  const provider = normalizeProvider(settings.provider)
-  const model = (settings.asrModel || '').toLowerCase()
-
-  if (provider === 'dashscope') {
-    return model && !model.startsWith('qwen-audio') ? 'standard' : 'multimodal'
-  }
-  // mimo 与所有未知 provider 都走 transcribeMimo；该实现返回纯文本，需要上层对齐。
-  return 'multimodal'
-}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import { setKokoroModelId, preloadKokoroModel } from '@/platform/kokoro-tts'
+import { setKokoroModelId, preloadKokoroModelIfCached } from '@/platform/kokoro-tts'
 import { subscribeIdbBlocked } from '@/platform/storage/idb'
 import { sweepTrainingRetention } from '@/stores/training-record-store'
 import { Library } from '@/components/pages/library'
@@ -30,7 +30,8 @@ export default function StudyApp() {
   useEffect(() => {
     const unsubscribeIdb = subscribeIdbBlocked(setIdbBlocked)
     setReady(true)
-    // 启动时加载 Kokoro 配置并预加载模型
+    // 启动时加载 Kokoro 配置；模型仅在已缓存于磁盘时预热（未缓存的首跑不在挂载时
+    // 发起 ~89MB 网络下载，见 preloadKokoroModelIfCached 注释）
     // 后台清扫训练记录保留策略（只读 train: 前缀；兜住升级前/导入的历史积压，失败静默）
     void sweepTrainingRetention().catch(() => {})
     fetch('/api/settings/kokoro')
@@ -39,7 +40,7 @@ export default function StudyApp() {
         if (data?.modelId) setKokoroModelId(data.modelId)
       })
       .catch(() => {})
-      .finally(() => { preloadKokoroModel() })
+      .finally(() => { void preloadKokoroModelIfCached() })
     return () => {
       unsubscribeIdb()
     }

@@ -192,7 +192,10 @@ export class SentencePlayer {
     // 句子仍按原时长播放；不补偿的话大漂移下回跳瞬间即再次越界，∞ 循环会连续回跳。
     if (this.loopIndex >= 0) {
       const s = this.sentences[this.loopIndex]
-      const drift = this.controller.getSeekDriftMs?.() ?? 0
+      // 漂移只补偿正向（seek 落点晚于目标，视频关键帧媒体的常态）；负向陈旧值
+      // （如字幕时间超出媒体时长、seek 被浏览器钳制后遗留的大负漂移）只会让边界
+      // 提前恒成立 → 幻影回跳白烧循环次数，故钳到 0（2026-11 全仓复审）。
+      const drift = Math.max(0, this.controller.getSeekDriftMs?.() ?? 0)
       if (s && s.endMs > s.startMs && currentMs >= s.endMs - LOOP_TOLERANCE_MS + drift) {
         if (this.loopRemaining === Number.POSITIVE_INFINITY || this.loopRemaining > 0) {
           if (this.loopRemaining !== Number.POSITIVE_INFINITY) this.loopRemaining -= 1

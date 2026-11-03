@@ -54,9 +54,13 @@ export async function POST(req: Request) {
 
   let upstream: Response
   try {
+    // 代理开启共享密钥鉴权（server/.env SOE_SHARED_TOKEN）时补 x-soe-token 头；
+    // 此前 BFF 从不携带 → 跨机部署下每次评分 401，而 healthz 不鉴权使连接徽标仍绿
+    const headers: Record<string, string> = cfg.sharedToken ? { 'x-soe-token': cfg.sharedToken } : {}
     upstream = await fetch(buildServiceUrl(cfg.proxyUrl, SOE_EVALUATE_ENDPOINT), {
       method: 'POST',
       body: outgoing,
+      headers,
       signal: req.signal,
     })
   } catch {

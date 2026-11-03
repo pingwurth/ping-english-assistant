@@ -37,9 +37,12 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
   const [newBookName, setNewBookName] = useState('')
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
 
   const handleConfirm = async () => {
     setSubmitting(true)
+    setError('')
+    let createdBookId: string | null = null
     try {
       let targetBookId = selectedBookId
       let targetBookName = books.find((b) => b.id === selectedBookId)?.name ?? '默认生词本'
@@ -49,6 +52,7 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
         const newBook = await createBook(newBookName.trim())
         targetBookId = newBook.id
         targetBookName = newBook.name
+        createdBookId = newBook.id
       }
 
       await addEntry({
@@ -62,7 +66,14 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
 
       onAdded(targetBookName)
     } catch (e) {
-      console.error('[VocabBookPicker] add entry failed:', e)
+      // 添加失败必须可见（配额耗尽/存储损坏等）：留在弹窗内提示，用户可重试。
+      // 已建出的新本在重试时改为直接选中它，避免重复建空本。
+      if (createdBookId) {
+        setSelectedBookId(createdBookId)
+        setShowCreate(false)
+        setNewBookName('')
+      }
+      setError(e instanceof Error && e.message ? `添加失败：${e.message}` : '添加失败，请重试')
     } finally {
       setSubmitting(false)
     }
@@ -144,6 +155,8 @@ export function VocabBookPicker({ selectedText, sentenceTextEn, sentenceIndex, m
             />
           </div>
         </div>
+
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>取消</Button>

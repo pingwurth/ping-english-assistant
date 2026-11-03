@@ -10,7 +10,7 @@
  * getMockServices() / getServices() 均返回完整 AppServices（含 tts 字段）。
  */
 
-import type { AppServices, SoeService } from './contracts'
+import { ApiError, type AppServices, type SoeService } from './contracts'
 import type { SoeSettingsConfig } from '@/lib/server-settings'
 import { ApiSoeService } from './api/soe'
 import { MockSoeService, type MockSoeOptions } from './mock/soe'
@@ -73,10 +73,11 @@ export async function getSoeService(): Promise<SoeService> {
     cfg = null
   }
   if (!cfg) {
-    // 拉取失败（settings.json 损坏、dev 抖动）≠ 未配置：回落 mock 伪评分必须大声警告，
-    // 否则与发音无关的伪分会静默写进训练记录，用户以为在真评分
-    console.warn('[services] SOE 设置读取失败，本次评分回落 mock 伪分（与发音无关，请检查设置）')
-    return getMockServices().soe
+    // 拉取失败（settings.json 损坏、dev 抖动）≠ 未配置：绝不能回落 mock 伪评分——
+    // 与发音无关的伪分会写进 train: 训练记录，用户以为在真评分（2026-11 全仓复审）。
+    // 显式抛错，由调用方（read-aloud）走既有错误 UI 提示；未配置的真实情形不会走到
+    // 这里 —— GET /api/settings/soe 对缺失配置返回 200 + 默认 mock 配置。
+    throw new ApiError('SOE_SETTINGS_UNAVAILABLE', '评分服务设置读取失败，本次不做评分（不会用伪分顶替），请检查服务状态后重试')
   }
   soeServiceCache = cfg.provider === 'mock' ? getMockServices().soe : new ApiSoeService()
   return soeServiceCache

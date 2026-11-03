@@ -157,6 +157,8 @@ export function TranslateDrawer({ open, onOpenChange, sentences, onApplyAll }: T
         direction,
         ctrl.signal,
         (done, total) => setProgress({ done, total }),
+        // 部分译文被原文回填：应用前逐句核对时可看到哪些槽是原文，另加文字提示
+        (filled, total) => setError(`模型漏翻 ${filled}/${total} 条，对应槽位为原文占位，应用前请核对`),
       )
 
       setTranslations(results)

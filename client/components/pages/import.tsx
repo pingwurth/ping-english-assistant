@@ -16,20 +16,8 @@ import type { MaterialRecord } from '@/platform/storage/schema'
 import { estimateUsage } from '@/platform/storage/idb'
 import { consumeTtsExport, readTtsExport } from '@/lib/tts-export'
 import { consumeTranscribeExport, readTranscribeExport } from '@/lib/transcribe-export'
+import { probeMediaDuration } from '@/platform/media-probe'
 
-/** 探测媒体真实时长（loadedmetadata；失败返回 null，不阻断导入） */
-function probeMediaDuration(file: File): Promise<number | null> {
-  return new Promise((resolve) => {
-    if (typeof URL === 'undefined' || typeof document === 'undefined') return resolve(null)
-    const url = URL.createObjectURL(file)
-    const el = document.createElement(file.type.startsWith('video') ? 'video' : 'audio')
-    const cleanup = () => URL.revokeObjectURL(url)
-    el.preload = 'metadata'
-    el.onloadedmetadata = () => { const d = Number.isFinite(el.duration) && el.duration > 0 ? Math.round(el.duration * 1000) : null; cleanup(); resolve(d) }
-    el.onerror = () => { cleanup(); resolve(null) }
-    el.src = url
-  })
-}
 function formatBytes(n: number): string { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB` }
 function baseName(fileName: string): string { return fileName.replace(/\.[^.]+$/, '').slice(0, 50) }
 
@@ -159,11 +147,21 @@ function ImportPage() {
     })
   }, [mediaDurationMs])
 
+  // 时长探测防串台（2026-11 全仓复审）：大文件 metadata 慢（moov 尾置的 MP4），
+  // 期间重选文件时旧探测后完成会把 A 的时长写进 B —— 错值会随导入持久化并回填 LRC 末句
+  const probeSeqRef = useRef(0)
+  const probeAndSetDuration = (file: File) => {
+    const seq = ++probeSeqRef.current
+    return probeMediaDuration(file).then((d) => {
+      if (probeSeqRef.current === seq) setMediaDurationMs(d)
+    })
+  }
+
   const handleMediaFile = async (file: File | null) => {
     if (!file) return
     setMediaFile(file)
     setName(baseName(file.name)) // 材料名默认取文件名（可编辑）
-    setMediaDurationMs(await probeMediaDuration(file))
+    void probeAndSetDuration(file)
   }
 
   // TTS 一键带入：?source=tts&taskId= 时自动填充 ①②（产物由批次E 经 lib/tts-export 写入；缺失时空态兜底）
@@ -177,7 +175,7 @@ function ImportPage() {
       setFromTts(true)
       setMediaFile(file)
       setName((meta.name || baseName(file.name)).slice(0, 50))
-      setMediaDurationMs(await probeMediaDuration(file))
+      await probeAndSetDuration(file)
       applySubtitle(meta.subtitleText, meta.subtitleFormat)
     }).catch(() => { /* 空态兜底：用户可手动选择文件 */ })
     return () => { alive = false }
@@ -194,7 +192,7 @@ function ImportPage() {
       setFromTranscribe(true)
       setMediaFile(file)
       setName((meta.name || baseName(file.name)).slice(0, 50))
-      setMediaDurationMs(await probeMediaDuration(file))
+      await probeAndSetDuration(file)
       applySubtitle(meta.subtitleText, meta.subtitleFormat)
     }).catch(() => { /* 空态兜底：用户可手动选择文件 */ })
     return () => { alive = false }

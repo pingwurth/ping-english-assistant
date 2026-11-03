@@ -36,6 +36,7 @@ function makeRequest(method: 'GET' | 'PUT', origin: string | null, body?: unknow
 }
 
 const REAL_TENCENT = { appId: '1259000001', secretId: 'AKIDzxxxxxxxxxxxxxxx', secretKey: 'Gu5t9xGARNxxxxxxxxxxxxx' }
+const SHARED_TOKEN = 'soe-shared-token-2k4m8x'
 const REAL_IFLYTEK = { appId: '2869xxxx', apiKey: '7a1fxxxxxxxxxxxxxxxxxxxxxxxx', apiSecret: 'ZTQ5YmExxxxxxxxxxxxxxxx' }
 
 describe('同源守卫', () => {
@@ -50,12 +51,14 @@ describe('密钥掩码（评审 P1 回归）', () => {
     const put = await route.PUT(makeRequest('PUT', 'http://localhost:3000', {
       provider: 'tencent',
       proxyUrl: 'http://127.0.0.1:8788',
+      sharedToken: SHARED_TOKEN,
       tencent: REAL_TENCENT,
       iflytek: REAL_IFLYTEK,
     }))
     expect(put.status).toBe(200)
 
     const putBody = (await put.json()) as {
+      sharedToken?: string
       tencent?: Record<string, string>
       iflytek?: Record<string, string>
     }
@@ -65,14 +68,17 @@ describe('密钥掩码（评审 P1 回归）', () => {
     expect(putBody.tencent!.secretId).toBe(settings.maskSecret(REAL_TENCENT.secretId))
     expect(putBody.iflytek!.apiKey).toBe(settings.maskSecret(REAL_IFLYTEK.apiKey))
     expect(putBody.iflytek!.apiSecret).toBe(settings.maskSecret(REAL_IFLYTEK.apiSecret))
+    expect(putBody.sharedToken).toBe(settings.maskSecret(SHARED_TOKEN))
+    expect(putBody.sharedToken).not.toContain(SHARED_TOKEN)
 
     // 磁盘：明文真值（BFF 代理评分要用）
     await mkdir(join(home, '.ping-eng'), { recursive: true }) // 已存在，幂等
     const raw = JSON.parse(await readFile(join(home, '.ping-eng', 'settings.json'), 'utf-8')) as {
-      soe?: { tencent?: Record<string, string>; iflytek?: Record<string, string> }
+      soe?: { sharedToken?: string; tencent?: Record<string, string>; iflytek?: Record<string, string> }
     }
     expect(raw.soe!.tencent!.secretKey).toBe(REAL_TENCENT.secretKey)
     expect(raw.soe!.iflytek!.apiKey).toBe(REAL_IFLYTEK.apiKey)
+    expect(raw.soe!.sharedToken).toBe(SHARED_TOKEN)
 
     // GET：同样只回掩码
     const get = await route.GET(makeRequest('GET', 'http://localhost:3000'))
@@ -84,6 +90,7 @@ describe('密钥掩码（评审 P1 回归）', () => {
     await route.PUT(makeRequest('PUT', 'http://localhost:3000', {
       provider: 'tencent',
       proxyUrl: 'http://127.0.0.1:8788',
+      sharedToken: SHARED_TOKEN,
       tencent: REAL_TENCENT,
     }))
 
@@ -92,14 +99,16 @@ describe('密钥掩码（评审 P1 回归）', () => {
     const put2 = await route.PUT(makeRequest('PUT', 'http://localhost:3000', {
       provider: 'tencent',
       proxyUrl: 'http://192.168.1.10:8788',
+      sharedToken: settings.maskSecret(SHARED_TOKEN),
       tencent: { appId: REAL_TENCENT.appId, secretId: settings.maskSecret(REAL_TENCENT.secretId), secretKey: masked },
     }))
     expect(put2.status).toBe(200)
 
     const raw = JSON.parse(await readFile(join(home, '.ping-eng', 'settings.json'), 'utf-8')) as {
-      soe?: { proxyUrl?: string; tencent?: Record<string, string> }
+      soe?: { proxyUrl?: string; sharedToken?: string; tencent?: Record<string, string> }
     }
     expect(raw.soe!.proxyUrl).toBe('http://192.168.1.10:8788')
+    expect(raw.soe!.sharedToken).toBe(SHARED_TOKEN) // 掩码回传 → 真值保留
     expect(raw.soe!.tencent!.secretKey).toBe(REAL_TENCENT.secretKey) // 真值保留
     expect(raw.soe!.tencent!.secretId).toBe(REAL_TENCENT.secretId)
   })

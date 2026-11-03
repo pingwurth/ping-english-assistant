@@ -10,7 +10,7 @@ import { readEffectiveLlmSettings, readLlmConfigById, readLocalServices } from '
 import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
 import { parseWavDurationMs } from '@/lib/wav-duration'
 import { groupWordsToSegments, type WordTimestamp } from '@/lib/llm/asr-audio'
-import { transcribe, getAsrProviderType, LlmError, toLlmErrorResponse } from '@/lib/llm'
+import { transcribe, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { AsrModelConfig, AsrSegment } from '@/lib/llm'
 import {
   getDefaultModel,
@@ -180,7 +180,6 @@ export async function POST(request: Request) {
     }
 
     // ── 构建 ASR 配置 ───────────────────────────────────────
-    const providerType = getAsrProviderType(settings)
     const asrConfig: AsrModelConfig = {
       provider: settings.provider || 'dashscope',
       baseUrl: settings.baseUrl,
@@ -193,8 +192,11 @@ export async function POST(request: Request) {
     // ── 调用 ASR 服务（传播客户端取消；provider 内部再叠加硬超时）────────
     let result = await transcribe(audioFile, asrConfig, request.signal)
 
-    // ── 时间戳后处理（multimodal 模型且无时间戳时） ────────────
-    if (providerType === 'multimodal' && result.segments.length === 0 && result.text.trim()) {
+    // ── 时间戳后处理（ASR 未返回时间戳时；不分 provider） ────────────
+    // 曾按 providerType='standard' 信任「必带时间轴」，但 dashscope 非 qwen-audio
+    // 模型实际可能不带 → 转写「成功」却产出空 SRT（2026-11 全仓复审）。只要识别出了
+    // 文本而 segments 为空，一律走 WhisperX 对齐 / 比例分配兜底。
+    if (result.segments.length === 0 && result.text.trim()) {
       // 尝试 WhisperX 对齐（地址优先取设置页「本地服务配置」的 localServices 段）
       const localServices = await readLocalServices()
       const alignUrl = localServices.whisperAlignUrl || settings.whisperAlignUrl || DEFAULT_WHISPER_ALIGN_URL
@@ -207,8 +209,12 @@ export async function POST(request: Request) {
       } else {
         // 回退：比例分配时间戳
         console.log('[Transcribe] Falling back to proportional timestamp distribution')
-        const arrayBuffer = await audioFile.arrayBuffer()
-        const durationMs = estimateAudioDurationMs(arrayBuffer, audioFile)
+        // 时长优先用客户端实测（媒体 metadata，durationMs 字段随请求上传）：按字节估算
+        // 只对 ~128kbps 压缩音频近似，高码率 MP3 会估出 2 倍时长并烤进 SRT
+        const requestedMs = Number(formData.get('durationMs'))
+        const durationMs = Number.isFinite(requestedMs) && requestedMs > 0
+          ? requestedMs
+          : estimateAudioDurationMs(await audioFile.arrayBuffer(), audioFile)
         const sentences = splitIntoSentences(result.text.trim())
         const segments = distributeTimestamps(sentences, durationMs)
         result = { text: result.text.trim(), segments }

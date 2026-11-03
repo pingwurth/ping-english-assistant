@@ -23,7 +23,7 @@ async function translateChunk(
   configId: string | undefined,
   direction: TranslateDirection,
   signal?: AbortSignal,
-): Promise<string[]> {
+): Promise<{ translations: string[]; filledWithSource: number }> {
   const res = await fetch('/api/translate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -51,7 +51,10 @@ async function translateChunk(
   if (!data?.translations || data.translations.length !== chunk.length) {
     throw new Error('翻译结果与原文条数不一致，请重试')
   }
-  return data.translations
+  return {
+    translations: data.translations,
+    filledWithSource: typeof data.filledWithSource === 'number' && data.filledWithSource > 0 ? data.filledWithSource : 0,
+  }
 }
 
 /**
@@ -62,6 +65,8 @@ async function translateChunk(
  * @param direction  翻译方向（由调用方预先判定，不做 'auto'）
  * @param signal     取消信号（贯穿所有分块请求）
  * @param onProgress 每块完成后回调（累计完成数, 总条数）
+ * @param onDegraded 服务端用原文回填了缺失译文时回调（回填条数, 总条数）——
+ *                   回填是既定降级策略（结果仍完整返回），但调用方应向用户提示“部分未翻”
  * @throws 任意块失败时快速失败：抛首个错误并中止其余在途/未发块
  */
 export async function translateTexts(
@@ -70,6 +75,7 @@ export async function translateTexts(
   direction: TranslateDirection,
   signal?: AbortSignal,
   onProgress?: (done: number, total: number) => void,
+  onDegraded?: (filled: number, total: number) => void,
 ): Promise<string[]> {
   if (texts.length === 0) return []
   if (signal?.aborted) throw new Error('翻译已取消')
@@ -84,6 +90,7 @@ export async function translateTexts(
   let nextChunk = 0
   let doneCount = 0
   let firstError: unknown = null
+  let filledTotal = 0
 
   const worker = async (): Promise<void> => {
     while (firstError === null) {
@@ -91,7 +98,9 @@ export async function translateTexts(
       if (idx >= chunkCount) return
       const chunk = texts.slice(idx * CHUNK_SIZE, (idx + 1) * CHUNK_SIZE)
       try {
-        chunkResults[idx] = await translateChunk(chunk, configId, direction, controller.signal)
+        const outcome = await translateChunk(chunk, configId, direction, controller.signal)
+        chunkResults[idx] = outcome.translations
+        filledTotal += outcome.filledWithSource
         doneCount += chunk.length
         onProgress?.(Math.min(doneCount, texts.length), texts.length)
       } catch (err) {
@@ -113,6 +122,7 @@ export async function translateTexts(
   }
 
   if (firstError !== null) throw firstError
+  if (filledTotal > 0) onDegraded?.(filledTotal, texts.length)
   return chunkResults.flat()
 }
 

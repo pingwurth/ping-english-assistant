@@ -172,6 +172,9 @@ function Player() {
     setResumePositionMs(null)
     setNoteMap({})
     setNoteDrawerIndex(null)
+    // 同步清空已播集合：下方异步块仅在材料有 progress 记录时才覆盖 playedRef，
+    // 不清空的话（未来同路由复用组件时）首个 flush 会把上一材料的已播句写进新材料进度
+    playedRef.current = { indexes: new Set(), dirty: false, lastFlush: 0 }
     ;(async () => {
       const rec = await getMaterialRecord(materialId)
       if (cancelled) return
@@ -236,9 +239,13 @@ function Player() {
     const sp = new SentencePlayer(controller, sentences)
     playerRef.current = sp
     setEngineVersion((v) => v + 1) // 触发渲染，LiveControlBar 订阅新实例
-    // 应用 P10 设置的默认倍速与循环次数（仅装配时一次，后续由控件交互覆盖）
+    // 应用 P10 设置的默认倍速（仅装配时一次，后续由控件交互覆盖）。
+    // 注意：这里不能预挂单句循环 —— 装配时 lastIndex 尚为 -1，setLoopTimes 会把循环
+    // 句钳到第 0 句；而续播/?s=N 的 seek 此时尚未发生（mediaReady 后才做），第一个
+    // timeupdate 就会因已越过第 0 句句尾而立即回跳句首，销毁保存的播放位置并覆盖
+    // progress: 记录（2026-11 全仓复审：数据损坏）。循环改由下方 sentencechange
+    // 处理器在首个句子定位后按 loopRef 挂载 —— 无论从哪句开始播，行为等价。
     if (rate !== 1) sp.setRate(rate)
-    if (loop > 0) sp.setLoopTimes(loop)
 
     let cancelled = false
     controller.load({ type: mediaType, src: mediaUrl }).then(() => {
@@ -327,11 +334,15 @@ function Player() {
     } catch { /* 存储失败静默：进度仅影响材料库百分比 */ }
   }
 
-  // 键盘快捷键：空格 播放/暂停；←/→ 上/下一句（输入框聚焦时不触发）
+  // 键盘快捷键：空格 播放/暂停；←/→ 上/下一句（输入框聚焦时不触发）。
+  // 任一浮层（纠错/AI 转写/翻译/笔记）打开时整体让位：模态内按空格应激活聚焦按钮
+  // 而不是背后切播放，N 也不该在别的抽屉上再叠一层笔记抽屉（2026-11 全仓复审）
+  const overlayOpen = !!editingSentence || showAiDialog || showTranslateDrawer || noteDrawerIndex != null
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+      if (overlayOpen) return
       const sp = playerRef.current
       if (e.code === 'Space') {
         e.preventDefault()
@@ -348,18 +359,19 @@ function Player() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [playable])
+  }, [playable, overlayOpen])
 
   // N 键打开当前句笔记抽屉（输入框聚焦时不触发；Esc/遮罩关闭由抽屉自理）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+      if (overlayOpen) return
       if (e.key === 'n' || e.key === 'N') setNoteDrawerIndex(active)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [active])
+  }, [active, overlayOpen])
 
   /** 笔记编辑：本地即时更新（驱动预览），400ms 静默后落盘；空内容落盘时即删除 */
   const handleNoteChange = useCallback((index: number, content: string) => {
@@ -544,6 +556,15 @@ function Player() {
   const handleEditSentenceSave = useCallback(async (updated: SubtitleSentence) => {
     if (!record?.subtitleData) return
     const sentences = [...record.subtitleData.sentences]
+    // 兜底校验（弹窗已按邻句范围拦截）：句子数组必须保持按 startMs 有序 ——
+    // locateSentence 二分查找、笔记/收藏/进度的句序映射都依赖它。原位写入无序时间
+    // 会静默破坏高亮与播放控制并持久化到 IDB（2026-11 全仓复审：数据损坏）。
+    const prev = sentences[updated.index - 1]
+    const next = sentences[updated.index + 1]
+    if ((prev && updated.startMs <= prev.startMs) || (next && updated.startMs >= next.startMs)) {
+      showErrorBanner('起始时间需晚于上一句且早于下一句（保持时间轴有序），已取消保存')
+      return
+    }
     sentences[updated.index] = { ...updated, words: splitWords(updated.textEn) }
     const isBilingual = sentences.some((s) => !!s.textZh)
     const data = { ...record.subtitleData, sentences, isBilingual }
@@ -556,7 +577,7 @@ function Player() {
     }
     await putMaterialRecord(updatedRecord)
     setRecord(updatedRecord)
-  }, [record])
+  }, [record, showErrorBanner])
 
   /** 打开纠错弹窗 */
   const handleEditSentenceOpen = useCallback((index: number, sentence: SubtitleSentence) => {
@@ -661,7 +682,7 @@ function Player() {
 
   const noted = !!noteMap[safeActive]?.trim()
 
-  return <Shell back><div className="mx-auto flex max-w-[1440px] flex-col px-4 py-6 md:px-8"><div className="mb-6"><div className="flex items-center justify-between gap-3"><p className="text-sm text-muted-foreground">正在学习 · {record.material.mediaType === 'video' ? '视频' : '音频'} · {formatDuration(record.material.durationMs)}</p><Link className="shrink-0" to={`/training/${record.material.id}`} onClick={pauseAllMedia}><Button>进入训练</Button></Link></div><h1 className="truncate font-serif text-2xl font-semibold md:text-3xl" title={record.material.name}>{record.material.name}</h1></div>{errorBanner && <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive" role="alert"><span>{errorBanner}</span><button className="shrink-0 underline-offset-2 hover:underline" onClick={() => setErrorBanner('')}>关闭</button></div>}<div className="grid gap-6 lg:h-[calc(100vh-180px)] lg:grid-cols-[2fr_1fr] lg:overflow-hidden"><div className="flex min-h-0 flex-col gap-4"><div className="relative aspect-video rounded-3xl bg-primary shadow-inner lg:aspect-auto lg:flex-1 lg:min-h-[480px] lg:max-h-[480px]" onMouseMove={handleVideoMouseMove} onMouseLeave={handleVideoMouseLeave} onPointerDown={syncPointerType} onPointerMove={syncPointerType} onClick={handleVideoAreaTap}>{isSeedDemo && <p className="absolute inset-x-6 top-6 z-10 rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs text-primary-foreground/90">演示材料（无音频）——导入真实材料后即可播放音视频</p>}{mediaUrl && record.material.mediaType === 'video' ? <video ref={videoRef} src={mediaUrl} preload="metadata" className="absolute inset-0 h-full w-full rounded-3xl object-contain" /> : <BackgroundCarousel images={shuffledImages} interval={8000} transitionDuration={1000} className="absolute inset-0 rounded-3xl" />}<div className={`absolute inset-x-0 bottom-0 z-20 px-6 pb-4 pt-16 bg-gradient-to-t from-black/60 to-transparent rounded-b-3xl transition-opacity duration-300 ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onMouseEnter={handleControlsMouseEnter} onMouseLeave={handleControlsMouseLeave} onClick={handleOverlayTap}><LiveControlBar key={engineVersion} player={playerRef.current} {...{playing,setPlaying:togglePlay,mode,setMode,loop,setLoop:cycleLoop,sentenceIndex:safeActive,setSentenceIndex:selectSentence,items:sentences,durationMs,onSeek:(ms)=>playerRef.current?.seekTo(ms),rate,onRateCycle:cycleRate,volume,onVolumeChange:handleVolumeChange,disabled:!playable,isBilingual:record.subtitleData ? record.subtitleData.isBilingual : true}} /></div></div><Card ref={currentSentenceRef} className="py-0"><CardContent className="flex items-center py-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1.5"><Button variant="ghost" size="xs" className="-ml-2 gap-0.5 font-semibold uppercase tracking-wider text-primary" aria-expanded={!sentenceCollapsed} aria-label={sentenceCollapsed ? '展开当前句' : '折叠当前句'} title={sentenceCollapsed ? '展开当前句' : '折叠当前句'} onClick={() => setSentenceCollapsed(v => !v)}>当前句<ChevronUp data-icon="inline-end" className={`size-3.5 transition-transform duration-200 ${sentenceCollapsed ? 'rotate-180' : ''}`} /></Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textEn} title="复制原文" aria-label="复制原文" onClick={(e) => void handleCopySentence('en', current?.textEn ?? '', e.currentTarget)}>{copiedKind === 'en' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}原文</Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textZh} title="复制译文" aria-label="复制译文" onClick={(e) => void handleCopySentence('zh', current?.textZh ?? '', e.currentTarget)}>{copiedKind === 'zh' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}译文</Button><Button variant={noted ? 'secondary' : 'outline'} size="xs" disabled={sentences.length === 0} onClick={() => setNoteDrawerIndex(safeActive)} aria-label={noted ? `查看句子 ${safeActive + 1} 的笔记` : `为句子 ${safeActive + 1} 记笔记`}><StickyNote data-icon="inline-start" className={noted ? 'text-primary' : ''} /><span className="hidden sm:inline">{noted ? '查看笔记' : '记笔记'}</span><kbd className="hidden rounded border px-1 text-[10px] font-normal text-muted-foreground sm:inline">N</kbd></Button><Button variant="outline" size="xs" className="ml-auto shrink-0" disabled={sentences.length === 0} onClick={() => void toggleFavorite(safeActive)} aria-pressed={favorited} aria-label={favorited ? '取消收藏当前句' : '收藏当前句'}><Star data-icon="inline-start" className={favorited ? 'fill-primary text-primary' : ''} /><span className="hidden sm:inline">{favorited ? '已收藏' : '收藏'}</span></Button></div><div className={`grid transition-[grid-template-rows] duration-200 ease-out ${sentenceCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}><div className={`min-h-0 overflow-hidden transition-opacity duration-150 ${sentenceCollapsed ? 'opacity-0' : 'opacity-100'}`}><ScrollFade className="mt-1.5 h-[7.5rem]" resetKey={safeActive}>{current ? <>{(mode === 'bilingual' || mode === 'english') && <p className="whitespace-pre-line text-lg leading-relaxed select-text">{current.textEn}</p>}{(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 whitespace-pre-line text-muted-foreground">{current.textZh}</p>}</> : <p className="text-lg leading-relaxed text-muted-foreground">该材料暂无字幕</p>}</ScrollFade></div></div></div></CardContent></Card><WordBubble items={sentences} materialId={record.material.id} selectionContainerRef={currentSentenceRef} />{mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}</div><SubtitleList mode={mode} active={safeActive} onSelect={selectSentence} items={sentences} favoriteIndexes={favSet} noteIndexes={noteIndexes} onOpenNote={setNoteDrawerIndex} onImportSubtitle={handleImportSubtitle} onAiConvert={handleAiConvert} onDeleteSentence={handleDeleteSentence} onEditSentence={handleEditSentenceOpen} onExportSubtitle={handleExportSubtitle} onTranslate={handleTranslate} /></div></div>{copyTip && <div key={copyTip.id} role="status" aria-live="polite" className="animate-copy-tip pointer-events-none fixed z-50 flex items-center gap-1 rounded-full bg-foreground px-2.5 py-1 text-xs font-medium text-background shadow-lg" style={{ left: copyTip.x, top: copyTip.y - 6 }}><Check className="size-3" />复制成功</div>}<AiTranscribeDialog open={showAiDialog} onOpenChange={setShowAiDialog} mediaFile={mediaFile} onSubtitleGenerated={(srt) => void handleAiSubtitleGenerated(srt)} /><SubtitleEditDialog open={!!editingSentence} onOpenChange={(open) => { if (!open) setEditingSentence(null) }} sentence={editingSentence?.sentence ?? null} onSave={(updated) => void handleEditSentenceSave(updated)} /><TranslateDrawer open={showTranslateDrawer} onOpenChange={setShowTranslateDrawer} sentences={sentences} onApplyAll={(updated, direction) => void handleTranslateApplyAll(updated, direction)} /><SentenceNoteDrawer open={noteDrawerIndex != null} target={noteDrawerIndex != null ? (sentences[noteDrawerIndex] ?? null) : null} content={noteDrawerIndex != null ? (noteMap[noteDrawerIndex] ?? '') : ''} onChange={(v) => { if (noteDrawerIndex != null) handleNoteChange(noteDrawerIndex, v) }} onDelete={() => { if (noteDrawerIndex != null) handleNoteDelete(noteDrawerIndex) }} onLocate={() => { if (noteDrawerIndex != null) { selectSentence(noteDrawerIndex); setNoteDrawerIndex(null) } }} onClose={() => setNoteDrawerIndex(null)} /></Shell>
+  return <Shell back><div className="mx-auto flex max-w-[1440px] flex-col px-4 py-6 md:px-8"><div className="mb-6"><div className="flex items-center justify-between gap-3"><p className="text-sm text-muted-foreground">正在学习 · {record.material.mediaType === 'video' ? '视频' : '音频'} · {formatDuration(record.material.durationMs)}</p><Link className="shrink-0" to={`/training/${record.material.id}`} onClick={pauseAllMedia}><Button>进入训练</Button></Link></div><h1 className="truncate font-serif text-2xl font-semibold md:text-3xl" title={record.material.name}>{record.material.name}</h1></div>{errorBanner && <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive" role="alert"><span>{errorBanner}</span><button className="shrink-0 underline-offset-2 hover:underline" onClick={() => setErrorBanner('')}>关闭</button></div>}<div className="grid gap-6 lg:h-[calc(100vh-180px)] lg:grid-cols-[2fr_1fr] lg:overflow-hidden"><div className="flex min-h-0 flex-col gap-4"><div className="relative aspect-video rounded-3xl bg-primary shadow-inner lg:aspect-auto lg:flex-1 lg:min-h-[480px] lg:max-h-[480px]" onMouseMove={handleVideoMouseMove} onMouseLeave={handleVideoMouseLeave} onPointerDown={syncPointerType} onPointerMove={syncPointerType} onClick={handleVideoAreaTap}>{isSeedDemo && <p className="absolute inset-x-6 top-6 z-10 rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs text-primary-foreground/90">演示材料（无音频）——导入真实材料后即可播放音视频</p>}{mediaUrl && record.material.mediaType === 'video' ? <video ref={videoRef} src={mediaUrl} preload="metadata" className="absolute inset-0 h-full w-full rounded-3xl object-contain" /> : <BackgroundCarousel images={shuffledImages} interval={8000} transitionDuration={1000} className="absolute inset-0 rounded-3xl" />}<div className={`absolute inset-x-0 bottom-0 z-20 px-6 pb-4 pt-16 bg-gradient-to-t from-black/60 to-transparent rounded-b-3xl transition-opacity duration-300 ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onMouseEnter={handleControlsMouseEnter} onMouseLeave={handleControlsMouseLeave} onClick={handleOverlayTap}><LiveControlBar key={engineVersion} player={playerRef.current} {...{playing,setPlaying:togglePlay,mode,setMode,loop,setLoop:cycleLoop,sentenceIndex:safeActive,setSentenceIndex:selectSentence,items:sentences,durationMs,onSeek:(ms)=>playerRef.current?.seekTo(ms),rate,onRateCycle:cycleRate,volume,onVolumeChange:handleVolumeChange,disabled:!playable,isBilingual:record.subtitleData ? record.subtitleData.isBilingual : true}} /></div></div><Card ref={currentSentenceRef} className="py-0"><CardContent className="flex items-center py-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1.5"><Button variant="ghost" size="xs" className="-ml-2 gap-0.5 font-semibold uppercase tracking-wider text-primary" aria-expanded={!sentenceCollapsed} aria-label={sentenceCollapsed ? '展开当前句' : '折叠当前句'} title={sentenceCollapsed ? '展开当前句' : '折叠当前句'} onClick={() => setSentenceCollapsed(v => !v)}>当前句<ChevronUp data-icon="inline-end" className={`size-3.5 transition-transform duration-200 ${sentenceCollapsed ? 'rotate-180' : ''}`} /></Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textEn} title="复制原文" aria-label="复制原文" onClick={(e) => void handleCopySentence('en', current?.textEn ?? '', e.currentTarget)}>{copiedKind === 'en' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}原文</Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textZh} title="复制译文" aria-label="复制译文" onClick={(e) => void handleCopySentence('zh', current?.textZh ?? '', e.currentTarget)}>{copiedKind === 'zh' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}译文</Button><Button variant={noted ? 'secondary' : 'outline'} size="xs" disabled={sentences.length === 0} onClick={() => setNoteDrawerIndex(safeActive)} aria-label={noted ? `查看句子 ${safeActive + 1} 的笔记` : `为句子 ${safeActive + 1} 记笔记`}><StickyNote data-icon="inline-start" className={noted ? 'text-primary' : ''} /><span className="hidden sm:inline">{noted ? '查看笔记' : '记笔记'}</span><kbd className="hidden rounded border px-1 text-[10px] font-normal text-muted-foreground sm:inline">N</kbd></Button><Button variant="outline" size="xs" className="ml-auto shrink-0" disabled={sentences.length === 0} onClick={() => void toggleFavorite(safeActive)} aria-pressed={favorited} aria-label={favorited ? '取消收藏当前句' : '收藏当前句'}><Star data-icon="inline-start" className={favorited ? 'fill-primary text-primary' : ''} /><span className="hidden sm:inline">{favorited ? '已收藏' : '收藏'}</span></Button></div><div className={`grid transition-[grid-template-rows] duration-200 ease-out ${sentenceCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}><div className={`min-h-0 overflow-hidden transition-opacity duration-150 ${sentenceCollapsed ? 'opacity-0' : 'opacity-100'}`}><ScrollFade className="mt-1.5 h-[7.5rem]" resetKey={safeActive}>{current ? <>{(mode === 'bilingual' || mode === 'english') && <p className="whitespace-pre-line text-lg leading-relaxed select-text">{current.textEn}</p>}{(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 whitespace-pre-line text-muted-foreground">{current.textZh}</p>}</> : <p className="text-lg leading-relaxed text-muted-foreground">该材料暂无字幕</p>}</ScrollFade></div></div></div></CardContent></Card><WordBubble items={sentences} materialId={record.material.id} selectionContainerRef={currentSentenceRef} />{mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}</div><SubtitleList mode={mode} active={safeActive} onSelect={selectSentence} items={sentences} favoriteIndexes={favSet} noteIndexes={noteIndexes} onOpenNote={setNoteDrawerIndex} onImportSubtitle={handleImportSubtitle} onAiConvert={handleAiConvert} onDeleteSentence={handleDeleteSentence} onEditSentence={handleEditSentenceOpen} onExportSubtitle={handleExportSubtitle} onTranslate={handleTranslate} /></div></div>{copyTip && <div key={copyTip.id} role="status" aria-live="polite" className="animate-copy-tip pointer-events-none fixed z-50 flex items-center gap-1 rounded-full bg-foreground px-2.5 py-1 text-xs font-medium text-background shadow-lg" style={{ left: copyTip.x, top: copyTip.y - 6 }}><Check className="size-3" />复制成功</div>}<AiTranscribeDialog open={showAiDialog} onOpenChange={setShowAiDialog} mediaFile={mediaFile} onSubtitleGenerated={(srt) => void handleAiSubtitleGenerated(srt)} /><SubtitleEditDialog open={!!editingSentence} onOpenChange={(open) => { if (!open) setEditingSentence(null) }} sentence={editingSentence?.sentence ?? null} onSave={(updated) => void handleEditSentenceSave(updated)} prevStartMs={editingSentence ? sentences[editingSentence.index - 1]?.startMs : undefined} nextStartMs={editingSentence ? sentences[editingSentence.index + 1]?.startMs : undefined} /><TranslateDrawer open={showTranslateDrawer} onOpenChange={setShowTranslateDrawer} sentences={sentences} onApplyAll={(updated, direction) => void handleTranslateApplyAll(updated, direction)} /><SentenceNoteDrawer open={noteDrawerIndex != null} target={noteDrawerIndex != null ? (sentences[noteDrawerIndex] ?? null) : null} content={noteDrawerIndex != null ? (noteMap[noteDrawerIndex] ?? '') : ''} onChange={(v) => { if (noteDrawerIndex != null) handleNoteChange(noteDrawerIndex, v) }} onDelete={() => { if (noteDrawerIndex != null) handleNoteDelete(noteDrawerIndex) }} onLocate={() => { if (noteDrawerIndex != null) { selectSentence(noteDrawerIndex); setNoteDrawerIndex(null) } }} onClose={() => setNoteDrawerIndex(null)} /></Shell>
 }
 
 /**

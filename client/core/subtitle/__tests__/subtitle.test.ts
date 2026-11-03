@@ -204,6 +204,13 @@ describe('parseSubtitle LRC', () => {
     expect(blocks[0]!.lines[0]).toBe('mixed tags here')
   })
 
+  it('[offset:±ms] 全局平移时间轴：正值提前（有效时间 = 标签 − offset），负值延后；负值钳到 0', () => {
+    const shifted = parseLrc('[offset:+500]\n[00:00.30]first\n[00:10.00]second')
+    expect(shifted.map((b) => b.startMs)).toEqual([0, 9500]) // 300−500 钳到 0
+    const later = parseLrc('[offset:-250]\n[00:10.00]line')
+    expect(later[0]!.startMs).toBe(10250)
+  })
+
   it('增强型 LRC（A2）逐词时间标签 <mm:ss.xx> 剥离，不污染词表（评审 #16）', () => {
     const data = parseSubtitle('[00:12.30] <00:13.50>you <00:14.00>know the way')
     expect(data.sentences[0]!.textEn).toBe('you know the way')
