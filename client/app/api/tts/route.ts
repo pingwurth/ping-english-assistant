@@ -61,8 +61,10 @@ export async function POST(request: Request) {
     const settings = configId
       ? await readLlmConfigById(configId)
       : await readEffectiveLlmSettings()
-    // 已存 baseUrl 过 SSRF 门（c066：服务端外连的统一纪律，与 models/soe 同判断）
-    if (settings && isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
+    // 已存 baseUrl 过 SSRF 门（c066）。truthiness 先行（quick c007）：空 baseUrl 的
+    // 配置应报「未配置」——isUnsafeUpstreamUrl('') 会因 URL 解析失败被判不安全，
+    // 把配置缺失误报成网段不允许的安全问题
+    if (settings?.baseUrl && isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
     if (!settings?.baseUrl || !settings?.apiKey) {
       return NextResponse.json(
         { error: '请先在设置页配置 TTS 模型（Base URL 和 API Key）', code: 'SETTINGS_NOT_CONFIGURED' },

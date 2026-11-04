@@ -72,7 +72,9 @@ export async function readJsonBodyCapped(request: Request): Promise<CappedJsonRe
   } catch {
     return { ok: false, response: NextResponse.json({ error: '请求体必须为合法 JSON', code: 'INVALID_REQUEST' }, { status: 400 }) }
   }
-  if (text.length > MAX_JSON_BODY_BYTES) return tooLarge()
+  // 按字节而非 text.length（UTF-16 码元）比较（quick 复审 c005）：CJK 每字符 3 字节
+  // 只计 1 码元,纯中文 body 实际可缓冲到上限的 ~3 倍,与 Content-Length 预检单位不一致
+  if (Buffer.byteLength(text) > MAX_JSON_BODY_BYTES) return tooLarge()
   try {
     return { ok: true, body: JSON.parse(text) }
   } catch {

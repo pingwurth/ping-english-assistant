@@ -7,7 +7,7 @@
  * 只在一侧修过）。导入成功后调用 consume 清理两层临时产物。
  */
 
-import { blobsStore } from '@/platform/storage/idb'
+import { blobsStore, runAtomicOps } from '@/platform/storage/idb'
 
 export interface MediaExportHandoffOptions {
   /** sessionStorage 索引键前缀（含冒号结尾） */
@@ -65,6 +65,18 @@ async function sweepOrphanBlobs(sessionPrefix: string, blobKeyPrefix: string): P
       }
       if (!active) await blobsStore.delete(key)
     }
+    // 对账清扫孤儿时间标记（quick 复审 c013）：标记只随宿主 blob 连带删除,
+    // 宿主经其它路径消失时标记残留——每标记一个 number,量级极小,顺手清掉
+    const liveTaskIds = new Set(
+      keys
+        .filter((key) => key.startsWith(blobKeyPrefix) && !key.slice(blobKeyPrefix.length).startsWith('ts:'))
+        .map((key) => key.slice(blobKeyPrefix.length)),
+    )
+    for (const key of keys) {
+      if (!key.startsWith(blobKeyPrefix)) continue
+      const id = key.slice(blobKeyPrefix.length)
+      if (id.startsWith('ts:') && !liveTaskIds.has(id.slice(3))) await blobsStore.delete(key)
+    }
   } catch (err) {
     console.warn('[media-handoff] 孤儿 blob 回收失败（不影响本次写入）:', err)
   }
@@ -85,10 +97,12 @@ export function createMediaExportHandoff<M extends MediaExportMetaBase>(opts: Me
      */
     async write(taskId: string, audio: Blob, meta: Omit<M, 'taskId'>): Promise<void> {
       await sweepOrphanBlobs(sessionPrefix, blobKeyPrefix)
-      await blobsStore.put(blobKey(taskId), audio)
-      // 写入时间标记（跨标签页孤儿宽限依据，c008）：与音频同存于 blobs store，
-      // 任意标签页的清扫都能读到，不受 sessionStorage 每 tab 隔离的影响
-      await blobsStore.put(tsKeyOf(blobKeyPrefix, taskId), Date.now())
+      // 音频 + 写入时间标记（跨标签页孤儿宽限依据）单事务写（quick 复审 c008）：
+      // 两段写之间失败会留下「有音频无标记」，下轮清扫回落旧判定即可能删掉刚写的
+      // 产物——宽限对该条失效
+      await runAtomicOps({
+        put: { blobs: [[blobKey(taskId), audio] as const, [tsKeyOf(blobKeyPrefix, taskId), Date.now()] as const] },
+      })
       try {
         if (typeof sessionStorage !== 'undefined') {
           sessionStorage.setItem(sessionPrefix + taskId, JSON.stringify({ ...meta, taskId }))

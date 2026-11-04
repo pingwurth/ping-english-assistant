@@ -47,19 +47,22 @@ let soeServiceCache: SoeService | null = null
  * （直接手改 settings.json 的场景仍覆盖不到，刷新页面即恢复一致。）
  */
 const SOE_CACHE_INVALIDATE_CHANNEL = 'ping-eng:soe-cache-invalidate'
-if (typeof BroadcastChannel !== 'undefined') {
-  const channel = new BroadcastChannel(SOE_CACHE_INVALIDATE_CHANNEL)
-  channel.onmessage = () => { soeServiceCache = null }
+/** 模块级单一频道实例：监听与发帖共用（quick 复审 c006 —— 原先每次失效 new 一个
+ *  发帖实例且从不 close,纯资源浪费）；与模块同生命周期,无需关闭 */
+let soeCacheChannel: BroadcastChannel | null = null
+function soeCacheInvalidateChannel(): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') return null
+  soeCacheChannel ??= new BroadcastChannel(SOE_CACHE_INVALIDATE_CHANNEL)
+  return soeCacheChannel
 }
+soeCacheInvalidateChannel()?.addEventListener('message', () => { soeServiceCache = null })
 
 /** SOE 设置已变更（设置页保存成功后调用）：使缓存的评分服务失效并广播到其他标签页 */
 export function invalidateSoeServiceCache(): void {
   soeServiceCache = null
-  if (typeof BroadcastChannel !== 'undefined') {
-    try {
-      new BroadcastChannel(SOE_CACHE_INVALIDATE_CHANNEL).postMessage(Date.now())
-    } catch { /* 广播失败不影响本 tab 失效 */ }
-  }
+  try {
+    soeCacheInvalidateChannel()?.postMessage(Date.now())
+  } catch { /* 广播失败不影响本 tab 失效 */ }
 }
 
 /** 跟读评分服务解析：模型设置的 soe 配置（settings.json）→ mock（本地伪评分）或 BFF 中转真实代理 */

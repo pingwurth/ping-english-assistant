@@ -49,8 +49,9 @@ export async function GET(request: Request) {
         { status: 400 },
       )
     }
-    // 已存 baseUrl 同样过 SSRF 门（c066：门禁不能只管「当场提交」的 URL）
-    if (isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
+    // 已存 baseUrl 同样过 SSRF 门（c066）。truthiness 先行（quick c017）：空
+    // baseUrl 报「未配置」而非误报网段不允许
+    if (settings.baseUrl && isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
 
     const response = await fetchModelList(settings.baseUrl, settings.apiKey)
 

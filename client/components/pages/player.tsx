@@ -18,7 +18,7 @@ import {
   getProgress,
   putMaterialRecord,
   putProgress,
-  remapSentenceReferences,
+  replaceSubtitleData,
   shiftSentenceReferences,
   touchMaterial,
 } from '@/stores/material-store'
@@ -146,6 +146,8 @@ function Player() {
   /** 删句进行中（防重入 + 禁用句级按钮；双击不得把句索引平移两次） */
   const deletingSentenceRef = useRef(false)
   const [sentenceBusy, setSentenceBusy] = useState(false)
+  /** 字幕整体替换进行中：暂停进度节流写（quick 复审 c004 —— 见 flushProgress） */
+  const applyingSubtitleRef = useRef(false)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   /** 复制成功的悬浮提示（fixed 定位锚在触发按钮上方，不受卡片 overflow-hidden 裁剪；id 变化以重放动画） */
   const [copyTip, setCopyTip] = useState<{ id: number; x: number; y: number } | null>(null)
@@ -348,6 +350,11 @@ function Player() {
     // 位置写入与 played 集合解耦：节流调用（无显式 lastMs）只在有增量时写；
     // 卸载/seek 后离开（显式传 lastMs）即使无增量也要落盘位置，否则续播起点回跳旧值
     if (!p.dirty && lastMs == null) return
+    // 字幕替换进行中暂停节流写（quick c004）：原子的 replaceSubtitleData 落库与
+    // 本组件重置 playedRef 之间，一次 timeupdate 触发的 flush 会把旧索引内存集
+    // 并进已迁移的 progress 并写回——幽灵旧索引从此不再收敛。卸载 flush（显式
+    // lastMs）不受此限（位置仍值得落盘，替换失败时旧索引依旧有效）。
+    if (applyingSubtitleRef.current && lastMs == null) return
     p.dirty = false
     p.lastFlush = Date.now()
     try {
@@ -470,38 +477,37 @@ function Player() {
     })
   }, [materialId])
 
-  /** 将已解析的字幕数据应用到当前材料：持久化 + 迁移句级记录 + 更新生词频率 + 刷新 UI */
+  /** 将已解析的字幕数据应用到当前材料：原子替换 + 迁移句级记录 + 更新生词频率 + 刷新 UI */
   const applySubtitleToRecord = useCallback(async (data: SubtitleData) => {
     if (!record) return
-    const updatedRecord: MaterialRecord = {
-      ...record,
-      material: {
-        ...record.material,
-        subtitle: { ref: `idb://materials/${materialId}`, format: data.format, isBilingual: data.isBilingual, sentenceCount: data.sentences.length },
-      },
-      subtitleData: data,
-    }
-    await putMaterialRecord(updatedRecord)
-    // 整体替换句列表：收藏/笔记/听写明细/生词来源句/已播进度按句文本对齐迁移
-    // （旧行为零迁移，重新分句后句级记录静默错位到无关句子 —— 2026-11 全仓复审 c016）
-    const remap = await remapSentenceReferences(materialId, record.subtitleData?.sentences ?? [], data.sentences)
-    const allWords = data.sentences.flatMap((s) => s.words)
-    await updateFrequencies(allWords, materialId)
-    // 内存态跟随持久层迁移
-    setFavSet((prev) => remapIndexSet(prev, remap.mapping))
-    setNoteMap((prev) => {
-      const next: Record<number, string> = {}
-      for (const [k, v] of Object.entries(prev)) {
-        const mapped = remap.mapping.get(Number(k))
-        if (mapped !== undefined) next[mapped] = v
+    // 进度节流写暂停（quick c004）：见 flushProgress 内守卫说明
+    applyingSubtitleRef.current = true
+    try {
+      // 原子入口：新句落库与五族句级记录迁移（收藏/笔记/听写明细/生词来源句/已播
+      // 进度）单事务提交（2026-11 全仓复审 c016 + quick 复审 c003：两段写之间失败
+      // 会留下旧文本不可恢复的错位）
+      const result = await replaceSubtitleData(record, data)
+      // 生词词频是可重算派生态，事务外重算
+      await updateFrequencies(data.sentences.flatMap((s) => s.words), materialId)
+      // 内存态跟随持久层迁移
+      setFavSet((prev) => remapIndexSet(prev, result.mapping))
+      setNoteMap((prev) => {
+        const next: Record<number, string> = {}
+        for (const [k, v] of Object.entries(prev)) {
+          const mapped = result.mapping.get(Number(k))
+          if (mapped !== undefined) next[mapped] = v
+        }
+        return next
+      })
+      playedRef.current.indexes = remapIndexSet(playedRef.current.indexes, result.mapping)
+      playedRef.current.dirty = false // 迁移窗口内积累的旧索引增量作废
+      setRecord(result.updatedRecord)
+      setActive(0)
+      if (result.droppedRecords > 0) {
+        showErrorBanner(`字幕已替换：${result.droppedRecords} 条未对齐的句级收藏/笔记/听写记录已清理`)
       }
-      return next
-    })
-    playedRef.current.indexes = remapIndexSet(playedRef.current.indexes, remap.mapping)
-    setRecord(updatedRecord)
-    setActive(0)
-    if (remap.droppedRecords > 0) {
-      showErrorBanner(`字幕已替换：${remap.droppedRecords} 条未对齐的句级收藏/笔记/听写记录已清理`)
+    } finally {
+      applyingSubtitleRef.current = false
     }
   }, [record, materialId, showErrorBanner])
 

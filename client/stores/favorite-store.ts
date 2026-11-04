@@ -7,7 +7,7 @@
 
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
-import { remapIndexedRecords, shiftIndexedRecordsAfterDeletion } from '@/stores/shift-records'
+import { planIndexedRecordsRemap, shiftIndexedRecordsAfterDeletion, type SentenceRecordOps } from '@/stores/shift-records'
 import type { Favorite } from '@/types/progress'
 
 const FAV_PREFIX = RECORD_KEY_PREFIXES.favorite
@@ -77,9 +77,9 @@ export async function shiftFavoritesAfterDeletion(materialId: string, deletedInd
 }
 
 /**
- * 整体替换字幕后按映射迁移收藏；对应句已不存在的收藏删除。
- * @returns 被删除的收藏数
+ * 整体替换字幕前规划收藏迁移 ops（由 replaceSubtitleData 合并提交）；
+ * 对应句已不存在的收藏删除。
  */
-export async function remapFavoritesAfterReplace(materialId: string, mapping: Map<number, number>): Promise<number> {
-  return remapIndexedRecords(await listFavorites(materialId), materialId, mapping, RECORD_KEYS.favorite)
+export async function planFavoritesRemap(materialId: string, mapping: Map<number, number>): Promise<SentenceRecordOps> {
+  return planIndexedRecordsRemap(await listFavorites(materialId), materialId, mapping, RECORD_KEYS.favorite)
 }

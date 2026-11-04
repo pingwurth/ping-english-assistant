@@ -10,6 +10,7 @@ import { DEFAULT_BOOK_ID } from '@/types/vocabulary'
 import { recordsStore, runAtomicOps } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import { createStore } from '@/stores/store'
+import type { SentenceRecordOps } from '@/stores/shift-records'
 
 export interface VocabStoreState {
   ready: boolean
@@ -46,7 +47,8 @@ async function refresh(): Promise<void> {
  */
 
 /** 就地替换一批同 id 词条（addedAt 不变，位置不动） */
-function patchEntries(updated: VocabEntry[]): void {
+/** 就地补丁词条内存态（导出供 replaceSubtitleData 在事务提交后同步 vocabStore） */
+export function patchEntries(updated: VocabEntry[]): void {
   if (updated.length === 0) return
   const byId = new Map(updated.map((e) => [e.id, e]))
   const state = vocabStore.get()
@@ -262,11 +264,18 @@ export async function shiftVocabEntriesAfterDeletion(materialId: string, deleted
   }
 }
 
+/** 整体替换字幕的词条迁移规划：ops 合并进 replaceSubtitleData 单事务,entries 供提交后内存补丁 */
+export interface VocabRemapPlan {
+  ops: SentenceRecordOps
+  /** 迁移后的词条（事务提交后调用方须以此刷新 vocabStore 内存态） */
+  entries: VocabEntry[]
+}
+
 /**
- * 整体替换字幕后按映射迁移词条来源句序号；对应句已不存在的置 -1
+ * 整体替换字幕前规划词条来源句序号迁移；对应句已不存在的置 -1
  * （与删句同语义：保留词条与上下文，只是不再指向现存句）。
  */
-export async function remapVocabEntriesAfterReplace(materialId: string, mapping: Map<number, number>): Promise<void> {
+export async function planVocabEntriesRemap(materialId: string, mapping: Map<number, number>): Promise<VocabRemapPlan> {
   await initVocab()
   const entries = await recordsStore.getEntriesByMaterial(materialId)
   const put: Array<readonly [string, unknown]> = []
@@ -278,10 +287,7 @@ export async function remapVocabEntriesAfterReplace(materialId: string, mapping:
     if (next === entry.sentenceIndex) continue
     put.push([key, { ...entry, sentenceIndex: next ?? -1 } satisfies VocabEntry])
   }
-  if (put.length > 0) {
-    await runAtomicOps({ put: { records: put } })
-    patchEntries(put.map(([, v]) => v as VocabEntry))
-  }
+  return { ops: { del: [], put, dropped: 0 }, entries: put.map(([, v]) => v as VocabEntry) }
 }
 
 /**

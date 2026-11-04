@@ -32,18 +32,28 @@ export async function shiftIndexedRecordsAfterDeletion<T extends { sentenceIndex
 }
 
 /**
- * 按任意索引映射迁移「{prefix}:{materialId}:{sentenceIndex}」形态的记录族
+ * 单族迁移的待提交操作：只规划不执行 —— 由 material-store 的 replaceSubtitleData
+ * 把各族 ops 与材料 put 合并进同一个 runAtomicOps（quick 复审 c003：先 put 材料
+ * 再逐族迁移的两段写,中间失败会留下「新句已存 + 记录持旧索引」且旧文本不可恢复）。
+ */
+export interface SentenceRecordOps {
+  del: string[]
+  put: Array<readonly [string, unknown]>
+  /** 因未命中映射而被删除的记录数 */
+  dropped: number
+}
+
+/**
+ * 按任意索引映射规划「{prefix}:{materialId}:{sentenceIndex}」形态记录族的迁移
  * （整体替换字幕后用；映射由 material-store 按句文本对齐生成）。
  * 语义：mapping 无该索引 → 删除（对应的句子已不存在）；有 → 移到新索引。
- * 同样走 runAtomicOps 单事务：替换中途失败不留半迁移状态。
- * @returns 被删除（未命中映射）的记录数
  */
-export async function remapIndexedRecords<T extends { sentenceIndex: number }>(
+export function planIndexedRecordsRemap<T extends { sentenceIndex: number }>(
   entries: T[],
   materialId: string,
   mapping: Map<number, number>,
   keyOf: (materialId: string, sentenceIndex: number) => string,
-): Promise<number> {
+): SentenceRecordOps {
   const del: string[] = []
   const put: Array<readonly [string, unknown]> = []
   let dropped = 0
@@ -59,6 +69,5 @@ export async function remapIndexedRecords<T extends { sentenceIndex: number }>(
       put.push([keyOf(materialId, next), { ...e, sentenceIndex: next }] as const)
     }
   }
-  await runAtomicOps({ del: { records: del }, put: { records: put } })
-  return dropped
+  return { del, put, dropped }
 }

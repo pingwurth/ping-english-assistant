@@ -11,6 +11,7 @@
  * 删句平移（material-store）与设置页统计、备份导出读到的都是有界集合。
  */
 import { recordsStore, runAtomicOps } from '@/platform/storage/idb'
+import type { SentenceRecordOps } from '@/stores/shift-records'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import { reportDetailFromText } from '@/core/training/scoring'
 import { makeRecordId } from '@/core/training/session'
@@ -182,10 +183,10 @@ export async function shiftTrainingRecordsAfterDeletion(materialId: string, dele
 }
 
 /**
- * 整体替换字幕后按映射迁移单句听写明细的 sentenceIndex；对应句已不存在的记录删除。
- * @returns 被删除的训练记录数
+ * 整体替换字幕前规划单句听写明细的 sentenceIndex 迁移 ops（由 replaceSubtitleData
+ * 合并提交）；对应句已不存在的记录删除。
  */
-export async function remapTrainingRecordsAfterReplace(materialId: string, mapping: Map<number, number>): Promise<number> {
+export async function planTrainingRecordsRemap(materialId: string, mapping: Map<number, number>): Promise<SentenceRecordOps> {
   const entries = await recordsStore.getEntriesByMaterial(materialId)
   const del: string[] = []
   const put: Array<readonly [string, unknown]> = []
@@ -207,6 +208,5 @@ export async function remapTrainingRecordsAfterReplace(materialId: string, mappi
       } satisfies TrainingRecord])
     }
   }
-  await runAtomicOps({ del: { records: del }, put: { records: put } })
-  return del.length
+  return { del, put, dropped: del.length }
 }

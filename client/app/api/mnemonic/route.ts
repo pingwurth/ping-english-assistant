@@ -10,7 +10,7 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigs, readLlmConfigById } from '@/lib/server-settings'
-import { sameOriginGuard } from '@/lib/api-guard'
+import { isUnsafeUpstreamUrl, sameOriginGuard, unsafeUpstreamResponse } from '@/lib/api-guard'
 import { upstreamAbortResponse, withUpstreamTimeout } from '@/lib/bff-upstream'
 import { readJsonBodyCapped } from '@/lib/upload-limit'
 import {
@@ -126,6 +126,10 @@ export async function POST(request: Request) {
         { status: 400 },
       )
     }
+    // 已存 baseUrl 过 SSRF 门（quick 复审 c002：tts/translate/models/transcribe/soe
+    // 都有门,唯独本路由漏网——「全出网路由接入」在这里补齐;置于配置缺失检查之后,
+    // 空 baseUrl 报「未配置」而非误报网段不允许）
+    if (settings.baseUrl && isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
 
     // 模型优先级：mnemonicModel > translateModel
     const model = settings.mnemonicModel || settings.translateModel
@@ -159,10 +163,13 @@ export async function POST(request: Request) {
               controller.enqueue(encoder.encode(sseData))
             }
           } catch (err) {
-            // 客户端断开后 enqueue/close 都会抛（c027）：SSE error 帧已无处投递，
-            // 不能让它把原始错误吞成 TypeError —— 标记断开，静默收尾
-            if (request.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return
-            const errorMsg = err instanceof Error ? err.message : '流式生成失败'
+            // 仅客户端断开才静默（enqueue/close 已会抛,quick 复审 c009：原先把
+            // 120s 硬超时的 AbortError 也一并吞掉,SSE 无 error 帧静默断流）——
+            // 硬超时时 request.signal 未中止,必须照发超时 error 帧
+            if (request.signal.aborted) return
+            const errorMsg = (err instanceof Error && err.name === 'AbortError')
+              ? '生成超时，请稍后重试'
+              : err instanceof Error ? err.message : '流式生成失败'
             try {
               controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`))
             } catch { /* 流已被取消：error 帧无处投递，静默 */ }

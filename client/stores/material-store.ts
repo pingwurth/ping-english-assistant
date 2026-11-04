@@ -20,10 +20,10 @@ import { getPref, removePref } from '@/platform/storage/prefs'
 import { MATERIAL_OWNED_RECORD_PREFIXES, RECORD_KEYS, RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import { seedMaterials, seedSentences } from '@/data/seed'
 import { createStore } from '@/stores/store'
-import { remapFavoritesAfterReplace, shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
-import { remapNotesAfterReplace, shiftNotesAfterDeletion } from '@/stores/note-store'
-import { remapTrainingRecordsAfterReplace, shiftTrainingRecordsAfterDeletion } from '@/stores/training-record-store'
-import { remapVocabEntriesAfterReplace, shiftVocabEntriesAfterDeletion, updateFrequencies } from '@/stores/vocab-store'
+import { planFavoritesRemap, shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
+import { planNotesRemap, shiftNotesAfterDeletion } from '@/stores/note-store'
+import { planTrainingRecordsRemap, shiftTrainingRecordsAfterDeletion } from '@/stores/training-record-store'
+import { patchEntries as patchVocabEntries, planVocabEntriesRemap, shiftVocabEntriesAfterDeletion, updateFrequencies } from '@/stores/vocab-store'
 import type { SubtitleSentence } from '@/types/subtitle'
 
 export interface MaterialStoreState {
@@ -179,28 +179,23 @@ export async function shiftSentenceReferences(
   return shifted
 }
 
-/** 整体替换字幕（导入/AI 生成）后的句序号迁移结果 */
-export interface SentenceReferenceRemapResult {
+/** 整体替换字幕（导入/AI 生成）的原子替换结果 */
+export interface SubtitleReplaceResult {
   /** 旧句索引 → 新句索引（未命中的旧句不出现；页面据此迁移内存态） */
   mapping: Map<number, number>
   /** 未能对齐而删除的句级记录数（收藏+笔记+听写明细） */
   droppedRecords: number
   /** 迁移后的学习进度（无进度记录为 undefined） */
   progress: LearningProgress | undefined
+  /** 已持久化的新材料记录（页面据此 setRecord） */
+  updatedRecord: MaterialRecord
 }
 
-/**
- * 整体替换句列表后，按句文本对齐迁移所有按句序号引用的持久化记录
- * （收藏/笔记/听写明细/生词来源句/已播进度）。
- * 旧行为是只替换 sentences、句级记录零迁移 —— 重新分句后收藏/笔记/训练历史
- * 静默错位到无关句子（2026-11 全仓复审 c016）。文本归一后逐句匹配（同文本
- * 多句按顺序占位）；未命中的句级记录删除、生词来源句置 -1、已播句过滤。
- */
-export async function remapSentenceReferences(
-  materialId: string,
+/** 文本归一对齐：旧句索引 → 新句索引（同文本多句按序占位；未命中的旧句不出现） */
+function buildSentenceTextMapping(
   oldSentences: Array<Pick<SubtitleSentence, 'textEn'>>,
   newSentences: Array<Pick<SubtitleSentence, 'textEn'>>,
-): Promise<SentenceReferenceRemapResult> {
+): Map<number, number> {
   const normalize = (t: string): string => t.replace(/\s+/g, ' ').trim().toLowerCase()
   const candidatesByText = new Map<string, number[]>()
   newSentences.forEach((s, i) => {
@@ -211,31 +206,77 @@ export async function remapSentenceReferences(
   })
   const mapping = new Map<number, number>()
   oldSentences.forEach((s, oldIndex) => {
-    const queue = candidatesByText.get(normalize(s.textEn))
-    const next = queue?.shift()
+    const next = candidatesByText.get(normalize(s.textEn))?.shift()
     if (next !== undefined) mapping.set(oldIndex, next)
   })
+  return mapping
+}
 
-  const [droppedFavorites, droppedNotes, droppedTrainings] = await Promise.all([
-    remapFavoritesAfterReplace(materialId, mapping),
-    remapNotesAfterReplace(materialId, mapping),
-    remapTrainingRecordsAfterReplace(materialId, mapping),
-    remapVocabEntriesAfterReplace(materialId, mapping),
+/**
+ * 整体替换字幕（导入/AI 生成）的**原子**入口：新句列表落库 + 五族句级记录迁移
+ * （收藏/笔记/听写明细/生词来源句/已播进度）合并进单个 runAtomicOps 提交。
+ *
+ * - 旧行为①只替换 sentences、句级记录零迁移 —— 重新分句后收藏/笔记/训练历史
+ *   静默错位（2026-11 全仓复审 c016）；
+ * - 旧行为②先 put 再逐族迁移 —— 两段之间失败留下「新句已存 + 记录持旧索引」
+ *   且旧文本不可恢复（quick 复审 c003）。
+ * 文本归一后逐句匹配（同文本多句按顺序占位）；未命中的句级记录删除、生词来源句
+ * 置 -1、已播句过滤。生词词频（updateFrequencies）是可重算派生态，仍由调用方随后执行。
+ */
+export async function replaceSubtitleData(record: MaterialRecord, data: SubtitleData): Promise<SubtitleReplaceResult> {
+  const materialId = record.material.id
+  const mapping = buildSentenceTextMapping(record.subtitleData?.sentences ?? [], data.sentences)
+
+  const [favOps, noteOps, trainOps, vocabPlan] = await Promise.all([
+    planFavoritesRemap(materialId, mapping),
+    planNotesRemap(materialId, mapping),
+    planTrainingRecordsRemap(materialId, mapping),
+    planVocabEntriesRemap(materialId, mapping),
   ])
 
   const progress = await getProgress(materialId)
-  let remapped: LearningProgress | undefined
-  if (progress) {
-    remapped = {
-      ...progress,
-      playedSentenceIndexes: progress.playedSentenceIndexes
-        .map((index) => mapping.get(index))
-        .filter((index): index is number => index !== undefined)
-        .sort((a, b) => a - b),
-    }
-    await putProgress(remapped)
+  const remapped: LearningProgress | undefined = progress
+    ? {
+        ...progress,
+        playedSentenceIndexes: progress.playedSentenceIndexes
+          .map((index) => mapping.get(index))
+          .filter((index): index is number => index !== undefined)
+          .sort((a, b) => a - b),
+      }
+    : undefined
+
+  const updatedRecord: MaterialRecord = {
+    ...record,
+    material: {
+      ...record.material,
+      subtitle: { ref: `idb://materials/${materialId}`, format: data.format, isBilingual: data.isBilingual, sentenceCount: data.sentences.length },
+    },
+    subtitleData: data,
   }
-  return { mapping, droppedRecords: droppedFavorites + droppedNotes + droppedTrainings, progress: remapped }
+
+  // 材料 put 与全部句级记录迁移一次提交：任一失败整体回滚（IDB 保持替换前一致态）
+  await runAtomicOps({
+    put: {
+      materials: [[materialId, updatedRecord] as const],
+      records: [
+        ...favOps.put,
+        ...noteOps.put,
+        ...trainOps.put,
+        ...vocabPlan.ops.put,
+        ...(remapped ? [[RECORD_KEYS.progress(materialId), remapped] as const] : []),
+      ],
+    },
+    del: { records: [...favOps.del, ...noteOps.del, ...trainOps.del, ...vocabPlan.ops.del] },
+  })
+
+  patchRecord(updatedRecord)
+  if (vocabPlan.entries.length > 0) patchVocabEntries(vocabPlan.entries)
+  return {
+    mapping,
+    droppedRecords: favOps.dropped + noteOps.dropped + trainOps.dropped,
+    progress: remapped,
+    updatedRecord,
+  }
 }
 
 /** 删除材料：级联清理 material + blob + 相关 records（进度/收藏/笔记/训练记录） */

@@ -8,7 +8,7 @@ import { readSoeConfig, type SoeSettingsConfig } from '@/lib/server-settings'
 import { isUnsafeUpstreamUrl, sameOriginGuard, unsafeUpstreamResponse } from '@/lib/api-guard'
 import { MAX_SOE_UPLOAD_BYTES, rejectOversizedBlob, rejectOversizedUpload } from '@/lib/upload-limit'
 import { SOE_EVALUATE_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
-import { upstreamAbortResponse, withUpstreamTimeout } from '@/lib/bff-upstream'
+import { withUpstreamTimeout } from '@/lib/bff-upstream'
 
 /** 代理调用硬超时：句子级评分（≤60s 音频）给足余量，对齐 translate/mnemonic 的 120s */
 const SOE_EVALUATE_TIMEOUT_MS = 120_000
@@ -67,9 +67,12 @@ export async function POST(req: Request) {
   outgoing.append('audio', audio, 'audio.wav')
 
   // 客户端取消 + 路由层硬超时（c022）：此前只传 req.signal —— 代理黑洞时评分 spinner
-  // 悬挂分钟级（undici 默认 ~300s）且无取消入口；兄弟路由全部有显式超时与 504
+  // 悬挂分钟级（undici 默认 ~300s）且无取消入口；兄弟路由全部有显式超时与 504。
+  // fetch 与 text() 必须同处一个超时窗口（quick 复审 c001）：done() 挂在 fetch 的
+  // finally 会让响应头一到就清掉定时器，代理「发完头停发体」时读体无界悬挂。
   const upstreamTimeout = withUpstreamTimeout(req.signal, SOE_EVALUATE_TIMEOUT_MS)
-  let upstream: Response
+  let upstream: Response | null = null
+  let text: string
   try {
     // 代理开启共享密钥鉴权（server/.env SOE_SHARED_TOKEN）时补 x-soe-token 头；
     // 此前 BFF 从不携带 → 跨机部署下每次评分 401，而 healthz 不鉴权使连接徽标仍绿
@@ -80,28 +83,28 @@ export async function POST(req: Request) {
       headers,
       signal: upstreamTimeout.signal,
     })
+    // 状态码与 JSON 原样透传（错误信封 { code, message, detail? } 语义由代理侧保证）。
+    // 读体也在超时窗口与 try 内：断连/中止不能变成 Next 通用 500（c028）
+    text = await upstream.text()
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      return upstreamAbortResponse(req, '评分请求超时，请稍后重试', 'SOE_TIMEOUT')
+      // SOE 族错误信封是 {code, message, detail?}（客户端 ApiSoeService 按此解析，
+      // quick 复审 c015）：不复用通用 {error, code} 形状的 upstreamAbortResponse。
+      // 取消(客户端已断开)→499 空体；硬超时→504 + 超时信封
+      if (req.signal.aborted) return new NextResponse(null, { status: 499 })
+      return NextResponse.json(
+        { code: 'SOE_TIMEOUT', message: '评分请求超时，请稍后重试' },
+        { status: 504 },
+      )
     }
     return NextResponse.json(
-      { code: 'SOE_UPSTREAM_ERROR', message: '评分代理不可达，请检查模型设置中的代理地址' },
+      upstream
+        ? { code: 'SOE_UPSTREAM_ERROR', message: `评分代理响应中断（${upstream.status}）` }
+        : { code: 'SOE_UPSTREAM_ERROR', message: '评分代理不可达，请检查模型设置中的代理地址' },
       { status: 502 },
     )
   } finally {
     upstreamTimeout.done()
   }
-
-  // 状态码与 JSON 原样透传（错误信封 { code, message, detail? } 语义由代理侧保证）。
-  // text() 也在 try 内：代理发完头就断连时读体会抛错，不能变成 Next 通用 500
-  // 破坏「透传代理状态码」契约（c028）
-  try {
-    const text = await upstream.text()
-    return new Response(text, { status: upstream.status, headers: { 'content-type': 'application/json' } })
-  } catch {
-    return NextResponse.json(
-      { code: 'SOE_UPSTREAM_ERROR', message: `评分代理响应中断（${upstream.status}）` },
-      { status: 502 },
-    )
-  }
+  return new Response(text, { status: upstream.status, headers: { 'content-type': 'application/json' } })
 }

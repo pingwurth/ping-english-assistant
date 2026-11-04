@@ -28,11 +28,20 @@ export function fetchLlmConfigs(force = false): Promise<LlmConfigsResponse> {
 }
 
 /**
- * LLM 配置已变更（设置页保存/删除成功后调用）：使模块级缓存失效，
- * 下次 load()（含非 force）重新拉取。与 services 的 invalidateSoeServiceCache 对称。
+ * 已挂载 hook 的失效回调登记表：invalidateLlmConfigsCache 时逐个触发 force 重取。
+ * 只清模块缓存救不了**已挂载**的 hook——它们被 loadedRef 短路,页面上的兄弟字段
+ * （如转写页的翻译下拉）要等整页重挂才能看到新配置（quick 复审 c016）。
+ */
+const mountedReloads = new Set<() => void>()
+
+/**
+ * LLM 配置已变更（设置页保存/删除成功后调用）：清模块级缓存，并通知所有已挂载
+ * 的 useServiceConfigs 立即 force 重取（同页兄弟字段一并刷新）。
+ * 与 services 的 invalidateSoeServiceCache 对称。
  */
 export function invalidateLlmConfigsCache(): void {
   llmConfigsRequest = null
+  for (const reload of [...mountedReloads]) reload()
 }
 
 export type ServiceConfigsStatus = 'loading' | 'ready' | 'error'
@@ -101,6 +110,17 @@ export function useServiceConfigs<T extends { id: string }>(
     if (!enabled) return
     void load()
   }, [enabled, load])
+
+  // 失效广播的接收端：配置保存/删除后（invalidateLlmConfigsCache）立即重取,
+  // loadedRef 短路不再挡住本 hook；force 语义会保留仍有效的用户手选（见 load）。
+  // 未启用（弹窗/抽屉未开）的 hook 不跟着发请求——启用时本就有首次加载
+  const enabledRef = useRef(enabled)
+  enabledRef.current = enabled
+  useEffect(() => {
+    const reload = (): void => { if (enabledRef.current) void load(true) }
+    mountedReloads.add(reload)
+    return () => { mountedReloads.delete(reload) }
+  }, [load])
 
   return { configs, configId, setConfigId, preferredId, status, load }
 }
