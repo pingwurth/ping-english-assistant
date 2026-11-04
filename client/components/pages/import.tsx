@@ -164,38 +164,29 @@ function ImportPage() {
     void probeAndSetDuration(file)
   }
 
-  // TTS 一键带入：?source=tts&taskId= 时自动填充 ①②（产物由批次E 经 lib/tts-export 写入；缺失时空态兜底）
+  // 一键带入（?source=tts|transcribe&taskId=）：自动填充 ①②（存储层已统一到
+  // lib/media-export-handoff，页面侧填充逻辑同构 —— 原两份 ~15 行拷贝只差
+  // reader/回退文件名/来源标记，收敛为一个数据驱动 effect；c061）
+  const HANDOFF_SOURCES = {
+    tts: { read: readTtsExport, fallbackName: 'tts-audio.wav', fallbackMime: 'audio/wav', setFrom: setFromTts },
+    transcribe: { read: readTranscribeExport, fallbackName: 'audio.mp3', fallbackMime: 'audio/mpeg', setFrom: setFromTranscribe },
+  } as const
   useEffect(() => {
-    if (source !== 'tts' || !taskId) return
+    const handoff = source && source in HANDOFF_SOURCES ? HANDOFF_SOURCES[source as keyof typeof HANDOFF_SOURCES] : null
+    if (!handoff || !taskId) return
     let alive = true
-    readTtsExport(taskId).then(async (payload) => {
+    handoff.read(taskId).then(async (payload) => {
       if (!alive || !payload) return
       const { meta, audio } = payload
-      const file = new File([audio], meta.audioFileName || 'tts-audio.wav', { type: audio.type || 'audio/wav' })
-      setFromTts(true)
+      const file = new File([audio], meta.audioFileName || handoff.fallbackName, { type: audio.type || handoff.fallbackMime })
+      handoff.setFrom(true)
       setMediaFile(file)
       setName((meta.name || baseName(file.name)).slice(0, 50))
       await probeAndSetDuration(file)
       applySubtitle(meta.subtitleText, meta.subtitleFormat)
     }).catch(() => { /* 空态兜底：用户可手动选择文件 */ })
     return () => { alive = false }
-  }, [source, taskId])
-
-  // 转写一键带入：?source=transcribe&taskId= 时自动填充 ①②
-  useEffect(() => {
-    if (source !== 'transcribe' || !taskId) return
-    let alive = true
-    readTranscribeExport(taskId).then(async (payload) => {
-      if (!alive || !payload) return
-      const { meta, audio } = payload
-      const file = new File([audio], meta.audioFileName || 'audio.mp3', { type: audio.type || 'audio/mpeg' })
-      setFromTranscribe(true)
-      setMediaFile(file)
-      setName((meta.name || baseName(file.name)).slice(0, 50))
-      await probeAndSetDuration(file)
-      applySubtitle(meta.subtitleText, meta.subtitleFormat)
-    }).catch(() => { /* 空态兜底：用户可手动选择文件 */ })
-    return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, taskId])
 
   // 材料集列表加载 + ?collection= 预选（集合就绪后校验一次；陈旧 ID 静默回落不归属）

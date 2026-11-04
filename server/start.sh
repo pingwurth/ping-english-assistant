@@ -181,7 +181,7 @@ start_align() {
 
 start_transcribe() {
     echo "[start] 启动 transcribe_server.py（端口 8766）..."
-    exec python3 transcribe_server.py "${EXTRA_ARGS[@]}"
+    exec python3 transcribe_server.py ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 }
 
 start_both() {
@@ -200,7 +200,7 @@ start_both() {
     # 前台转写进程死掉（崩溃/被 kill）时回收后台对齐进程（评审 #26）：
     # 原先 exec 会连 trap 一起替换掉，孤儿 uvicorn 占着 8765 端口与显存生根
     trap 'kill "$ALIGN_PID" 2>/dev/null' EXIT
-    python3 transcribe_server.py "${EXTRA_ARGS[@]}"
+    python3 transcribe_server.py ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}
 }
 
 start_soe() {
@@ -215,7 +215,7 @@ start_all() {
     echo "[start]   SOE 评分代理         → 端口 8788（前台）"
     python3 align_server.py ${ALIGN_ARGS[@]+"${ALIGN_ARGS[@]}"} &
     ALIGN_PID=$!
-    python3 transcribe_server.py "${EXTRA_ARGS[@]}" &
+    python3 transcribe_server.py ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} &
     TRANSCRIBE_PID=$!
     sleep 1
     # 后台进程秒退必须立即报错（同 start_both 的探活理由）

@@ -98,20 +98,27 @@ export function Vocabulary() {
   }, [ready, books, selectedBookId])
 
   const selectedBook = books.find((b) => b.id === selectedBookId)
-  const bookEntries = entries.filter((e) => e.bookId === selectedBookId)
-  const filteredEntries = search
-    ? bookEntries.filter((e) => e.text.toLowerCase().includes(search.toLowerCase()))
-    : bookEntries
-
+  // 过滤+排序同一个 memo（c059）：原 memo 的依赖 filteredEntries 每次渲染都是新数组
+  // （entries.filter 就地内联），memo 永不命中、整段排序每次渲染重跑；侧栏
+  // books.map 内的逐本 entries.filter 同样 O(books×entries) 重跑
+  const searchLower = search.toLowerCase()
   const sortedEntries = useMemo(() => {
-    const arr = [...filteredEntries]
+    const filtered = entries.filter(
+      (e) => e.bookId === selectedBookId && (!search || e.text.toLowerCase().includes(searchLower)),
+    )
     if (sortBy === 'frequency') {
-      arr.sort((a, b) => (b.frequency ?? 0) - (a.frequency ?? 0) || b.addedAt - a.addedAt)
+      filtered.sort((a, b) => (b.frequency ?? 0) - (a.frequency ?? 0) || b.addedAt - a.addedAt)
     } else {
-      arr.sort((a, b) => b.addedAt - a.addedAt)
+      filtered.sort((a, b) => b.addedAt - a.addedAt)
     }
-    return arr
-  }, [filteredEntries, sortBy])
+    return filtered
+  }, [entries, selectedBookId, searchLower, sortBy])
+  // 侧栏各集合的词条计数：一次遍历分桶，替代逐本 filter
+  const countByBook = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const e of entries) counts.set(e.bookId, (counts.get(e.bookId) ?? 0) + 1)
+    return counts
+  }, [entries])
 
   const handleCreateBook = async () => {
     if (!newBookName.trim()) return
@@ -182,7 +189,7 @@ export function Vocabulary() {
                 </span>
                 <div className="flex items-center gap-1">
                   <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs tabular-nums text-muted-foreground">
-                    {entries.filter((e) => e.bookId === book.id).length}
+                    {countByBook.get(book.id) ?? 0}
                   </span>
                   {book.id !== DEFAULT_BOOK_ID && (
                     <button
@@ -230,10 +237,10 @@ export function Vocabulary() {
           <div className="flex items-center justify-between border-b px-6 py-4">
             <div>
               <h2 className="font-serif text-xl font-semibold">{selectedBook?.name ?? '生词本'}</h2>
-              <span className="text-sm text-muted-foreground">{bookEntries.length} 个词条</span>
+              <span className="text-sm text-muted-foreground">{countByBook.get(selectedBookId) ?? 0} 个词条</span>
             </div>
             <div className="flex items-center gap-2">
-              {bookEntries.length > 0 && (
+              {(countByBook.get(selectedBookId) ?? 0) > 0 && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -449,7 +456,7 @@ export function Vocabulary() {
           </DialogHeader>
           <div className="py-4">
             <div className="text-sm text-muted-foreground">
-              确定要清空「{selectedBook?.name ?? '生词本'}」中的所有 <span className="font-semibold text-foreground">{bookEntries.length}</span> 个词条吗？
+              确定要清空「{selectedBook?.name ?? '生词本'}」中的所有 <span className="font-semibold text-foreground">{countByBook.get(selectedBookId) ?? 0}</span> 个词条吗？
             </div>
             <div className="mt-2 text-sm text-destructive">
               此操作不可撤销。

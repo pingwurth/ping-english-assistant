@@ -41,11 +41,17 @@ export function BackgroundCarousel({
     return () => clearTimeout(t)
   }, [currentIndex, transitionDuration])
 
-  // 自动轮播定时器（单张不启动）
+  // 自动轮播定时器（单张不启动）。切台守卫（c003）：下一张未解码完成就先不切 ——
+  // 原先直接切过去会落进「新图 opacity:0（等自身 onLoad）+ 旧图正在淡出」的空窗。
+  // 下一张自挂载起有整个 interval 预载，正常网络下守卫不触发；加载失败的图由
+  // onError 标记就绪，轮播不会卡死在坏图上。
   useEffect(() => {
     if (images.length <= 1) return
     timerRef.current = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % images.length)
+      setCurrentIndex((prev) => {
+        const next = (prev + 1) % images.length
+        return loadedRef.current.has(next) ? next : prev
+      })
     }, interval)
     return () => {
       if (timerRef.current) {
@@ -58,6 +64,9 @@ export function BackgroundCarousel({
   const markLoaded = (index: number) => {
     setLoadedSet((prev) => (prev.has(index) ? prev : new Set(prev).add(index)))
   }
+  /** 定时器回调读的镜像（避免依赖 loadedSet 重建定时器） */
+  const loadedRef = useRef(loadedSet)
+  loadedRef.current = loadedSet
 
   // 空数组时显示默认背景
   if (images.length === 0) {

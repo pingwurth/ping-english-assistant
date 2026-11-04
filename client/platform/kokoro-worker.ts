@@ -98,7 +98,6 @@ function installHfProxy(): void {
 /** 把模型请求指向本地代理，并清掉浏览器侧的副本缓存 */
 async function configureEnv(): Promise<void> {
   if (envConfigured) return
-  envConfigured = true
 
   const { env } = await import('@huggingface/transformers')
   // 模型文件读写全部交给 /api/hf/ 代理 → 落盘到 kokoro.modelPath
@@ -115,6 +114,10 @@ async function configureEnv(): Promise<void> {
   } catch {
     // 无 Cache API 时（受限上下文）忽略：kokoro-js 自己会降级为不缓存
   }
+  // 全部步骤成功后才置位（c026）：原先在函数入口置位，动态 import/任一步骤失败后
+  // 重试会在这里短路 —— env.remoteHost 未设置、代理未安装，模型绕过 /api/hf 直连
+  // huggingface.co 下载 ~89MB 且永不落盘缓存
+  envConfigured = true
 }
 
 /**
