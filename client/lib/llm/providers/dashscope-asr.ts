@@ -8,7 +8,7 @@
 import type { AsrModelConfig, AsrResult, AsrSegment } from '../types'
 import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
-import { groupWordsToSegments, postAsrJson, toAudioDataUrl, type WordTimestamp } from '../asr-audio'
+import { assertAsrApiKey, groupWordsToSegments, postAsrJson, toAudioDataUrl, type WordTimestamp } from '../asr-audio'
 
 interface DashScopeWord {
   begin_time: number
@@ -35,6 +35,8 @@ export async function transcribeDashScope(
   }
   const model = config.model
   const url = resolveProviderUrl(config.baseUrl, config.endpoint, 'dashscope', 'asr')
+  // key 预检先于音频 base64 编码（c002）：缺 key 快速失败，不白读整段音频
+  assertAsrApiKey(config.apiKey)
 
   // DashScope native API 使用 input.messages with input_audio
   const body = {
@@ -59,17 +61,42 @@ export async function transcribeDashScope(
 
   console.log(`[ASR DashScope] POST ${url} (model=${model}, audio=${(audioFile.size / 1024).toFixed(0)}KB)`)
 
-  const result = (await postAsrJson(url, config.apiKey, body, 'DashScope', signal)) as {
-    sentence?: { text?: string; begin_time?: number; end_time?: number; words?: DashScopeWord[] }
-    output?: { text?: string; output?: { sentence?: { text?: string } } }
-  }
+  const result = (await postAsrJson(url, config.apiKey, body, 'DashScope', signal)) as unknown
+  return parseDashScopeAsrResponse(result)
+}
 
-  // Response format: { sentence: { text, begin_time, end_time, words: [...] } }
-  const sentence = result?.sentence
+/** DashScope 响应里 sentence 对象的已知形态（原生顶层 / OpenAI 兼容嵌套） */
+interface DashScopeSentence {
+  text?: string
+  begin_time?: number
+  end_time?: number
+  words?: DashScopeWord[]
+}
+
+interface DashScopeAsrResponse {
+  sentence?: DashScopeSentence
+  output?: { text?: string; output?: { sentence?: DashScopeSentence } }
+}
+
+/**
+ * 解析 DashScope ASR 响应 → AsrResult（纯函数，形态回归测试的测定点）。
+ *
+ * 已知三种文本形态共用一条链：`sentence.text`（原生顶层）→ `output.text`
+ * （兼容层）→ `output.output.sentence.text`（嵌套）。词级时间戳此前只读顶层
+ * `result.sentence.words` —— 嵌套形态下原生词级时间轴被静默丢弃（c010）；
+ * 现在与文本同链：任一 sentence 形态带 words 即采用。
+ */
+export function parseDashScopeAsrResponse(result: unknown): AsrResult {
+  const r = (result ?? {}) as DashScopeAsrResponse
+  const sentences: DashScopeSentence[] = [
+    r.sentence,
+    r.output?.output?.sentence,
+  ].filter((s): s is DashScopeSentence => !!s)
+
   const text: string =
-    sentence?.text ||
-    result?.output?.text ||
-    result?.output?.output?.sentence?.text ||
+    r.sentence?.text ||
+    r.output?.text ||
+    r.output?.output?.sentence?.text ||
     ''
 
   if (!text.trim()) {
@@ -77,8 +104,9 @@ export async function transcribeDashScope(
     return { text: '', segments: [] }
   }
 
-  // 使用 API 返回的词级时间戳
-  const apiWords: DashScopeWord[] = sentence?.words || []
+  // 词级时间戳：取第一个带非空 words 的 sentence 形态（通常仅一处存在）
+  const wordSource = sentences.find((s) => Array.isArray(s.words) && s.words.length > 0)
+  const apiWords: DashScopeWord[] = wordSource?.words || []
 
   if (apiWords.length > 0) {
     const words: WordTimestamp[] = apiWords.map(w => ({
@@ -93,10 +121,11 @@ export async function transcribeDashScope(
   }
 
   // 回退：使用句子级时间戳
-  if (sentence?.begin_time != null && sentence?.end_time != null) {
+  const timed = sentences.find((s) => s.begin_time != null && s.end_time != null)
+  if (timed) {
     const segments: AsrSegment[] = [{
-      startMs: sentence.begin_time,
-      endMs: sentence.end_time,
+      startMs: timed.begin_time!,
+      endMs: timed.end_time!,
       text: text.trim(),
     }]
     return { text: text.trim(), segments }

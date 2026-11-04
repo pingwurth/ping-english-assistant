@@ -8,7 +8,7 @@
 import type { AsrModelConfig, AsrResult } from '../types'
 import { LlmError } from '../errors'
 import { resolveProviderUrl } from '../factory'
-import { postAsrJson, toAudioDataUrl } from '../asr-audio'
+import { assertAsrApiKey, postAsrJson, toAudioDataUrl } from '../asr-audio'
 
 /**
  * MiMo ASR 转写
@@ -28,6 +28,8 @@ export async function transcribeMimo(
   }
   const model = config.model
   const url = resolveProviderUrl(config.baseUrl, config.endpoint, 'mimo', 'asr')
+  // key 预检先于音频 base64 编码（c002）：缺 key 快速失败，不白读整段音频
+  assertAsrApiKey(config.apiKey)
 
   const body = {
     model,

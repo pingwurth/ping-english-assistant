@@ -399,15 +399,11 @@ function extractNumberedTranslationsPartial(content: string, expectedLength: num
  */
 function countParsedItems(content: string): number | string {
   try {
-    let text = content.trim()
-    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
-    if (fence?.[1]) text = fence[1].trim()
-
-    const start = text.indexOf('[')
-    const end = text.lastIndexOf(']')
-    if (start === -1 || end <= start) return '?'
-
-    const raw = text.slice(start, end + 1)
+    // 去围栏 + 截取 JSON 块复用 json-extract 的唯一实现（c063：原先本函数自带
+    // 一份 fence 正则与 indexOf/lastIndexOf 切块，与本文件 import 的
+    // stripJsonFence/sliceJsonBlock（extractTranslations 在用）重复且会各自漂移）
+    const raw = sliceJsonBlock(stripJsonFence(content), '[', ']')
+    if (raw === null) return '?'
 
     // 尝试标准 JSON.parse
     try {

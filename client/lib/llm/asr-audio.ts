@@ -88,6 +88,16 @@ export async function toAudioDataUrl(file: File): Promise<string> {
 }
 
 /**
+ * API Key 预检（providers 在构造请求体、base64 编码音频**之前**调用）：
+ * a4ced2e 把该检查从 providers 挪进 postAsrJson 后，缺 key 的请求也会先把整段
+ * 音频读进内存做 base64，只为随后被 API_KEY_MISSING 拒绝 —— 恢复快速失败不变量
+ * （2026-11 全仓复审 c002）。postAsrJson 保留同一检查作第二道防线。
+ */
+export function assertAsrApiKey(apiKey: string): void {
+  if (!apiKey) throw new LlmError('API_KEY_MISSING', '请先在设置页配置 API Key')
+}
+
+/**
  * Bearer JSON POST + 取消传播 + 硬超时 + !ok 归一错误（ASR 上游通用）。
  * @param providerLabel 错误文案里的 provider 名（如 'MiMo' / 'DashScope'）
  */
@@ -98,7 +108,7 @@ export async function postAsrJson(
   providerLabel: string,
   signal?: AbortSignal,
 ): Promise<unknown> {
-  if (!apiKey) throw new LlmError('API_KEY_MISSING', '请先在设置页配置 API Key')
+  assertAsrApiKey(apiKey)
   // 取消传播 + 硬超时：客户端关页/取消后不再干等上游跑完计费
   const timeoutSignal = AbortSignal.timeout(ASR_TIMEOUT_MS)
   const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal

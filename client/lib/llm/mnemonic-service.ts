@@ -224,7 +224,7 @@ const CARD_FIELDS: (keyof MnemonicCard)[] = [
  * 策略：先找到外层 { ，然后逐字段扫描，
  * 跟踪 depth 计数，当 depth 回到 1（顶层对象内部）时字段闭合。
  */
-function extractCompletedFields(
+export function extractCompletedFields(
   text: string,
   yielded: Set<string>,
 ): Array<{ field: string; value: unknown }> {
@@ -293,8 +293,10 @@ function extractCompletedFields(
                 if (vc === '{' || vc === '[') valDepth++
                 else if (vc === '}' || vc === ']') {
                   if (valDepth === 0) {
-                    // 值闭合
-                    const raw = text.slice(valStart, m + 1)
+                    // 值闭合：m 指向的是外层对象的收尾括号（自身的括号已让 valDepth
+                    // 归零），切片必须不含它 —— 原先 slice(valStart, m+1) 把 '}' 带进
+                    // 值里，JSON.parse 恒抛、分支永不产出（c052；逗号分支的 m 排除是对的）
+                    const raw = text.slice(valStart, m)
                     try {
                       const value = JSON.parse(raw)
                       results.push({ field: fieldName, value })

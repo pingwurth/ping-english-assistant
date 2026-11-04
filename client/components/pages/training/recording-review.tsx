@@ -32,13 +32,18 @@ export async function transcribeRecording(blob: Blob, signal?: AbortSignal): Pro
   try {
     return (await callLocalTranscribe(file, signal)).text.trim()
   } catch (err) {
+    // 本机失败不静默（c025）：保留原因给最终错误信息（典型：503 = 服务未启动）
     guardAbort(err)
+    console.warn('[recording-review] 本机转写失败，尝试云端兜底:', err)
   }
   try {
     return (await callLlmTranscribe(file, signal)).text.trim()
   } catch (err) {
     guardAbort(err)
-    throw new Error('语音转写失败：请先启动本机转写服务（cd server && ./start.sh --server transcribe），或在设置中配置转写模型。')
+    // 兜底也失败：报真实原因，不再一律误指「请先启动本机服务」——服务在跑而真出错时
+    // 该提示误导排障（c025）。消息带上游错误摘要 + 配置指引两条出路
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(`语音转写失败（${detail.slice(0, 160)}）。可启动本机转写服务（cd server && ./start.sh --server transcribe）或在设置中配置云端转写模型后重试。`)
   }
 }
 
