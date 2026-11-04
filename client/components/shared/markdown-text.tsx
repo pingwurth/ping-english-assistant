@@ -40,9 +40,9 @@ function Inline({ tokens, katex }: { tokens: InlineToken[]; katex: KatexModule |
     <>
       {tokens.map((t, i) => {
         switch (t.type) {
-          case 'bold': return <strong key={i} className="font-semibold text-foreground">{t.text}</strong>
+          case 'bold': return <strong key={i} className="font-semibold">{t.text}</strong>
           case 'italic': return <em key={i}>{t.text}</em>
-          case 'mark': return <mark key={i} className="rounded-sm bg-yellow-200/70 px-0.5 text-foreground dark:bg-yellow-400/25">{t.text}</mark>
+          case 'mark': return <mark key={i} className="rounded-sm bg-yellow-200/70 px-0.5 text-inherit dark:bg-yellow-400/25">{t.text}</mark>
           case 'code': return <code key={i} className="rounded-md bg-muted px-1 py-0.5 font-mono text-[0.85em]">{t.text}</code>
           case 'math': {
             const html = renderMath(t.text, t.display, katex)
@@ -81,7 +81,7 @@ function Block({ block, katex }: { block: NoteBlock; katex: KatexModule | null }
     case 'list':
       return <NoteList items={block.items} katex={katex} />
     case 'quote':
-      return <blockquote className="border-l-2 border-primary/40 pl-3 text-muted-foreground">{block.lines.map((line, i) => <p key={i}><Inline tokens={line} katex={katex} /></p>)}</blockquote>
+      return <blockquote className="rounded-r-md border-l-2 border-primary/40 bg-purple-500/10 py-1 pl-3 text-purple-800 dark:text-purple-300">{block.lines.map((line, i) => <p key={i}><Inline tokens={line} katex={katex} /></p>)}</blockquote>
     case 'code':
       return <pre className="overflow-x-auto rounded-xl bg-muted p-3 font-mono text-xs leading-relaxed">{block.text}</pre>
     case 'math': {
