@@ -20,6 +20,8 @@ export const ERR = {
   BAD_REQUEST: { code: 'BAD_REQUEST', status: 400 },
   /** 配置了 SOE_SHARED_TOKEN 但请求未携带/不匹配 */
   UNAUTHORIZED: { code: 'UNAUTHORIZED', status: 401 },
+  /** 未配置共享密钥时收到浏览器来源请求（Origin/Sec-Fetch-Site 存在）—— CSRF 防线 */
+  FORBIDDEN: { code: 'FORBIDDEN', status: 403 },
   PAYLOAD_TOO_LARGE: { code: 'PAYLOAD_TOO_LARGE', status: 413 },
   SOE_NO_SPEECH: { code: 'SOE_NO_SPEECH', status: 400 },
   UPSTREAM_RATE_LIMIT: { code: 'UPSTREAM_RATE_LIMIT', status: 429 },

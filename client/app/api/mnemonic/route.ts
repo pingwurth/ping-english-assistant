@@ -11,6 +11,8 @@
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigs, readLlmConfigById } from '@/lib/server-settings'
 import { sameOriginGuard } from '@/lib/api-guard'
+import { upstreamAbortResponse, withUpstreamTimeout } from '@/lib/bff-upstream'
+import { readJsonBodyCapped } from '@/lib/upload-limit'
 import {
   generateMnemonicCardStream,
   generateAssociation,
@@ -46,15 +48,10 @@ export async function POST(request: Request) {
   // 同源守卫（评审 #2）：本路由会用用户真实密钥消耗云端助记配额
   const denied = sameOriginGuard(request)
   if (denied) return denied
-  let body: MnemonicRequest
-  try {
-    body = (await request.json()) as MnemonicRequest
-  } catch {
-    return NextResponse.json(
-      { error: '请求体必须为合法 JSON', code: 'INVALID_REQUEST' },
-      { status: 400 },
-    )
-  }
+  // 带体积上限的 JSON 解析（c034：与 tts/translate 同纪律，json() 全量缓冲）
+  const parsedBody = await readJsonBodyCapped(request)
+  if (!parsedBody.ok) return parsedBody.response
+  const body = parsedBody.body as MnemonicRequest
 
   try {
     const { action, word, context, note, meaning, collocations, difficulty, sentence, configId } = body
@@ -154,22 +151,24 @@ export async function POST(request: Request) {
       const encoder = new TextEncoder()
       const stream = new ReadableStream({
         async start(controller) {
-          const controller2 = new AbortController()
-          const timeout2 = setTimeout(() => controller2.abort(), REQUEST_TIMEOUT_MS)
-          const combined2 = AbortSignal.any([request.signal, controller2.signal])
-
+          const upstream = withUpstreamTimeout(request.signal, REQUEST_TIMEOUT_MS)
           try {
-            const gen = generateMnemonicCardStream(word, context!, note, chatConfig, combined2)
+            const gen = generateMnemonicCardStream(word, context!, note, chatConfig, upstream.signal)
             for await (const event of gen) {
               const sseData = `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`
               controller.enqueue(encoder.encode(sseData))
             }
           } catch (err) {
+            // 客户端断开后 enqueue/close 都会抛（c027）：SSE error 帧已无处投递，
+            // 不能让它把原始错误吞成 TypeError —— 标记断开，静默收尾
+            if (request.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return
             const errorMsg = err instanceof Error ? err.message : '流式生成失败'
-            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`))
+            try {
+              controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errorMsg })}\n\n`))
+            } catch { /* 流已被取消：error 帧无处投递，静默 */ }
           } finally {
-            clearTimeout(timeout2)
-            controller.close()
+            upstream.done()
+            try { controller.close() } catch { /* 已随断开关闭 */ }
           }
         },
       })
@@ -185,22 +184,20 @@ export async function POST(request: Request) {
 
     // ── 调用 LLM（非流式） ──
     const tLlm = Date.now()
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-    const combined = AbortSignal.any([request.signal, controller.signal])
+    const upstream = withUpstreamTimeout(request.signal, REQUEST_TIMEOUT_MS)
 
     try {
       let llmResult: { data: unknown; timing: { invokeMs: number; parseMs: number; contentLength: number } }
 
       switch (action) {
         case 'association':
-          llmResult = await generateAssociation(word, meaning!, chatConfig, combined)
+          llmResult = await generateAssociation(word, meaning!, chatConfig, upstream.signal)
           break
         case 'exercises':
-          llmResult = await generateMnemonicExercises(word, meaning!, collocations!, difficulty!, chatConfig, combined)
+          llmResult = await generateMnemonicExercises(word, meaning!, collocations!, difficulty!, chatConfig, upstream.signal)
           break
         case 'evaluate':
-          llmResult = await evaluateSentence(word, meaning!, sentence!, chatConfig, combined)
+          llmResult = await evaluateSentence(word, meaning!, sentence!, chatConfig, upstream.signal)
           break
       }
 
@@ -230,18 +227,12 @@ export async function POST(request: Request) {
         },
       })
     } catch (err) {
-      if (request.signal.aborted) {
-        return new NextResponse(null, { status: 499 })
-      }
-      if (combined.aborted) {
-        return NextResponse.json(
-          { error: '助记请求超时，请稍后重试', code: 'MNEMONIC_TIMEOUT' },
-          { status: 504 },
-        )
+      if (err instanceof Error && err.name === 'AbortError') {
+        return upstreamAbortResponse(request, '助记请求超时，请稍后重试', 'MNEMONIC_TIMEOUT')
       }
       throw err
     } finally {
-      clearTimeout(timeout)
+      upstream.done()
     }
   } catch (error) {
     if (request.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {

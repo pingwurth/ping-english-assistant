@@ -117,6 +117,41 @@ const DEFAULT_VOICES: Record<string, string> = {
   mimo: 'Mia',
 }
 
+/**
+ * 各 provider 的云端 TTS 音色目录（含展示名）—— 唯一出处（2026-11 全仓复审 c070：
+ * 此前设置路由的 getTtsVoices 与 tts.tsx 的 DEFAULT_CLOUD_VOICES 各自硬编码同一份
+ * dashscope 列表，探测逻辑又是一份；新增 provider/音色要同步三处，漏一处即静默错）。
+ */
+export interface TtsVoiceOption {
+  id: string
+  label: string
+}
+
+const TTS_VOICE_CATALOG: Record<string, ReadonlyArray<TtsVoiceOption>> = {
+  dashscope: [
+    { id: 'longanlingxin', label: 'Lingxin · Female (双语)' },
+    { id: 'longanlufeng', label: 'Lufeng · Male (双语)' },
+  ],
+  mimo: [
+    { id: 'Mia', label: 'Mia · Female' },
+    { id: 'Chloe', label: 'Chloe · Female' },
+    { id: 'Milo', label: 'Milo · Male' },
+    { id: 'Dean', label: 'Dean · Male' },
+  ],
+}
+
+/** 云端 TTS 音色目录（provider 归一后查表；未知 provider 回落 dashscope 表） */
+export function getTtsVoiceCatalog(provider: ProviderKey): ReadonlyArray<TtsVoiceOption> {
+  return TTS_VOICE_CATALOG[normalizeProviderAlias(provider)] ?? TTS_VOICE_CATALOG.dashscope!
+}
+
+/** 该 provider 是否走 OpenAI-compatible 的 /chat/completions TTS 路径（MiMo 类）。
+ *  endpoint 优先（用户显式配置过 ttsEndpoint 时按配置判），缺省按 provider 别名归一。 */
+export function isOpenAiCompatTts(provider: ProviderKey, ttsEndpoint?: string | null): boolean {
+  if (ttsEndpoint) return ttsEndpoint.includes('chat/completions')
+  return normalizeProviderAlias(provider) === 'mimo'
+}
+
 // ---------------------------------------------------------------------------
 // 公共 API
 // ---------------------------------------------------------------------------

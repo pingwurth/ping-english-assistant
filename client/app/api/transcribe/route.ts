@@ -7,8 +7,8 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById, resolveLocalServiceUrl } from '@/lib/server-settings'
-import { sameOriginGuard } from '@/lib/api-guard'
-import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
+import { isUnsafeUpstreamUrl, sameOriginGuard, unsafeUpstreamResponse } from '@/lib/api-guard'
+import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedBlob, rejectOversizedUpload } from '@/lib/upload-limit'
 import { parseWavDurationMs } from '@/lib/wav-duration'
 import { groupWordsToSegments, type WordTimestamp } from '@/lib/llm/asr-audio'
 import { transcribe, LlmError, toLlmErrorResponse } from '@/lib/llm'
@@ -168,17 +168,15 @@ export async function POST(request: Request) {
     }
     // 真实字节二次闸：Content-Length 可被 chunked 伪造绕过声明预检，这里按已解析出的
     // 实际体积拦截，避免超大音频进入 base64（内存膨胀 3 份）与上游计费
-    if (audioFile.size > MAX_TRANSCRIBE_UPLOAD_BYTES) {
-      return NextResponse.json(
-        { error: `上传内容过大（上限 ${Math.round(MAX_TRANSCRIBE_UPLOAD_BYTES / 1048576)} MB）` },
-        { status: 413 },
-      )
-    }
+    const oversizedBlob = rejectOversizedBlob(audioFile, MAX_TRANSCRIBE_UPLOAD_BYTES)
+    if (oversizedBlob) return oversizedBlob
 
     const configId = formData.get('configId') as string | null
     const settings = configId
       ? await readLlmConfigById(configId)
       : await readEffectiveLlmSettings()
+    // 已存 baseUrl 过 SSRF 门（c066）
+    if (settings?.baseUrl && isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
     if (!settings) {
       return NextResponse.json({ error: 'LLM settings not configured' }, { status: 400 })
     }

@@ -8,7 +8,8 @@ import {
   maskSecret,
   type LlmConfig,
 } from '@/lib/server-settings'
-import { sameOriginGuard } from '@/lib/api-guard'
+import { isUnsafeUpstreamUrl, sameOriginGuard, unsafeUpstreamResponse } from '@/lib/api-guard'
+import { getTtsVoiceCatalog, isOpenAiCompatTts } from '@/lib/service-endpoints'
 
 function maskApiKey(config: LlmConfig): LlmConfig {
   return {
@@ -17,23 +18,11 @@ function maskApiKey(config: LlmConfig): LlmConfig {
   }
 }
 
-/** Derive TTS voices from config's provider/endpoint */
+/** Derive TTS voices from config's provider/endpoint —— 音色目录与 OpenAI 兼容探测
+ *  单源于 service-endpoints（c070：原先此处硬编码两份列表 + ad-hoc 探测） */
 function getTtsVoices(config: LlmConfig) {
-  const isMimo =
-    config.ttsEndpoint?.includes('chat/completions') ||
-    config.provider === 'mimo'
-  if (isMimo) {
-    return [
-      { id: 'Mia', label: 'Mia · Female' },
-      { id: 'Chloe', label: 'Chloe · Female' },
-      { id: 'Milo', label: 'Milo · Male' },
-      { id: 'Dean', label: 'Dean · Male' },
-    ]
-  }
-  return [
-    { id: 'longanlingxin', label: 'Lingxin · Female (双语)' },
-    { id: 'longanlufeng', label: 'Lufeng · Male (双语)' },
-  ]
+  const provider = isOpenAiCompatTts(config.provider, config.ttsEndpoint) ? 'mimo' : config.provider
+  return getTtsVoiceCatalog(provider)
 }
 
 export async function GET(request: Request) {
@@ -76,6 +65,9 @@ export async function POST(request: Request) {
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: 'Missing required fields: baseUrl, apiKey' }, { status: 400 })
     }
+    // 持久化前过 SSRF 门（c066）：不安全的 baseUrl 不进 settings.json —— 出网路由
+    // 各自的运行时门是第二道防线，第一道在写入点
+    if (typeof baseUrl === 'string' && isUnsafeUpstreamUrl(baseUrl)) return unsafeUpstreamResponse()
 
     const id = await addLlmConfig({
       name: name || provider || '新配置',
@@ -117,7 +109,10 @@ export async function PUT(request: Request) {
       return NextResponse.json({ success: true })
     }
 
-    // Regular update
+    // Regular update —— baseUrl 变更同样过 SSRF 门（c066）
+    if (typeof fields.baseUrl === 'string' && fields.baseUrl && isUnsafeUpstreamUrl(fields.baseUrl)) {
+      return unsafeUpstreamResponse()
+    }
     const ok = await updateLlmConfig(id, fields)
     if (!ok) return NextResponse.json({ error: 'Config not found' }, { status: 404 })
     return NextResponse.json({ success: true })

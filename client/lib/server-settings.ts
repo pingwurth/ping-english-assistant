@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rename } from 'fs/promises'
+import { chmod, readFile, writeFile, mkdir, rename } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
 import { DEFAULT_WHISPER_ALIGN_URL, DEFAULT_WHISPER_TRANSCRIBE_URL } from '@/lib/service-endpoints'
@@ -71,18 +71,29 @@ async function readRaw(): Promise<Record<string, unknown>> {
     if (code === 'ENOENT') return {}
     console.error('[server-settings] settings.json unreadable, backing it up before continuing:', err)
     try {
-      await rename(SETTINGS_FILE, `${SETTINGS_FILE}.corrupt-${Date.now()}`)
+      const backup = `${SETTINGS_FILE}.corrupt-${Date.now()}`
+      await rename(SETTINGS_FILE, backup)
+      // 备份同样含密钥：权限与正式文件同纪律（c032，历史 0644 文件由此收敛）
+      await chmod(backup, 0o600).catch(() => { /* 无权限则沿用 */ })
     } catch { /* 备份失败（如权限）也无能为力，继续按空配置运行 */ }
     return {}
   }
 }
 
-/** 原子写：tmp + rename，进程崩溃/断电最多丢掉 tmp 文件，正式文件永远完整 */
+/** 原子写：tmp + rename，进程崩溃/断电最多丢掉 tmp 文件，正式文件永远完整。
+ *  文件含明文云密钥（Azure/Tencent/iFlytek/LLM/SOE token）→ 目录 0700、文件与
+ *  暂存文件 0600，多用户机器上组/其他不可读（2026-11 全仓复审 c032：writeFile
+ *  默认 0644/umask，曾把密钥文件开放成本机任意用户可读）。 */
+const SECRET_FILE_MODE = 0o600
 async function writeRaw(obj: Record<string, unknown>): Promise<void> {
-  await mkdir(SETTINGS_DIR, { recursive: true })
+  await mkdir(SETTINGS_DIR, { recursive: true, mode: 0o700 })
+  // 已存在目录的 mode 不受 mkdir 影响，显式收敛一次（幂等，权限已正确时是 no-op）
+  await chmod(SETTINGS_DIR, 0o700).catch(() => { /* 无权限改（如挂载只读）则沿用现状 */ })
   const tmp = `${SETTINGS_FILE}.tmp-${process.pid}-${Date.now()}`
-  await writeFile(tmp, JSON.stringify(obj, null, 2), 'utf-8')
+  await writeFile(tmp, JSON.stringify(obj, null, 2), { encoding: 'utf-8', mode: SECRET_FILE_MODE })
   await rename(tmp, SETTINGS_FILE)
+  // rename 继承 tmp 的 mode；对「历史遗留的 0644 正式文件」再收敛一次
+  await chmod(SETTINGS_FILE, SECRET_FILE_MODE).catch(() => { /* 同上 */ })
 }
 
 /** 密钥掩码（GET 返回 / 编辑回填用）：≤8 字符整体打码，>8 显示前 8 位 */

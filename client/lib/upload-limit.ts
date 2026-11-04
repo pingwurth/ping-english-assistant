@@ -25,3 +25,57 @@ export function rejectOversizedUpload(request: Request, maxBytes: number): Respo
   }
   return null
 }
+
+/**
+ * formData() 解析后的第二道闸（真实字节）：Content-Length 是声明值，chunked 请求
+ * 干脆没有 —— 这道闸按已解析 Blob 的实际体积拦截，防的是「声明绕过 + 全量缓冲后才
+ * 失败」的内存尖峰。三个上传路由（transcribe / transcribe/local / soe evaluate）
+ * 统一走这里，消息单处维护（2026-11 全仓复审 c031/c067）。
+ * 超限返回 413；未超限返回 null。
+ */
+export function rejectOversizedBlob(blob: Blob, maxBytes: number): Response | null {
+  if (blob.size > maxBytes) {
+    return NextResponse.json(
+      { error: `上传内容过大（上限 ${Math.round(maxBytes / 1048576)} MB）` },
+      { status: 413 },
+    )
+  }
+  return null
+}
+
+/** JSON body 上限：三个 JSON 路由（tts/translate/mnemonic）的业务载荷远小于此 */
+export const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024
+
+export type CappedJsonResult =
+  | { ok: true; body: unknown }
+  | { ok: false; response: NextResponse }
+
+/**
+ * 带体积上限的 JSON body 读取（c034）：request.json() 与 formData() 一样把整个
+ * body 缓冲进内存，App Router 路由没有框架级 body 限制 —— 上传路由的
+ * rejectOversizedUpload 纪律原先不覆盖 JSON 路由。先按声明 Content-Length 预检，
+ * 再按 text() 实际长度二次拦截（chunked 无声明可骗）。
+ */
+export async function readJsonBodyCapped(request: Request): Promise<CappedJsonResult> {
+  const tooLarge = (): CappedJsonResult => ({
+    ok: false,
+    response: NextResponse.json(
+      { error: `请求体过大（上限 ${Math.round(MAX_JSON_BODY_BYTES / 1048576)} MB）`, code: 'PAYLOAD_TOO_LARGE' },
+      { status: 413 },
+    ),
+  })
+  const declared = Number(request.headers.get('content-length') ?? 0)
+  if (Number.isFinite(declared) && declared > MAX_JSON_BODY_BYTES) return tooLarge()
+  let text: string
+  try {
+    text = await request.text()
+  } catch {
+    return { ok: false, response: NextResponse.json({ error: '请求体必须为合法 JSON', code: 'INVALID_REQUEST' }, { status: 400 }) }
+  }
+  if (text.length > MAX_JSON_BODY_BYTES) return tooLarge()
+  try {
+    return { ok: true, body: JSON.parse(text) }
+  } catch {
+    return { ok: false, response: NextResponse.json({ error: '请求体必须为合法 JSON', code: 'INVALID_REQUEST' }, { status: 400 }) }
+  }
+}

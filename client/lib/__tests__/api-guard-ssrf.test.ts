@@ -13,9 +13,31 @@ describe('isUnsafeUpstreamUrl', () => {
     expect(isUnsafeUpstreamUrl('http://169.254.10.20:11434/v1')).toBe(true)
   })
 
-  it('拒绝链路本地 IPv6（fe80::）与全零地址', () => {
+  it('拒绝链路本地 IPv6（fe80::/10 全段）与全零地址', () => {
     expect(isUnsafeUpstreamUrl('http://[fe80::1]:11434/v1')).toBe(true)
     expect(isUnsafeUpstreamUrl('http://[::]:8000')).toBe(true)
+    // fe80::/10 覆盖 fe80–febf 首组；旧实现只拦字面 fe80 前缀（63/64 段放行）
+    expect(isUnsafeUpstreamUrl('http://[fe8f::1]:11434/v1')).toBe(true)
+    expect(isUnsafeUpstreamUrl('http://[fe90::1]:11434/v1')).toBe(true)
+    expect(isUnsafeUpstreamUrl('http://[febf::1]:11434/v1')).toBe(true)
+  })
+
+  it('拒绝 IPv4-mapped / 兼容 / NAT64 形态内嵌的 169.254/16', () => {
+    // WHATWG 把 [::ffff:169.254.169.254] 序列化成 '[::ffff:a9fe:a9fe]'，字符串前缀拦不住
+    expect(isUnsafeUpstreamUrl('http://[::ffff:169.254.169.254]/latest/meta-data/')).toBe(true)
+    expect(isUnsafeUpstreamUrl('http://[::ffff:a9fe:a9fe]/latest/meta-data')).toBe(true)
+    expect(isUnsafeUpstreamUrl('http://[64:ff9b::a9fe:a9fe]/latest/meta-data/')).toBe(true)
+  })
+
+  it('拒绝未压缩完整 8 组拼写的链路本地地址', () => {
+    // URL 会归一成 [fe80::1]，但解析器须独立正确处理 8 组形式
+    expect(isUnsafeUpstreamUrl('http://[fe80:0:0:0:0:0:0:1]:11434/v1')).toBe(true)
+  })
+
+  it('放行正常 IPv6 公网/ULA 上游与映射的正常 IPv4', () => {
+    expect(isUnsafeUpstreamUrl('http://[2001:db8::1]:8080/v1')).toBe(false)
+    expect(isUnsafeUpstreamUrl('http://[fd00::114]:11434')).toBe(false)
+    expect(isUnsafeUpstreamUrl('http://[::ffff:192.168.1.10]:11434/v1')).toBe(false)
   })
 
   it('拒绝非 http(s) 协议与不可解析输入', () => {

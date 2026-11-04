@@ -127,3 +127,57 @@ describe('POST /api/v1/soe/evaluate（请求级 creds）', () => {
     expect(res.json().message).toContain('JSON')
   })
 })
+
+describe('浏览器来源防线（未配置 SOE_SHARED_TOKEN 时，2026-11 全仓复审 c030）', () => {
+  it('带 Origin 头的请求（浏览器跨源 POST 必带）→ 403 FORBIDDEN，不消耗评分', async () => {
+    const app = await buildApp(mkEnv(), { logger: false })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/soe/evaluate',
+      headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}`, origin: 'http://evil.example' },
+      payload: multipartBody([{ name: 'refText', value: 'hello' }, audioPart]),
+    })
+    expect(res.statusCode).toBe(403)
+    expect(res.json().code).toBe('FORBIDDEN')
+  })
+
+  it('带 Sec-Fetch-Site 头的请求（浏览器 Fetch Metadata）→ 403 FORBIDDEN', async () => {
+    const app = await buildApp(mkEnv(), { logger: false })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/soe/evaluate',
+      headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}`, 'sec-fetch-site': 'cross-site' },
+      payload: multipartBody([{ name: 'refText', value: 'hello' }, audioPart]),
+    })
+    expect(res.statusCode).toBe(403)
+    expect(res.json().code).toBe('FORBIDDEN')
+  })
+
+  it('无浏览器痕迹的服务端调用（BFF undici / curl，无 Origin 与 Sec-Fetch-*）→ 正常放行', async () => {
+    const app = await buildApp(mkEnv(), { logger: false })
+    const res = await post(app, [{ name: 'refText', value: 'hello' }, audioPart])
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('配置 SOE_SHARED_TOKEN 后：错 token → 401；带 Origin 但 token 正确 → 放行', async () => {
+    const app = await buildApp(mkEnv({ SOE_SHARED_TOKEN: 's3cret' }), { logger: false })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/soe/evaluate',
+      headers: { 'content-type': `multipart/form-data; boundary=${BOUNDARY}`, 'x-soe-token': 'wrong' },
+      payload: multipartBody([{ name: 'refText', value: 'hello' }, audioPart]),
+    })
+    expect(res.statusCode).toBe(401)
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/api/v1/soe/evaluate',
+      headers: {
+        'content-type': `multipart/form-data; boundary=${BOUNDARY}`,
+        'x-soe-token': 's3cret',
+        origin: 'http://localhost:3000',
+      },
+      payload: multipartBody([{ name: 'refText', value: 'hello' }, audioPart]),
+    })
+    expect(ok.statusCode).toBe(200)
+  })
+})

@@ -63,11 +63,31 @@ function parseCreds(raw: string | undefined): SoeRequestCreds | undefined {
 
 export function buildSoeRoute(registry: SoeProviderRegistry, env: Env): FastifyPluginAsync {
   return async (app: FastifyInstance) => {
-    // 共享密钥闸门（onRequest 在 body 解析前执行，未鉴权请求不消耗 multipart 解析开销）
+    // 共享密钥闸门（onRequest 在 body 解析前执行，未鉴权请求不消耗 multipart 解析开销）。
+    //
+    // 未配置 token 时的兜底（2026-11 全仓复审 c030）：@fastify/cors 只是响应头机制，
+    // multipart 是 CORS-safelisted 内容类型 —— 受害者浏览器里的任意网页可以无预检
+    // POST 到 127.0.0.1:8788，用本服务保管的云密钥驱动评分（耗额度/探测配置）。
+    // 浏览器发起的跨源 POST 必带 Origin，且现代浏览器还带 Sec-Fetch-Site；而本机 BFF
+    // 的服务端 fetch（undici）与 curl 都不带。故无 token 时拒绝一切带浏览器痕迹的请求：
+    //   - 带 Origin 头 → 浏览器发起 → 拒绝（BFF 服务端转发没有 Origin）；
+    //   - Sec-Fetch-Site 存在（浏览器 Fetch Metadata）→ 拒绝。
+    // 跨机/带前端页面直连的部署仍应显式配置 SOE_SHARED_TOKEN（见 .env.example）。
     app.addHook('onRequest', async (req) => {
-      if (!env.SOE_SHARED_TOKEN) return // 未配置：沿用无鉴权（本机回环部署）
-      if (req.headers['x-soe-token'] !== env.SOE_SHARED_TOKEN) {
-        throw apiError(ERR.UNAUTHORIZED, '缺少或错误的共享密钥 x-soe-token')
+      if (env.SOE_SHARED_TOKEN) {
+        if (req.headers['x-soe-token'] !== env.SOE_SHARED_TOKEN) {
+          throw apiError(ERR.UNAUTHORIZED, '缺少或错误的共享密钥 x-soe-token')
+        }
+        return
+      }
+      const origin = req.headers['origin']
+      const fetchSite = req.headers['sec-fetch-site']
+      if (origin !== undefined || fetchSite !== undefined) {
+        req.log.warn(
+          { origin, fetchSite },
+          'soe evaluate 未配置 SOE_SHARED_TOKEN，已拒绝浏览器来源请求（跨机部署请配置共享密钥）',
+        )
+        throw apiError(ERR.FORBIDDEN, '本服务未配置共享密钥，不接受浏览器来源请求（服务端调用请不带 Origin/Sec-Fetch-Site 头）')
       }
     })
 

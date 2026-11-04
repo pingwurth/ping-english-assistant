@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, resolveLocalServiceUrl } from '@/lib/server-settings'
 import { sameOriginGuard } from '@/lib/api-guard'
-import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
+import { MAX_TRANSCRIBE_UPLOAD_BYTES, rejectOversizedBlob, rejectOversizedUpload } from '@/lib/upload-limit'
 import {
   DEFAULT_WHISPER_TRANSCRIBE_URL,
   WHISPER_TRANSCRIBE_ENDPOINT,
@@ -47,12 +47,8 @@ export async function POST(request: Request) {
     }
     // 真实字节二次闸（与 /api/transcribe 对齐）：chunked 上传不带 Content-Length 可绕过
     // 声明预检，按已解析出的实际体积拦截，避免超大音频整段缓冲后转发给 whisper 服务
-    if (audioFile.size > MAX_TRANSCRIBE_UPLOAD_BYTES) {
-      return NextResponse.json(
-        { error: `上传内容过大（上限 ${Math.round(MAX_TRANSCRIBE_UPLOAD_BYTES / 1048576)} MB）` },
-        { status: 413 },
-      )
-    }
+    const oversizedBlob = rejectOversizedBlob(audioFile, MAX_TRANSCRIBE_UPLOAD_BYTES)
+    if (oversizedBlob) return oversizedBlob
 
     const transcribeUrl = await getTranscribeUrl()
 

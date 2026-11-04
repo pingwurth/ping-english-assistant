@@ -127,16 +127,89 @@ export function forbiddenOriginResponse(): Response {
   })
 }
 
+/** 上游 URL 不安全（isUnsafeUpstreamUrl 为真）时的统一 400 响应 —— 各 BFF 出网路由
+ *  与设置持久化路径共用同一判断与文案（2026-11 全仓复审 c066/c090：门禁原先只接在
+ *  POST /api/models 一处，其余服务端外连全部无门） */
+export function unsafeUpstreamResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      code: 'UNSAFE_UPSTREAM',
+      error: '上游地址协议或网段不被允许（仅 http/https，禁止链路本地/元数据地址）',
+    }),
+    { status: 400, headers: { 'Content-Type': 'application/json' } },
+  )
+}
+
 export interface SameOriginGuardOptions {
   /** proxy 可跳过 GET/HEAD/OPTIONS；敏感 settings 路由即使 GET 也必须校验 */
   skipSafeMethods?: boolean
 }
 
 /**
+ * 把 IPv6 字面量展开为 8 个 16 位组；非法（组数不齐、坏字符、多处 ::）返回 null。
+ * 支持 '::' 压缩与尾部内嵌 IPv4（'::ffff:1.2.3.4'）。WHATWG URL 会把点分内嵌
+ * 归一成十六进制，这里仍按两种写法都能解析防御。
+ */
+function expandIpv6Groups(raw: string): number[] | null {
+  let value = raw.toLowerCase()
+  const lastColon = value.lastIndexOf(':')
+  const tail = lastColon >= 0 ? value.slice(lastColon + 1) : value
+  if (tail.includes('.')) {
+    const parts = tail.split('.').map(Number)
+    if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null
+    const hi = ((parts[0]! << 8) | parts[1]!).toString(16)
+    const lo = ((parts[2]! << 8) | parts[3]!).toString(16)
+    value = `${value.slice(0, lastColon + 1)}${hi}:${lo}`
+  }
+  if (!/^[0-9a-f:]+$/.test(value)) return null
+  const sides = value.split('::')
+  if (sides.length > 2) return null
+  const parseSide = (side: string): number[] | null => {
+    if (side === '') return []
+    const groups: number[] = []
+    for (const g of side.split(':')) {
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return null
+      groups.push(parseInt(g, 16))
+    }
+    return groups
+  }
+  const head = parseSide(sides[0] ?? '')
+  const tailGroups = parseSide(sides[1] ?? '')
+  if (head === null || tailGroups === null) return null
+  const total = head.length + tailGroups.length
+  if (sides.length === 2) {
+    if (total > 7) return null // '::' 至少压缩一个组
+    return [...head, ...Array<number>(8 - total).fill(0), ...tailGroups]
+  }
+  return total === 8 ? [...head, ...tailGroups] : null
+}
+
+/** IPv6 组序列是否落在拒绝段：fe80::/10 整段、未指定地址、映射/兼容/NAT64 内嵌的 169.254/16 */
+function isUnsafeIpv6Groups(groups: number[]): boolean {
+  // fe80::/10 = 首组 & 0xffc0 === 0xfe80（覆盖 fe80–febf，不止 fe80 前缀）
+  if ((groups[0]! & 0xffc0) === 0xfe80) return true
+  // 未指定地址 '::'（含 '0:0:0:0:0:0:0:0' 拼写）
+  if (groups.every((g) => g === 0)) return true
+  // IPv4 映射段 ::ffff:0:0/96（高 80 位零 + 第 6 组 ffff）或已废弃的兼容段 ::/96（高 96 位零）：
+  // 低 32 位就是 IPv4 地址，按 IPv4 策略拦链路本地。
+  // WHATWG 把 [::ffff:169.254.169.254] 序列化成 '[::ffff:a9fe:a9fe]'，字符串前缀永远拦不住它。
+  const embeddedV4 =
+    (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) ||
+    groups.slice(0, 6).every((g) => g === 0)
+  if (embeddedV4 && groups[6]! >> 8 === 169 && (groups[6]! & 0xff) === 254) return true
+  // NAT64 64:ff9b::/96 内嵌 IPv4 链路本地（同理可达 169.254.169.254）
+  if (groups[0]! === 0x64 && groups[1]! === 0xff9b && groups.slice(2, 6).every((g) => g === 0)) {
+    if (groups[6]! >> 8 === 169 && (groups[6]! & 0xff) === 254) return true
+  }
+  return false
+}
+
+/**
  * 服务端出网目标（用户可传的 LLM baseUrl）的 SSRF 闸门（评审 #2）。
  * 本应用默认就要连局域网/本机推理服务，不能按「只允许可路由地址」拦，
- * 但链路本地段（169.254.0.0/16、fe80::/10）在本地部署中永为用户有意配置、
- * 在云主机上恰是元数据端点（169.254.169.254）→ 一律拒绝；协议只允 http/https。
+ * 但链路本地段（169.254.0.0/16、fe80::/10 全段，含 IPv4-mapped/NAT64 内嵌形态）
+ * 在本地部署中永为用户有意配置、在云主机上恰是元数据端点（169.254.169.254）
+ * → 一律拒绝；协议只允 http/https。
  */
 export function isUnsafeUpstreamUrl(raw: string): boolean {
   let u: URL
@@ -146,11 +219,13 @@ export function isUnsafeUpstreamUrl(raw: string): boolean {
     return true // 不可解析的 baseUrl 同样拒绝，不让它流入 fetch 拼接
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return true
-  // IPv6 字面量在 URL.hostname 里保留方括号（'[fe80::1]'），先去括号再比前缀
+  // IPv6 字面量在 URL.hostname 里保留方括号（'[fe80::1]'），先去括号再判定
   const h = (u.hostname.startsWith('[') ? u.hostname.slice(1, -1) : u.hostname).toLowerCase()
-  if (h === '169.254.169.254') return true
-  if (h.startsWith('169.254.')) return true
-  if (h.startsWith('fe80') || h.startsWith('0:0:0:0:0:0:fe80') || h === '::' || h === '0:0:0:0:0:0:0:0') return true
+  if (h.includes(':')) {
+    const groups = expandIpv6Groups(h)
+    return groups === null ? true : isUnsafeIpv6Groups(groups) // 解析不动的 IPv6 形态 → 拒绝
+  }
+  if (h.startsWith('169.254.')) return true // 含 169.254.169.254 元数据端点
   return false
 }
 

@@ -9,7 +9,9 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
-import { sameOriginGuard } from '@/lib/api-guard'
+import { isUnsafeUpstreamUrl, sameOriginGuard, unsafeUpstreamResponse } from '@/lib/api-guard'
+import { upstreamAbortResponse, withUpstreamTimeout } from '@/lib/bff-upstream'
+import { readJsonBodyCapped } from '@/lib/upload-limit'
 import { translateTexts, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { TranslateDirection, TranslateRequest } from '@/types/api'
 
@@ -26,16 +28,11 @@ export async function POST(request: Request) {
   // 同源守卫（评审 #2）：本路由会用用户真实密钥消耗云端翻译配额
   const denied = sameOriginGuard(request)
   if (denied) return denied
-  // 请求体解析单独 try/catch：非法 JSON 抛出的 SyntaxError 不应被归一为 502 上游错误，而是 400 请求错误
-  let body: TranslateRequest
-  try {
-    body = (await request.json()) as TranslateRequest
-  } catch {
-    return NextResponse.json(
-      { error: '请求体必须为合法 JSON', code: 'INVALID_REQUEST' },
-      { status: 400 },
-    )
-  }
+  // 请求体解析单独处理：非法 JSON → 400 请求错误（不是 502 上游错误）；
+  // 带体积上限（c034：json() 同样全量缓冲，App Router 无框架级 body 限制）
+  const parsedBody = await readJsonBodyCapped(request)
+  if (!parsedBody.ok) return parsedBody.response
+  const body = parsedBody.body as TranslateRequest
 
   try {
     const { texts, direction, configId } = body
@@ -71,6 +68,8 @@ export async function POST(request: Request) {
     const settings = configId
       ? await readLlmConfigById(configId)
       : await readEffectiveLlmSettings()
+    // 已存 baseUrl 过 SSRF 门（c066）
+    if (settings && isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
     if (!settings?.baseUrl || !settings?.apiKey) {
       return NextResponse.json(
         { error: '请先在设置页配置翻译模型（Base URL 和 API Key）', code: 'SETTINGS_NOT_CONFIGURED' },
@@ -88,11 +87,8 @@ export async function POST(request: Request) {
     console.log('[Translate] BaseURL:', settings.baseUrl, '| Endpoint:', settings.translateEndpoint || '(default)')
 
     // ── 调用 LLM 服务层 ─────────────────────────────────────
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-    // 将客户端断开（request.signal）并入中止信号
-    const combined = AbortSignal.any([request.signal, controller.signal])
-
+    // 客户端取消 + 路由层超时统一走 lib/bff-upstream（c060：消除手搓样板漂移）
+    const upstream = withUpstreamTimeout(request.signal, REQUEST_TIMEOUT_MS)
     try {
       const { translations, filledWithSource } = await translateTexts(
         texts,
@@ -104,26 +100,18 @@ export async function POST(request: Request) {
           endpoint: settings.translateEndpoint,
           direction: (direction || 'auto') as TranslateDirection,
         },
-        combined,
+        upstream.signal,
       )
 
       // filledWithSource > 0 = 有缺失位被原文回填：透传给客户端展示“部分未翻”警告
       return NextResponse.json({ translations, ...(filledWithSource > 0 ? { filledWithSource } : {}) })
     } catch (err) {
-      // 客户端主动断开
-      if (request.signal.aborted) {
-        return new NextResponse(null, { status: 499 })
-      }
-      // 超时
-      if (combined.aborted) {
-        return NextResponse.json(
-          { error: '翻译请求超时，请稍后重试', code: 'TRANSLATE_TIMEOUT' },
-          { status: 504 },
-        )
+      if (err instanceof Error && err.name === 'AbortError') {
+        return upstreamAbortResponse(request, '翻译请求超时，请稍后重试', 'TRANSLATE_TIMEOUT')
       }
       throw err
     } finally {
-      clearTimeout(timeout)
+      upstream.done()
     }
   } catch (error) {
     // 客户端断开导致的中止

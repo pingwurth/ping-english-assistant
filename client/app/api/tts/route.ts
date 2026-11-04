@@ -7,7 +7,9 @@
 
 import { NextResponse } from 'next/server'
 import { readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
-import { sameOriginGuard } from '@/lib/api-guard'
+import { isUnsafeUpstreamUrl, sameOriginGuard, unsafeUpstreamResponse } from '@/lib/api-guard'
+import { upstreamAbortResponse, withUpstreamTimeout } from '@/lib/bff-upstream'
+import { readJsonBodyCapped } from '@/lib/upload-limit'
 import { generateTts, LlmError, toLlmErrorResponse } from '@/lib/llm'
 import type { TtsModelConfig } from '@/lib/llm'
 import {
@@ -28,9 +30,12 @@ export async function POST(request: Request) {
   // 同源守卫（评审 #2）：本路由会用用户真实密钥消耗云端 TTS 配额
   const denied = sameOriginGuard(request)
   if (denied) return denied
+  // 带体积上限的 JSON 解析（c034：json() 与 formData() 一样全量缓冲，此前 JSON
+  // 路由不在 upload-limit 纪律内）；解析错误在此返回 400，不落进下方 500 通道
+  const parsedBody = await readJsonBodyCapped(request)
+  if (!parsedBody.ok) return parsedBody.response
   try {
-    const body = await request.json()
-    const { text, voice, speed, configId } = body as {
+    const { text, voice, speed, configId } = parsedBody.body as {
       text: string
       voice?: string
       speed?: number
@@ -56,6 +61,8 @@ export async function POST(request: Request) {
     const settings = configId
       ? await readLlmConfigById(configId)
       : await readEffectiveLlmSettings()
+    // 已存 baseUrl 过 SSRF 门（c066：服务端外连的统一纪律，与 models/soe 同判断）
+    if (settings && isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
     if (!settings?.baseUrl || !settings?.apiKey) {
       return NextResponse.json(
         { error: '请先在设置页配置 TTS 模型（Base URL 和 API Key）', code: 'SETTINGS_NOT_CONFIGURED' },
@@ -91,16 +98,14 @@ export async function POST(request: Request) {
 
     // ── 调用 TTS 服务层 ─────────────────────────────────────
     // 客户端取消（request.signal）与路由层超时并入中止信号（评审 #24：
-    // 此前用户关页/取消后 BFF 仍等上游完整合成，计费白耗）
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), TTS_REQUEST_TIMEOUT_MS)
-    const combined = AbortSignal.any([request.signal, controller.signal])
-
+    // 此前用户关页/取消后 BFF 仍等上游完整合成，计费白耗）。
+    // 统一走 lib/bff-upstream（c060：四处手搓同款样板已漂移）
+    const upstream = withUpstreamTimeout(request.signal, TTS_REQUEST_TIMEOUT_MS)
     let result: Awaited<ReturnType<typeof generateTts>>
     try {
-      result = await generateTts(text, ttsConfig, combined)
+      result = await generateTts(text, ttsConfig, upstream.signal)
     } finally {
-      clearTimeout(timeout)
+      upstream.done()
     }
     const { audioBuffer, durationMs: rawDurationMs, speedApplied } = result
     const durationMs = rawDurationMs || 1000
@@ -136,13 +141,11 @@ export async function POST(request: Request) {
       headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
     })
   } catch (error) {
-    // 客户端取消 / 路由层超时（fetch 抛 AbortError 透传至此）：干净的 504，
-    // 不落到通用 500 把「取消」误报成服务故障
+    // 客户端取消 / 路由层超时（fetch 抛 AbortError 透传至此）：按 request.signal
+    // 判别 —— 取消是 499（不是服务故障），超时才是 504（c069：原先一律 504，
+    // 把用户主动取消误报成超时故障，与 translate/mnemonic/lib/llm/errors 口径漂移）
     if (error instanceof Error && error.name === 'AbortError') {
-      return NextResponse.json(
-        { error: '语音合成已取消或超时', code: 'TIMEOUT_OR_ABORTED' },
-        { status: 504 },
-      )
+      return upstreamAbortResponse(request, '语音合成超时', 'TTS_TIMEOUT')
     }
     // LLM 服务层错误
     if (error instanceof LlmError) {

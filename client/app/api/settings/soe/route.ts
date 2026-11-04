@@ -6,7 +6,7 @@
 import { NextResponse } from 'next/server'
 import { readSoeConfig, writeSoeConfig, maskSecret, type SoeSettingsConfig } from '@/lib/server-settings'
 import { DEFAULT_SOE_PROXY_URL } from '@/lib/service-endpoints'
-import { sameOriginGuard } from '@/lib/api-guard'
+import { isUnsafeUpstreamUrl, sameOriginGuard, unsafeUpstreamResponse } from '@/lib/api-guard'
 
 const PROVIDERS = new Set(['mock', 'azure', 'tencent', 'iflytek'])
 const DEFAULT_CONFIG: SoeSettingsConfig = { provider: 'mock', proxyUrl: DEFAULT_SOE_PROXY_URL }
@@ -90,6 +90,8 @@ export async function PUT(request: Request) {
     if (typeof proxyUrl !== 'string' || !proxyUrl.trim()) {
       return NextResponse.json({ error: 'Missing required field: proxyUrl' }, { status: 400 })
     }
+    // proxyUrl 持久化前过 SSRF 门（c090）：它是 evaluate/health 的服务端出网目标
+    if (isUnsafeUpstreamUrl(proxyUrl)) return unsafeUpstreamResponse()
 
     const stored = await readSoeConfig()
     const config: SoeSettingsConfig = {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { OPENAI_MODELS_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 import { maskSecret, readEffectiveLlmSettings, readLlmConfigById } from '@/lib/server-settings'
-import { sameOriginGuard, isUnsafeUpstreamUrl } from '@/lib/api-guard'
+import { sameOriginGuard, isUnsafeUpstreamUrl, unsafeUpstreamResponse } from '@/lib/api-guard'
 
 interface OpenAIModel {
   id: string
@@ -17,12 +17,14 @@ interface OpenAIModelsResponse {
 
 /** 用给定凭据拉取 OpenAI-compatible 模型列表 */
 async function fetchModelList(baseUrl: string, apiKey: string): Promise<Response> {
-  // Normalize baseUrl - remove trailing slash and ensure it ends with /v1
-  let normalized = baseUrl.replace(/\/+$/, '')
-  if (!normalized.endsWith('/v1')) {
-    normalized = `${normalized}/v1`
-  }
-  return fetch(buildServiceUrl(normalized, OPENAI_MODELS_ENDPOINT), {
+  // URL 组装单源于 service-endpoints（c071）：本地自带的「补 /v1」强拼曾与
+  // buildServiceUrl 的 /vN 去重分叉（/v2 网关拼出 /v2/v1/models → 404，而其余
+  // 服务正常）。口径对齐：已带任意版本段(/vN)的 baseUrl 只补 /models，否则补 /v1/models。
+  const host = baseUrl.replace(/\/+$/, '')
+  const modelsUrl = /\/v\d+$/.test(host)
+    ? buildServiceUrl(host, OPENAI_MODELS_ENDPOINT)
+    : buildServiceUrl(`${host}/v1`, OPENAI_MODELS_ENDPOINT)
+  return fetch(modelsUrl, {
     signal: AbortSignal.timeout(15_000),
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -47,6 +49,8 @@ export async function GET(request: Request) {
         { status: 400 },
       )
     }
+    // 已存 baseUrl 同样过 SSRF 门（c066：门禁不能只管「当场提交」的 URL）
+    if (isUnsafeUpstreamUrl(settings.baseUrl)) return unsafeUpstreamResponse()
 
     const response = await fetchModelList(settings.baseUrl, settings.apiKey)
 
@@ -115,9 +119,7 @@ export async function POST(request: Request) {
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: 'Missing required fields: baseUrl, apiKey' }, { status: 400 })
     }
-    if (isUnsafeUpstreamUrl(baseUrl)) {
-      return NextResponse.json({ error: 'Base URL 协议或地址不被允许（仅 http/https，禁止链路本地/元数据地址）' }, { status: 400 })
-    }
+    if (isUnsafeUpstreamUrl(baseUrl)) return unsafeUpstreamResponse()
 
     const response = await fetchModelList(baseUrl, apiKey)
     if (!response.ok) {

@@ -4,7 +4,7 @@
  */
 import { NextResponse } from 'next/server'
 import { readSoeConfig } from '@/lib/server-settings'
-import { sameOriginGuard } from '@/lib/api-guard'
+import { isUnsafeUpstreamUrl, sameOriginGuard } from '@/lib/api-guard'
 import { SOE_HEALTH_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
 
 export async function GET(request: Request) {
@@ -15,6 +15,8 @@ export async function GET(request: Request) {
   if (!cfg || cfg.provider === 'mock' || !cfg.proxyUrl) {
     return NextResponse.json({ ok: false })
   }
+  // proxyUrl 过 SSRF 门（c090）：与 evaluate 同判断，不安全的地址不探测
+  if (isUnsafeUpstreamUrl(cfg.proxyUrl)) return NextResponse.json({ ok: false })
   try {
     const res = await fetch(buildServiceUrl(cfg.proxyUrl, SOE_HEALTH_ENDPOINT), { signal: AbortSignal.timeout(3000) })
     if (!res.ok) return NextResponse.json({ ok: false })

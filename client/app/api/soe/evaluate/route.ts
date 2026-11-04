@@ -5,9 +5,13 @@
  */
 import { NextResponse } from 'next/server'
 import { readSoeConfig, type SoeSettingsConfig } from '@/lib/server-settings'
-import { sameOriginGuard } from '@/lib/api-guard'
-import { MAX_SOE_UPLOAD_BYTES, rejectOversizedUpload } from '@/lib/upload-limit'
+import { isUnsafeUpstreamUrl, sameOriginGuard, unsafeUpstreamResponse } from '@/lib/api-guard'
+import { MAX_SOE_UPLOAD_BYTES, rejectOversizedBlob, rejectOversizedUpload } from '@/lib/upload-limit'
 import { SOE_EVALUATE_ENDPOINT, buildServiceUrl } from '@/lib/service-endpoints'
+import { upstreamAbortResponse, withUpstreamTimeout } from '@/lib/bff-upstream'
+
+/** 代理调用硬超时：句子级评分（≤60s 音频）给足余量，对齐 translate/mnemonic 的 120s */
+const SOE_EVALUATE_TIMEOUT_MS = 120_000
 
 /** 取所选 provider 的密钥（剥离空串）；未配置 → null（省略 creds 字段，代理回落 env） */
 function buildCreds(cfg: SoeSettingsConfig): Record<string, Record<string, string>> | null {
@@ -26,6 +30,8 @@ export async function POST(req: Request) {
   if (oversized) return oversized
 
   const cfg = await readSoeConfig()
+  // proxyUrl 同样是用户可控的服务端出网目标（c090：SSRF 门此前只管 LLM baseUrl）
+  if (cfg && isUnsafeUpstreamUrl(cfg.proxyUrl)) return unsafeUpstreamResponse()
   if (!cfg || cfg.provider === 'mock') {
     return NextResponse.json({ code: 'BAD_REQUEST', message: '演示模式无需代理评分' }, { status: 400 })
   }
@@ -43,6 +49,10 @@ export async function POST(req: Request) {
   if (!(audio instanceof Blob)) {
     return NextResponse.json({ code: 'BAD_REQUEST', message: '缺少 multipart 音频文件字段 audio' }, { status: 400 })
   }
+  // 真实字节二次闸：chunked 上传不带 Content-Length 可绕过声明预检（c031）——
+  // 缺这道闸时超大 body 已被 formData() 全量缓冲，才被远端代理的 25MB 拒绝
+  const oversizedBlob = rejectOversizedBlob(audio, MAX_SOE_UPLOAD_BYTES)
+  if (oversizedBlob) return oversizedBlob
   if (typeof refText !== 'string' || !refText.trim()) {
     return NextResponse.json({ code: 'BAD_REQUEST', message: '缺少参考原文 refText' }, { status: 400 })
   }
@@ -56,6 +66,9 @@ export async function POST(req: Request) {
   if (creds) outgoing.append('creds', JSON.stringify(creds))
   outgoing.append('audio', audio, 'audio.wav')
 
+  // 客户端取消 + 路由层硬超时（c022）：此前只传 req.signal —— 代理黑洞时评分 spinner
+  // 悬挂分钟级（undici 默认 ~300s）且无取消入口；兄弟路由全部有显式超时与 504
+  const upstreamTimeout = withUpstreamTimeout(req.signal, SOE_EVALUATE_TIMEOUT_MS)
   let upstream: Response
   try {
     // 代理开启共享密钥鉴权（server/.env SOE_SHARED_TOKEN）时补 x-soe-token 头；
@@ -65,16 +78,30 @@ export async function POST(req: Request) {
       method: 'POST',
       body: outgoing,
       headers,
-      signal: req.signal,
+      signal: upstreamTimeout.signal,
     })
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return upstreamAbortResponse(req, '评分请求超时，请稍后重试', 'SOE_TIMEOUT')
+    }
     return NextResponse.json(
       { code: 'SOE_UPSTREAM_ERROR', message: '评分代理不可达，请检查模型设置中的代理地址' },
       { status: 502 },
     )
+  } finally {
+    upstreamTimeout.done()
   }
 
-  // 状态码与 JSON 原样透传（错误信封 { code, message, detail? } 语义由代理侧保证）
-  const text = await upstream.text()
-  return new Response(text, { status: upstream.status, headers: { 'content-type': 'application/json' } })
+  // 状态码与 JSON 原样透传（错误信封 { code, message, detail? } 语义由代理侧保证）。
+  // text() 也在 try 内：代理发完头就断连时读体会抛错，不能变成 Next 通用 500
+  // 破坏「透传代理状态码」契约（c028）
+  try {
+    const text = await upstream.text()
+    return new Response(text, { status: upstream.status, headers: { 'content-type': 'application/json' } })
+  } catch {
+    return NextResponse.json(
+      { code: 'SOE_UPSTREAM_ERROR', message: `评分代理响应中断（${upstream.status}）` },
+      { status: 502 },
+    )
+  }
 }
