@@ -234,7 +234,12 @@ export async function POST(request: Request) {
         },
       })
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
+      // 中止判定（四轮复审 c018）：裸 AbortError 之外，callLlm 的 catch 会把上游中止
+      // 经 toLlmError 包成 LlmError('ABORTED')（name='LlmError'）——只看 err.name 时
+      // 本分支是死码,非流式 action 的 504 超时文案从不触达
+      const aborted = (err instanceof Error && err.name === 'AbortError') ||
+        (err instanceof LlmError && err.code === 'ABORTED')
+      if (aborted) {
         return upstreamAbortResponse(request, '助记请求超时，请稍后重试', 'MNEMONIC_TIMEOUT')
       }
       throw err

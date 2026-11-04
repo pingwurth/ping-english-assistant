@@ -97,7 +97,7 @@ describe('replaceSubtitleData（原子替换 + 五族迁移）', () => {
     expect(await idb.recordsStore.get(RECORD_KEYS.favorite('m1', 3))).toBeUndefined()
     expect(await idb.recordsStore.get(RECORD_KEYS.note('m1', 0))).toMatchObject({ content: 'n' })
     expect(await idb.recordsStore.get(RECORD_KEYS.training('t1'))).toMatchObject({ detail: { sentenceIndex: 1 } })
-    expect(await idb.recordsStore.get(RECORD_KEYS.progress('m1'))).toMatchObject({ playedSentenceIndexes: [1] })
+    expect(await idb.recordsStore.get(RECORD_KEYS.progress('m1'))).toMatchObject({ playedSentenceIndexes: [1], lastPositionMs: 5000 }) // lastPositionMs 经 remap 保留(player flush 守卫依赖的唯一补偿)
 
     // 材料本体同批提交
     const stored = await idb.materialsStore.get<MaterialRecord>('m1')
@@ -125,5 +125,32 @@ describe('replaceSubtitleData（原子替换 + 五族迁移）', () => {
     expect(result.mapping.get(0)).toBe(0)
     expect(result.mapping.get(1)).toBe(1)
     expect(result.droppedRecords).toBe(0)
+  })
+})
+
+describe('replaceSubtitleData 次序敏感场景（四轮复审 c014）', () => {
+  it('双句互换且两侧都有收藏/笔记：del 与 put 同键交叉,交换 del/put 次序即丢记录', async () => {
+    // 句 0↔1 互换（文本互换）,两句各有收藏与笔记 —— mapping 0→1、1→0,
+    // ops 里 del[fav:0,fav:1] 与 put[fav:1,fav:0] 同键交叉:put-then-del 的回归会删光记录
+    await idb.recordsStore.put(RECORD_KEYS.favorite('m3', 0), { materialId: 'm3', sentenceIndex: 0, createdAt: 111 })
+    await idb.recordsStore.put(RECORD_KEYS.favorite('m3', 1), { materialId: 'm3', sentenceIndex: 1, createdAt: 222 })
+    await idb.recordsStore.put(RECORD_KEYS.note('m3', 0), { materialId: 'm3', sentenceIndex: 0, content: 'zero', createdAt: 1, updatedAt: 1 })
+    await idb.recordsStore.put(RECORD_KEYS.note('m3', 1), { materialId: 'm3', sentenceIndex: 1, content: 'one', createdAt: 2, updatedAt: 2 })
+
+    const old = makeSubtitle(2)
+    const next = makeSubtitle(2)
+    ;[next.sentences[0], next.sentences[1]] = [next.sentences[1]!, next.sentences[0]!] // 文本互换
+
+    const result = await ms.replaceSubtitleData(makeRecord('m3', old), next)
+    expect(result.mapping.get(0)).toBe(1)
+    expect(result.mapping.get(1)).toBe(0)
+    expect(result.droppedRecords).toBe(0)
+
+    // 两条收藏都活着且各在正确的新位置（createdAt 是身份标识）
+    expect(await idb.recordsStore.get(RECORD_KEYS.favorite('m3', 1))).toMatchObject({ createdAt: 111 })
+    expect(await idb.recordsStore.get(RECORD_KEYS.favorite('m3', 0))).toMatchObject({ createdAt: 222 })
+    // 两条笔记同样跟随互换,无丢失
+    expect(await idb.recordsStore.get(RECORD_KEYS.note('m3', 1))).toMatchObject({ content: 'zero' })
+    expect(await idb.recordsStore.get(RECORD_KEYS.note('m3', 0))).toMatchObject({ content: 'one' })
   })
 })

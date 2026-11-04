@@ -485,12 +485,20 @@ function Player() {
     applyingSubtitleRef.current = true
     try {
       // ① 先收口全部待落盘笔记（按替换前索引，与删句同款）：400ms 防抖定时器若带着
-      // 旧索引在迁移完成后才触发，会在旧索引处复活幽灵笔记（三轮复审 c009）
-      for (const [i, pending] of pendingNotesRef.current) {
-        clearTimeout(pending.timer)
-        await saveSentenceNote(materialId, i, pending.content)
+      // 旧索引在迁移完成后才触发，会在旧索引处复活幽灵笔记（三轮复审 c009）。
+      // 收口失败（quota/DB 关闭）→ 诚实报错并中止导入（四轮复审 c003）：DB 未动、
+      // 不会产生幽灵笔记；不让它冒泡成「字幕导入失败,请检查文件格式」的误导文案
+      try {
+        for (const [i, pending] of pendingNotesRef.current) {
+          clearTimeout(pending.timer)
+          await saveSentenceNote(materialId, i, pending.content)
+        }
+        pendingNotesRef.current.clear()
+      } catch (e) {
+        console.error('[player] 字幕替换前笔记收口失败:', e)
+        showErrorBanner('笔记保存失败（存储空间不足？），已取消本次字幕导入，请清理空间后重试')
+        return
       }
-      pendingNotesRef.current.clear()
 
       // ② 原子入口：新句落库与五族句级记录迁移（收藏/笔记/听写明细/生词来源句/已播
       // 进度）单事务提交（2026-11 全仓复审 c016 + quick 复审 c003：两段写之间失败

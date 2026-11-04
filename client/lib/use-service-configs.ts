@@ -12,26 +12,36 @@ import { selectServiceConfigs, type LlmConfigsResponse } from '@/lib/llm-configs
 
 /** /api/settings/llm-configs 响应的模块级缓存：TTS/转写等页面同屏需要多字段时只发一次请求 */
 let llmConfigsRequest: Promise<LlmConfigsResponse> | null = null
-/** 在途标志：force 只应丢弃**已 resolve** 的旧响应；在途请求（如 invalidate 扇出
- *  触发的 N 个 hook 同 tick force）直接合流 —— 否则 N 个字段各发一次相同请求，
- *  击穿本模块自己声明的「同屏一次请求」不变量（三轮复审 c003） */
+/** 在途标志（force 只丢弃已 resolve 的响应,在途合流——三轮复审 c003） */
 let llmConfigsFetching = false
+/** 代际（四轮复审 c001）：invalidate 递增全局代际。旧代际请求——包括仍在途的——
+ *  携带的是保存前的数据：既不可被 force/非 force 合流，settle 后也不得充当缓存。
+ *  「在途请求必然携带最新数据」只对当前代际成立。 */
+let llmConfigsGeneration = 0
+/** 当前 llmConfigsRequest 的发起代际 */
+let llmConfigsRequestGen = -1
 
-/** 拉取 LLM 配置（single-flight 去重）；force=true 丢弃已 resolve 的缓存重新请求 */
+/** 拉取 LLM 配置（代际化 single-flight）；force=true 丢弃已 resolve 的缓存重新请求 */
 export function fetchLlmConfigs(force = false): Promise<LlmConfigsResponse> {
-  // force 必须丢弃已 resolve 的缓存 promise（缓存成功后 ??= 永远短路，force 会拿到
-  // 同一份旧响应——「保存配置又弹框」死循环的根因）；但**在途**请求不丢：它必然
-  // 携带与本次 force 同样新的数据（同 tick 扇出或刚发起的加载），合流即可
-  if (llmConfigsRequest && (!force || llmConfigsFetching)) return llmConfigsRequest
+  // 合流仅限当前代际的请求；force 额外拒绝「已 settle 的当前代际缓存」（强制重取），
+  // 在途的当前代际请求（如 invalidate 扇出同 tick 触发）合流即可
+  if (llmConfigsRequest && llmConfigsRequestGen === llmConfigsGeneration && (!force || llmConfigsFetching)) {
+    return llmConfigsRequest
+  }
+  llmConfigsRequestGen = llmConfigsGeneration
   llmConfigsFetching = true
-  llmConfigsRequest = fetch('/api/settings/llm-configs')
+  const request: Promise<LlmConfigsResponse> = fetch('/api/settings/llm-configs')
     .then((r) => r.json() as Promise<LlmConfigsResponse>)
     .catch((err) => {
-      llmConfigsRequest = null // 失败清缓存：下次启用/挂载重试
+      // 失败清缓存（下次启用/挂载重试）；不得抹掉已被更新的请求顶替的引用
+      if (llmConfigsRequest === request) llmConfigsRequest = null
       throw err
     })
-    .finally(() => { llmConfigsFetching = false })
-  return llmConfigsRequest
+    .finally(() => {
+      if (llmConfigsRequest === request) llmConfigsFetching = false
+    })
+  llmConfigsRequest = request
+  return request
 }
 
 /**
@@ -47,8 +57,9 @@ const mountedReloads = new Set<() => void>()
  * 与 services 的 invalidateSoeServiceCache 对称。
  */
 export function invalidateLlmConfigsCache(): void {
-  // 在途请求不清（它已携带保存后的最新数据,清了只会多并发一次请求）
-  if (!llmConfigsFetching) llmConfigsRequest = null
+  // 代际递增（c001）：旧代际请求即刻不可达——无论在途还是已 settle,后续任何
+  // 合流/缓存命中都会失败并起一条当前代际的新请求;旧引用留给 GC,不必显式清
+  llmConfigsGeneration++
   for (const reload of [...mountedReloads]) reload()
 }
 
