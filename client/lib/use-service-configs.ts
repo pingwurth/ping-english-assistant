@@ -12,7 +12,12 @@ import { selectServiceConfigs, type LlmConfigsResponse } from '@/lib/llm-configs
 
 /** /api/settings/llm-configs 响应的模块级缓存：TTS/转写等页面同屏需要多字段时只发一次请求 */
 let llmConfigsRequest: Promise<LlmConfigsResponse> | null = null
-function fetchLlmConfigs(): Promise<LlmConfigsResponse> {
+
+/** 拉取 LLM 配置（带模块级去重缓存）；force=true 丢弃缓存重新请求 */
+export function fetchLlmConfigs(force = false): Promise<LlmConfigsResponse> {
+  // force 必须先丢弃已 resolve 的缓存 promise 再发请求 —— 缓存只在失败时清，
+  // 成功后 ??= 永远短路，force 会拿到同一份旧响应（「保存配置又弹框」死循环的根因）
+  if (force) llmConfigsRequest = null
   llmConfigsRequest ??= fetch('/api/settings/llm-configs')
     .then((r) => r.json() as Promise<LlmConfigsResponse>)
     .catch((err) => {
@@ -20,6 +25,14 @@ function fetchLlmConfigs(): Promise<LlmConfigsResponse> {
       throw err
     })
   return llmConfigsRequest
+}
+
+/**
+ * LLM 配置已变更（设置页保存/删除成功后调用）：使模块级缓存失效，
+ * 下次 load()（含非 force）重新拉取。与 services 的 invalidateSoeServiceCache 对称。
+ */
+export function invalidateLlmConfigsCache(): void {
+  llmConfigsRequest = null
 }
 
 export type ServiceConfigsStatus = 'loading' | 'ready' | 'error'
@@ -62,12 +75,18 @@ export function useServiceConfigs<T extends { id: string }>(
     if (!force && loadedRef.current) return configsRef.current
     loadedRef.current = true
     try {
-      const data = await fetchLlmConfigs()
+      const data = await fetchLlmConfigs(force)
       const selected = selectServiceConfigs<{ id: string } & Record<string, unknown>>(data, field)
       const list = selected.list.map((c) => pickRef.current(c))
       setConfigs(list)
       setPreferredId(selected.preferredId ?? '')
-      if (selected.preferredId) setConfigId(selected.preferredId)
+      if (selected.preferredId) {
+        // 刷新不得覆盖用户新近手选：当前选择仍在新列表中就保留，
+        // 仅在尚未选择或所选已被删除时回落 preferredId
+        setConfigId((prev) =>
+          prev && selected.list.some((c) => c.id === prev) ? prev : (selected.preferredId ?? ''),
+        )
+      }
       setStatus('ready')
       return list
     } catch {

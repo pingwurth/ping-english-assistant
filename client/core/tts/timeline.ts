@@ -66,7 +66,6 @@ export function buildTtsTimeline(sentences: string[], speed: number): { timings:
 }
 
 /** 毫秒 → SRT 时间戳 —— 保留历史兼容导出；唯一实现见 core/subtitle */
-export { formatSrtTimestamp as srtTime } from '@/core/subtitle'
 
 /** 时间轴 → SRT 文本 */
 export function buildSrt(timings: TtsSentenceTiming[]): string {

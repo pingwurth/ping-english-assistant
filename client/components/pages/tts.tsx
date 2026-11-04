@@ -22,11 +22,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { Shell, PageIntro } from '@/components/shared/shell'
 import { formatDuration } from '@/components/shared/player-parts'
 import { TTS_MAX_TEXT_LENGTH } from '@/core/tts/timeline'
+import { getTtsVoiceCatalog } from '@/lib/service-endpoints'
 import { writeTtsExport } from '@/lib/tts-export'
 import { downloadBlob } from '@/lib/download'
 import { translateSrtToBilingual } from '@/lib/translate'
 import { getTranslateEnabled, setTranslateEnabled } from '@/lib/pref-keys'
 import { useServiceConfigs } from '@/lib/use-service-configs'
+import { useTranslateConfigs } from '@/lib/use-translate-configs'
 import { parseSubtitle } from '@/core/subtitle'
 import { generateKokoroTts, KOKORO_VOICES, type KokoroLoadState } from '@/platform/kokoro-tts'
 
@@ -39,10 +41,8 @@ interface TtsConfigItem {
   ttsVoices?: ReadonlyArray<{ id: string; label: string }>
 }
 
-const DEFAULT_CLOUD_VOICES = [
-  { id: 'longanlingxin', label: 'Lingxin · Female (双语)' },
-  { id: 'longanlufeng', label: 'Lufeng · Male (双语)' },
-] as const
+/** 云端音色初值：dashscope 目录（选中配置后由 ttsVoices 覆盖）—— 单源于 service-endpoints（c070） */
+const DEFAULT_CLOUD_VOICES = getTtsVoiceCatalog('dashscope')
 
 /** 本地 Kokoro 音色（美式英文） */
 const KOKORO_VOICE_LIST = KOKORO_VOICES.map((v) => ({ id: v.id, label: v.label }))
@@ -67,10 +67,12 @@ interface GenResult {
   srt: string
   /** 语速是否真正生效（评审 #3：MiMo 等 OpenAI-compatible 网关不保证 speed，kokoro 本地支持） */
   speedApplied: boolean
-  /** 生成时刻的快照（评审 #12）：ready 态下用户仍可编辑文本/音色，
-   *  下载文件名与导入材料名必须描述音频真实内容而非当前 state */
+  /** 生成时刻的快照（评审 #12）：ready 态下用户仍可编辑文本/音色/语速，
+   *  下载文件名、导入材料名与语速提示必须描述音频真实内容而非当前 state
+   *  （c019：语速提示原先读当前滑杆，生成后调语速会误报「未生效」） */
   snapshotText: string
   snapshotVoiceId: string
+  snapshotSpeed: number
 }
 
 function dateStamp(): string {
@@ -140,8 +142,7 @@ function TTS() {
   const [err, setErr] = useState('')
   // 翻译开关与翻译模型配置（与生成错误分离的独立降级提示）
   const [translateEnabled, setTranslateEnabledState] = useState<boolean>(() => getTranslateEnabled())
-  const trSel = useServiceConfigs<{ id: string; name: string; translateModel: string }>(true, 'translateModel',
-    (c) => ({ id: c.id, name: String(c.name ?? ''), translateModel: String(c.translateModel ?? '') }))
+  const trSel = useTranslateConfigs(true) // 翻译配置选择器唯一实现（c072）
   const translateConfigs = trSel.configs
   const selectedTranslateConfigId = trSel.configId
   const setSelectedTranslateConfigId = trSel.setConfigId
@@ -290,6 +291,7 @@ function TTS() {
         speedApplied: meta.speedApplied !== false,
         snapshotText: text,
         snapshotVoiceId: voice.id,
+        snapshotSpeed: speed,
       }
     } catch (e) {
       clearInterval(simTimer)
@@ -318,6 +320,7 @@ function TTS() {
       speedApplied: true,
       snapshotText: text,
       snapshotVoiceId: voice.id,
+      snapshotSpeed: speed,
     }
   }
 
@@ -582,7 +585,7 @@ function TTS() {
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="secondary">{gen.sentenceCount} 句 · SRT 字幕已生成</Badge>
                   {speaking && <Badge variant="outline">播放中</Badge>}
-                  {!gen.speedApplied && speed !== 1 && (
+                  {!gen.speedApplied && gen.snapshotSpeed !== 1 && (
                     <span className="text-amber-600 dark:text-amber-400">当前模型不支持语速调节，本次按常速合成（已按实际时长对齐字幕）</span>
                   )}
                 </div>

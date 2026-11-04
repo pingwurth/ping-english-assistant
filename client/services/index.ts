@@ -40,9 +40,26 @@ export function getServices(): AppServices {
 /** 缓存的评分服务：read-aloud 每句评分都会解析，不必每次都 fetch + 服务端重读 settings.json */
 let soeServiceCache: SoeService | null = null
 
-/** SOE 设置已变更（设置页保存成功后调用）：使缓存的评分服务失效，下次解析重新拉取 */
+/**
+ * 跨标签页失效广播：soeServiceCache 是模块级缓存，保存设置的 tab 调
+ * invalidateSoeServiceCache() 清不了其他 tab 的副本 —— 其他 tab 会在整个会话里
+ * 继续用旧 provider 评分（含旧 mock）。保存后广播，各 tab 各清自己的缓存。
+ * （直接手改 settings.json 的场景仍覆盖不到，刷新页面即恢复一致。）
+ */
+const SOE_CACHE_INVALIDATE_CHANNEL = 'ping-eng:soe-cache-invalidate'
+if (typeof BroadcastChannel !== 'undefined') {
+  const channel = new BroadcastChannel(SOE_CACHE_INVALIDATE_CHANNEL)
+  channel.onmessage = () => { soeServiceCache = null }
+}
+
+/** SOE 设置已变更（设置页保存成功后调用）：使缓存的评分服务失效并广播到其他标签页 */
 export function invalidateSoeServiceCache(): void {
   soeServiceCache = null
+  if (typeof BroadcastChannel !== 'undefined') {
+    try {
+      new BroadcastChannel(SOE_CACHE_INVALIDATE_CHANNEL).postMessage(Date.now())
+    } catch { /* 广播失败不影响本 tab 失效 */ }
+  }
 }
 
 /** 跟读评分服务解析：模型设置的 soe 配置（settings.json）→ mock（本地伪评分）或 BFF 中转真实代理 */

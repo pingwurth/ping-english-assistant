@@ -5,23 +5,18 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ApiError, toApiError } from '@/services'
 import { Switch } from '@/components/ui/switch'
-import { exportSrtRows, formatSrtTimestamp, parseSubtitle } from '@/core/subtitle'
+import { exportSrtRows, parseSubtitle } from '@/core/subtitle'
 import { translateSrtToBilingual, buildBilingualPreview } from '@/lib/translate'
 import { useServiceConfigs } from '@/lib/use-service-configs'
+import { useTranslateConfigs } from '@/lib/use-translate-configs'
 import { probeMediaDuration } from '@/platform/media-probe'
 import type { AsrTranscribeSegment } from '@/types/api'
 
 /* ── SRT 工具（序列化统一走 core/subtitle 的 exportSrtRows，不再本地拷贝） ── */
 
-/** 兼容别名：历史导出名，实现即 core/subtitle 的 formatSrtTimestamp */
-export const formatSrtTime = formatSrtTimestamp
-
 export function segmentsToSrt(segments: AsrTranscribeSegment[]): string {
   return exportSrtRows(segments.map((seg) => ({ startMs: seg.startMs, endMs: seg.endMs, lines: [seg.text] })))
 }
-
-/** 下载产物文件 —— 统一实现见 lib/download.ts（历史拷贝参数顺序相反，已对齐 (filename, blob)） */
-export { downloadBlob } from '@/lib/download'
 
 /* ── 类型 ── */
 
@@ -115,8 +110,9 @@ export function useTranscribe() {
 
   // 翻译开关与翻译模型配置（默认关闭，ai-transcribe-dialog 不渲染开关即永远单语）
   const [translateEnabled, setTranslateEnabled] = useState(false)
-  const trSel = useServiceConfigs<{ id: string; name: string; translateModel: string }>(true, 'translateModel',
-    (c) => ({ id: c.id, name: String(c.name ?? ''), translateModel: String(c.translateModel ?? '') }))
+  // 翻译配置选择器走唯一实现 useTranslateConfigs（c072：此处与 tts.tsx 曾各自
+  // 内联同款 pick，拷贝漂移无人知晓）
+  const trSel = useTranslateConfigs(true)
   const translateConfigs = trSel.configs
   const selectedTranslateConfigId = trSel.configId
   const setSelectedTranslateConfigId = trSel.setConfigId
