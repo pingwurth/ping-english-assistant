@@ -69,3 +69,40 @@ describe('/api/soe/evaluate 接线', () => {
     expect(body.message).toContain('演示模式')
   })
 })
+
+/* ── readJsonBodyCapped（三轮复审 c005 补测）：字节上限语义与 CJK 放大 ── */
+
+import { MAX_JSON_BODY_BYTES, readJsonBodyCapped } from '../upload-limit'
+
+function jsonRequest(body: string, contentLength?: number | null): Request {
+  const headers = new Headers({ 'content-type': 'application/json' })
+  if (contentLength !== null) headers.set('content-length', String(contentLength ?? Buffer.byteLength(body)))
+  return new Request('http://x/api/tts', { method: 'POST', headers, body })
+}
+
+describe('readJsonBodyCapped', () => {
+  it('正常 body 解析返回；非法 JSON → 400 INVALID_REQUEST', async () => {
+    const ok = await readJsonBodyCapped(jsonRequest('{"a":1}'))
+    expect(ok.ok).toBe(true)
+    if (ok.ok) expect(ok.body).toEqual({ a: 1 })
+    const bad = await readJsonBodyCapped(jsonRequest('{oops'))
+    expect(bad.ok).toBe(false)
+  })
+
+  it('按字节而非 UTF-16 码元比较（quick c005）：CJK body 每字符 3 字节只计 1 码元', async () => {
+    // 90 万个汉字 ≈ 2.7MB 字节 / 0.9M 码元 —— 码元比较会放行,字节比较必须 413
+    const cjk = '汉'.repeat(900_000)
+    const body = JSON.stringify({ text: cjk })
+    expect(Buffer.byteLength(body)).toBeGreaterThan(MAX_JSON_BODY_BYTES)
+    expect(body.length).toBeLessThan(MAX_JSON_BODY_BYTES) // 前置自证:码元数确实低于上限
+    const res = await readJsonBodyCapped(jsonRequest(body, null)) // chunked:无 Content-Length
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.response.status).toBe(413)
+  })
+
+  it('声明 Content-Length 超限 → 预检即拒,不读 body', async () => {
+    const res = await readJsonBodyCapped(jsonRequest('{}', MAX_JSON_BODY_BYTES + 1))
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.response.status).toBe(413)
+  })
+})

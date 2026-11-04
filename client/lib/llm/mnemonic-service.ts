@@ -405,6 +405,10 @@ async function* callLlmStream<T>(
       },
     }
   } catch (err) {
+    // 中止穿透（quick 三轮复审 c017）：AbortError 不能在这里归一成普通 error 事件 ——
+    // 路由层据此区分「客户端已断开（静默收尾）」与「120s 硬超时（发友好超时帧）」，
+    // 吞掉它会让路由的超时文案永不触达，用户只看到裸 undici 中止消息
+    if (err instanceof Error && err.name === 'AbortError') throw err
     const message = err instanceof LlmError ? err.message
       : err instanceof Error ? err.message : '流式生成失败'
     yield { event: 'error', data: { error: message } }

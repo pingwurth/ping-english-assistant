@@ -12,18 +12,25 @@ import { selectServiceConfigs, type LlmConfigsResponse } from '@/lib/llm-configs
 
 /** /api/settings/llm-configs 响应的模块级缓存：TTS/转写等页面同屏需要多字段时只发一次请求 */
 let llmConfigsRequest: Promise<LlmConfigsResponse> | null = null
+/** 在途标志：force 只应丢弃**已 resolve** 的旧响应；在途请求（如 invalidate 扇出
+ *  触发的 N 个 hook 同 tick force）直接合流 —— 否则 N 个字段各发一次相同请求，
+ *  击穿本模块自己声明的「同屏一次请求」不变量（三轮复审 c003） */
+let llmConfigsFetching = false
 
-/** 拉取 LLM 配置（带模块级去重缓存）；force=true 丢弃缓存重新请求 */
+/** 拉取 LLM 配置（single-flight 去重）；force=true 丢弃已 resolve 的缓存重新请求 */
 export function fetchLlmConfigs(force = false): Promise<LlmConfigsResponse> {
-  // force 必须先丢弃已 resolve 的缓存 promise 再发请求 —— 缓存只在失败时清，
-  // 成功后 ??= 永远短路，force 会拿到同一份旧响应（「保存配置又弹框」死循环的根因）
-  if (force) llmConfigsRequest = null
-  llmConfigsRequest ??= fetch('/api/settings/llm-configs')
+  // force 必须丢弃已 resolve 的缓存 promise（缓存成功后 ??= 永远短路，force 会拿到
+  // 同一份旧响应——「保存配置又弹框」死循环的根因）；但**在途**请求不丢：它必然
+  // 携带与本次 force 同样新的数据（同 tick 扇出或刚发起的加载），合流即可
+  if (llmConfigsRequest && (!force || llmConfigsFetching)) return llmConfigsRequest
+  llmConfigsFetching = true
+  llmConfigsRequest = fetch('/api/settings/llm-configs')
     .then((r) => r.json() as Promise<LlmConfigsResponse>)
     .catch((err) => {
       llmConfigsRequest = null // 失败清缓存：下次启用/挂载重试
       throw err
     })
+    .finally(() => { llmConfigsFetching = false })
   return llmConfigsRequest
 }
 
@@ -40,7 +47,8 @@ const mountedReloads = new Set<() => void>()
  * 与 services 的 invalidateSoeServiceCache 对称。
  */
 export function invalidateLlmConfigsCache(): void {
-  llmConfigsRequest = null
+  // 在途请求不清（它已携带保存后的最新数据,清了只会多并发一次请求）
+  if (!llmConfigsFetching) llmConfigsRequest = null
   for (const reload of [...mountedReloads]) reload()
 }
 
@@ -108,16 +116,28 @@ export function useServiceConfigs<T extends { id: string }>(
 
   useEffect(() => {
     if (!enabled) return
+    // 失效发生在禁用期间的 hook：重新启用时必须 force（loadedRef 短路会吞掉
+    // 非 force 加载,而模块缓存虽已清、它不再查询——见 c011）
+    if (staleRef.current) {
+      staleRef.current = false
+      void load(true)
+      return
+    }
     void load()
   }, [enabled, load])
 
   // 失效广播的接收端：配置保存/删除后（invalidateLlmConfigsCache）立即重取,
   // loadedRef 短路不再挡住本 hook；force 语义会保留仍有效的用户手选（见 load）。
-  // 未启用（弹窗/抽屉未开）的 hook 不跟着发请求——启用时本就有首次加载
+  // 未启用（弹窗/抽屉未开）的 hook 现在不发请求但记 stale（三轮复审 c011）：
+  // 原先直接跳过的话,重新启用时 loadedRef 短路会让它永久陈旧
   const enabledRef = useRef(enabled)
   enabledRef.current = enabled
+  const staleRef = useRef(false)
   useEffect(() => {
-    const reload = (): void => { if (enabledRef.current) void load(true) }
+    const reload = (): void => {
+      if (enabledRef.current) void load(true)
+      else staleRef.current = true
+    }
     mountedReloads.add(reload)
     return () => { mountedReloads.delete(reload) }
   }, [load])

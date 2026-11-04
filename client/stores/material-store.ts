@@ -222,6 +222,12 @@ function buildSentenceTextMapping(
  *   且旧文本不可恢复（quick 复审 c003）。
  * 文本归一后逐句匹配（同文本多句按顺序占位）；未命中的句级记录删除、生词来源句
  * 置 -1、已播句过滤。生词词频（updateFrequencies）是可重算派生态，仍由调用方随后执行。
+ *
+ * 并发契约（三轮复审 c004，已知限制）：plan 阶段的五族读各在独立只读事务，与提交的
+ * readwrite 事务之间**无跨标签页隔离**——另一标签页在窗口（毫秒级）内的写入会基于
+ * 陈旧快照被覆盖或以旧索引保留。单用户本地应用下窗口极窄，且「整体替换」本就是重定义
+ * 句子世界的 last-write-wins 操作，该语义可接受；若未来需要强一致，须把五族读+提交
+ * 收进单个 readwrite 事务（idb.ts 需新增多请求事务原语）。
  */
 export async function replaceSubtitleData(record: MaterialRecord, data: SubtitleData): Promise<SubtitleReplaceResult> {
   const materialId = record.material.id

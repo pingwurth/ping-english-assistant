@@ -350,11 +350,12 @@ function Player() {
     // 位置写入与 played 集合解耦：节流调用（无显式 lastMs）只在有增量时写；
     // 卸载/seek 后离开（显式传 lastMs）即使无增量也要落盘位置，否则续播起点回跳旧值
     if (!p.dirty && lastMs == null) return
-    // 字幕替换进行中暂停节流写（quick c004）：原子的 replaceSubtitleData 落库与
-    // 本组件重置 playedRef 之间，一次 timeupdate 触发的 flush 会把旧索引内存集
-    // 并进已迁移的 progress 并写回——幽灵旧索引从此不再收敛。卸载 flush（显式
-    // lastMs）不受此限（位置仍值得落盘，替换失败时旧索引依旧有效）。
-    if (applyingSubtitleRef.current && lastMs == null) return
+    // 字幕替换进行中暂停一切进度写（quick c004 + 三轮复审 c001/c007）：原子的
+    // replaceSubtitleData 落库与本组件重置 playedRef 之间，任何 flush（含卸载时的
+    // 显式 lastMs 写）都会把旧索引内存集并进已迁移的 progress 并写回——幽灵旧索引
+    // 从此不再收敛。窗口内丢一次位置落盘可接受（remap 保留 spread 的 lastPositionMs，
+    // 上一次节流写也仍在）；原先对 lastMs 的豁免正是三条复审循环追到的最后一个洞。
+    if (applyingSubtitleRef.current) return
     p.dirty = false
     p.lastFlush = Date.now()
     try {
@@ -483,13 +484,22 @@ function Player() {
     // 进度节流写暂停（quick c004）：见 flushProgress 内守卫说明
     applyingSubtitleRef.current = true
     try {
-      // 原子入口：新句落库与五族句级记录迁移（收藏/笔记/听写明细/生词来源句/已播
+      // ① 先收口全部待落盘笔记（按替换前索引，与删句同款）：400ms 防抖定时器若带着
+      // 旧索引在迁移完成后才触发，会在旧索引处复活幽灵笔记（三轮复审 c009）
+      for (const [i, pending] of pendingNotesRef.current) {
+        clearTimeout(pending.timer)
+        await saveSentenceNote(materialId, i, pending.content)
+      }
+      pendingNotesRef.current.clear()
+
+      // ② 原子入口：新句落库与五族句级记录迁移（收藏/笔记/听写明细/生词来源句/已播
       // 进度）单事务提交（2026-11 全仓复审 c016 + quick 复审 c003：两段写之间失败
       // 会留下旧文本不可恢复的错位）
       const result = await replaceSubtitleData(record, data)
-      // 生词词频是可重算派生态，事务外重算
-      await updateFrequencies(data.sentences.flatMap((s) => s.words), materialId)
-      // 内存态跟随持久层迁移
+
+      // ③ 内存态在成败分界处立即同步（三轮复审 c002）：此后任何失败都不得再让
+      // UI 停在旧 record——否则「DB 已提交 + UI 报导入失败」会诱导重试,重试按
+      // 陈旧快照对已迁移记录二次迁移
       setFavSet((prev) => remapIndexSet(prev, result.mapping))
       setNoteMap((prev) => {
         const next: Record<number, string> = {}
@@ -505,6 +515,15 @@ function Player() {
       setActive(0)
       if (result.droppedRecords > 0) {
         showErrorBanner(`字幕已替换：${result.droppedRecords} 条未对齐的句级收藏/笔记/听写记录已清理`)
+      }
+
+      // ④ 生词词频是可重算派生态，成败分界之后单独跑：失败只降级提示（不触发
+      // 「导入失败」语义，字幕本身已成功）
+      try {
+        await updateFrequencies(data.sentences.flatMap((s) => s.words), materialId)
+      } catch (e) {
+        console.error('[player] 字幕替换后词频重算失败:', e)
+        showErrorBanner('字幕已导入，但生词词频重算失败（不影响字幕，下次导入/编辑会自动重算）')
       }
     } finally {
       applyingSubtitleRef.current = false
