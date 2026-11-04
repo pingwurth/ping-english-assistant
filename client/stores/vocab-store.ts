@@ -263,6 +263,28 @@ export async function shiftVocabEntriesAfterDeletion(materialId: string, deleted
 }
 
 /**
+ * 整体替换字幕后按映射迁移词条来源句序号；对应句已不存在的置 -1
+ * （与删句同语义：保留词条与上下文，只是不再指向现存句）。
+ */
+export async function remapVocabEntriesAfterReplace(materialId: string, mapping: Map<number, number>): Promise<void> {
+  await initVocab()
+  const entries = await recordsStore.getEntriesByMaterial(materialId)
+  const put: Array<readonly [string, unknown]> = []
+  for (const [key, value] of entries) {
+    if (!key.startsWith(RECORD_KEY_PREFIXES.vocabEntry)) continue
+    const entry = value as VocabEntry | undefined
+    if (!entry || typeof entry.sentenceIndex !== 'number') continue
+    const next = mapping.get(entry.sentenceIndex)
+    if (next === entry.sentenceIndex) continue
+    put.push([key, { ...entry, sentenceIndex: next ?? -1 } satisfies VocabEntry])
+  }
+  if (put.length > 0) {
+    await runAtomicOps({ put: { records: put } })
+    patchEntries(put.map(([, v]) => v as VocabEntry))
+  }
+}
+
+/**
  * 导入/重导入材料字幕后调用：扫描字幕单词与生词本词条匹配，按材料记账更新出现次数。
  * 幂等：同一材料重复应用（重导入 SRT / 重跑 AI 转写）先减去该材料的旧贡献再累加新值，
  * 频次不会翻倍；词条在此材料中不再出现时回落。
@@ -294,7 +316,11 @@ export async function updateFrequencies(words: string[], materialId: string): Pr
 
   if (toUpdate.length === 0) return
 
-  // 批量写入 + 就地补丁（频次字段变化不改变 addedAt，原位替换即可）
-  await Promise.all(toUpdate.map((e) => recordsStore.put(RECORD_KEYS.vocabEntry(e.id), e)))
+  // 单事务提交（与平移路径同一原子性纪律）：逐条 put 中途失败（quota/abort/关页）会
+  // 留下部分应用的频次，永久破坏「frequency === materialCounts 各值之和」不变量
+  //（2026-11 全仓复审 c013）
+  await runAtomicOps({
+    put: { records: toUpdate.map((e) => [RECORD_KEYS.vocabEntry(e.id), e] as const) },
+  })
   patchEntries(toUpdate)
 }

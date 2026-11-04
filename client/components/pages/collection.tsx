@@ -52,7 +52,12 @@ function CollectionDetail() {
   }
   const handleDeleteMaterial = async (id: string, name: string) => {
     if (!window.confirm(`确认删除「${name}」？媒体文件与相关学习记录将一并删除。`)) return
-    await removeMaterial(id)
+    try { // 与材料库同纪律：删除失败必须可见（c024）
+      await removeMaterial(id)
+    } catch (e) {
+      console.error('[collection] 删除材料失败:', e)
+      window.alert(`删除「${name}」失败：存储写入出错，材料未被删除。请检查磁盘空间后重试。`)
+    }
   }
   const openMove = (r: MaterialRecord) => { setMoveTarget(r) }
 

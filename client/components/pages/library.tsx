@@ -27,7 +27,14 @@ function Library() {
   }, [ready, records])
   const handleDelete = async (id: string, name: string) => {
     if (!window.confirm(`确认删除「${name}」？媒体文件与相关学习记录将一并删除。`)) return
-    await removeMaterial(id)
+    // 失败必须可见（c024）：removeMaterial 上抛（quota/事务 abort）时 UI 零反馈会让
+    // 用户以为没点上而反复点击；onClick 还丢过这个 promise（unhandled rejection）
+    try {
+      await removeMaterial(id)
+    } catch (e) {
+      console.error('[library] 删除材料失败:', e)
+      window.alert(`删除「${name}」失败：存储写入出错，材料未被删除。请检查磁盘空间后重试。`)
+    }
   }
   // 分组派生：只按现存集合分组；无归属（旧记录/null）与陈旧 ID 一律归入未分组
   const validIds = new Set(collections.map((c) => c.id))

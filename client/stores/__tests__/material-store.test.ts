@@ -136,3 +136,27 @@ describe('seedIfEmpty 首载注入', () => {
     expect(rec?.subtitleData?.isBilingual).toBe(true)
   })
 })
+
+/* ── seedIfEmpty 不复活分支（2026-11 全仓复审 c050）：
+ *   seeded 标记的文档化目的「用户逐个删光材料后刷新，不该复活种子」——
+ *   原测试全部从未打标记的空库起步，早退分支零覆盖。 ── */
+
+describe('seedIfEmpty 不复活分支（c050）', () => {
+  it('seeded 标记已存在（= 用户删光材料后的重启态）：材料库为空也不复活种子', async () => {
+    // 模拟「删光后重启」的持久态：标记还在（用户没清空全部数据），材料已删光
+    await idb.recordsStore.put('meta:seeded', true)
+    await ms.initMaterials()
+    const records = ms.materialStore.get().records
+    expect(records).toHaveLength(0)
+    expect(ms.materialStore.get().ready).toBe(true)
+  })
+
+  it('标记缺省但库里有用户材料：不注入种子也不覆盖既有材料（注入只发生在完全首载）', async () => {
+    await idb.materialsStore.put('user-1', { material: makeMaterial('user-1'), subtitleData: undefined as never })
+    await ms.initMaterials()
+    const records = ms.materialStore.get().records
+    // 首载注入仍发生（标记从未打过），但用户材料必须原样保留
+    expect(records.some((r) => r.material.id === 'user-1')).toBe(true)
+    expect(records.some((r) => r.material.id === 'mock-001')).toBe(true)
+  })
+})

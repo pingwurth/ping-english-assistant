@@ -146,7 +146,7 @@ function PlayerControlBar({ playing, setPlaying, mode, setMode, loop, setLoop, s
  *  - favoriteIndexes 中的句子显示 ★ 收藏标记。
  *  - onTranslate 为整篇翻译入口（单句翻译在字幕编辑弹窗内）。
  */
-function SubtitleListImpl({ mode, active, onSelect, items, favoriteIndexes, noteIndexes, onOpenNote, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items: SubtitleSentence[]; favoriteIndexes?: Set<number>; noteIndexes?: Set<number>; onOpenNote?: (index: number) => void; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: () => void }) {
+function SubtitleListImpl({ mode, active, onSelect, items, favoriteIndexes, noteIndexes, onOpenNote, onImportSubtitle, onAiConvert, onDeleteSentence, onEditSentence, onExportSubtitle, onTranslate, sentenceBusy = false }: { mode: SubtitleMode; active:number; onSelect:(i:number)=>void; items: SubtitleSentence[]; favoriteIndexes?: Set<number>; noteIndexes?: Set<number>; onOpenNote?: (index: number) => void; onImportSubtitle?: (file: File) => void; onAiConvert?: () => void; onDeleteSentence?: (index: number) => void; onEditSentence?: (index: number, sentence: SubtitleSentence) => void; onExportSubtitle?: () => void; onTranslate?: () => void; sentenceBusy?: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const itemRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const manualUntilRef = useRef(0)
@@ -217,12 +217,12 @@ function SubtitleListImpl({ mode, active, onSelect, items, favoriteIndexes, note
             {(onDeleteSentence || onEditSentence) && (
               <div className="absolute right-3 top-3 z-10 flex items-center gap-1">
                 {onEditSentence && (
-                  <Button variant="secondary" size="icon" className="size-7" aria-label={`纠错句子 ${s.index + 1}`} title="纠错" onClick={(e) => { e.stopPropagation(); onEditSentence(i, s) }}>
+                  <Button variant="secondary" size="icon" className="size-7" aria-label={`纠错句子 ${s.index + 1}`} title="纠错" disabled={sentenceBusy} onClick={(e) => { e.stopPropagation(); onEditSentence(i, s) }}>
                     <Pencil className="size-3.5" />
                   </Button>
                 )}
                 {onDeleteSentence && (
-                  <Button variant="secondary" size="icon" className="size-7" aria-label={`删除句子 ${s.index + 1}`} title="删除" onClick={(e) => { e.stopPropagation(); onDeleteSentence(i) }}>
+                  <Button variant="secondary" size="icon" className="size-7" aria-label={`删除句子 ${s.index + 1}`} title="删除" disabled={sentenceBusy} onClick={(e) => { e.stopPropagation(); onDeleteSentence(i) }}>
                     <Trash2 className="size-3.5" />
                   </Button>
                 )}

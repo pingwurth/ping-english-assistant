@@ -22,16 +22,36 @@ export interface MediaExportMetaBase {
   subtitleText: string
 }
 
+/** 写入时间标记的 key（blobs store，值为 epoch ms）—— 跨标签页孤儿判定的宽限依据 */
+const tsKeyOf = (blobKeyPrefix: string, taskId: string) => `${blobKeyPrefix}ts:${taskId}`
+/** 孤儿宽限期：handoff 是「生成 → 立刻切导入页」的短流程，10 分钟覆盖跨标签页在途 */
+const ORPHAN_GRACE_MS = 10 * 60 * 1000
+
 /**
  * 回收本业务前缀下无活动索引的孤儿 blob（每次 write 前调用，评审 #13）。
  * IDB/sessionStorage 任一环节失败都只记 console，不阻断本次写入。
+ *
+ * 跨标签页宽限（2026-11 全仓复审 c008）：IDB blobs 跨标签页共享而 sessionStorage
+ * 每 tab 独立 —— 旧判定「本 tab 无索引即孤儿」会把别的 tab 仍在待导入的产物当孤儿
+ * 删掉。新判定以 blobs store 里的写入时间标记为准：TTL 内一律保留；超 TTL 才回收。
+ * 无时间标记的旧版键回落旧判定（sessionStorage 索引），升级前的孤儿照常清理。
  */
 async function sweepOrphanBlobs(sessionPrefix: string, blobKeyPrefix: string): Promise<void> {
   try {
     const keys = await blobsStore.allKeys()
+    const now = Date.now()
     for (const key of keys) {
       if (!key.startsWith(blobKeyPrefix)) continue
       const orphanTaskId = key.slice(blobKeyPrefix.length)
+      if (orphanTaskId.startsWith('ts:')) continue // 时间标记本身不参与回收，随宿主增删
+      const writtenAt = await blobsStore.get<number>(tsKeyOf(blobKeyPrefix, orphanTaskId))
+      if (typeof writtenAt === 'number') {
+        if (now - writtenAt < ORPHAN_GRACE_MS) continue // 在途（可能是别的标签页）→ 保留
+        await blobsStore.delete(key)
+        await blobsStore.delete(tsKeyOf(blobKeyPrefix, orphanTaskId))
+        continue
+      }
+      // 旧版键（无时间标记）：沿用 sessionStorage 索引判定
       let indexed: string | null = null
       try {
         indexed = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(sessionPrefix + orphanTaskId) : null
@@ -66,6 +86,9 @@ export function createMediaExportHandoff<M extends MediaExportMetaBase>(opts: Me
     async write(taskId: string, audio: Blob, meta: Omit<M, 'taskId'>): Promise<void> {
       await sweepOrphanBlobs(sessionPrefix, blobKeyPrefix)
       await blobsStore.put(blobKey(taskId), audio)
+      // 写入时间标记（跨标签页孤儿宽限依据，c008）：与音频同存于 blobs store，
+      // 任意标签页的清扫都能读到，不受 sessionStorage 每 tab 隔离的影响
+      await blobsStore.put(tsKeyOf(blobKeyPrefix, taskId), Date.now())
       try {
         if (typeof sessionStorage !== 'undefined') {
           sessionStorage.setItem(sessionPrefix + taskId, JSON.stringify({ ...meta, taskId }))
@@ -84,10 +107,11 @@ export function createMediaExportHandoff<M extends MediaExportMetaBase>(opts: Me
         return { meta, audio }
       } catch { return null }
     },
-    /** 导入成功后清理两层临时产物 */
+    /** 导入成功后清理两层临时产物（含时间标记） */
     async consume(taskId: string): Promise<void> {
       try { sessionStorage.removeItem(sessionPrefix + taskId) } catch { /* ignore */ }
       await blobsStore.delete(blobKey(taskId))
+      await blobsStore.delete(tsKeyOf(blobKeyPrefix, taskId))
     },
   }
 }

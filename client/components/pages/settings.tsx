@@ -26,7 +26,7 @@ import { RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import { parseBackupJson, type ImportStrategy } from '@/core/backup/backup-format'
 import { isZipMagic } from '@/core/backup/zip'
 import { buildBackup, buildFullBackupZip, downloadBlob, downloadJsonBackup, importBackup, importZipBackup, prepareZipImport, type ImportSummary } from '@/platform/storage/backup'
-import { blobsStore, estimateUsage, materialsStore, recordsStore } from '@/platform/storage/idb'
+import { blobsStore, estimateUsage, materialsStore, recordsStore, runAtomicOps } from '@/platform/storage/idb'
 import { initMaterials, materialStore, removeMaterial } from '@/stores/material-store'
 import { getTrainingStats } from '@/stores/training-record-store'
 import { useStore } from '@/stores/store'
@@ -266,13 +266,14 @@ function BackupSection() {
   useEffect(() => {
     let alive = true
     void (async () => {
-      const ids = await materialsStore.allKeys()
-      // 每条只读 .size 却各付一次事务开销：并发读（评审 #56）
-      const blobs = await Promise.all(ids.map((id) => blobsStore.get<Blob>(id)))
+      // 单事务成对读（c062）：allKeys+逐键 get 是每材料一个事务，仅为读 .size；
+      // getAllEntries 一次往返拿到全部 [key, Blob] 对
+      const entries = await blobsStore.getAllEntries()
       let count = 0
       let bytes = 0
-      for (const b of blobs) {
-        if (b) { count++; bytes += b.size }
+      for (const [, v] of entries) {
+        const b = v as Blob | undefined
+        if (b && typeof b.size === 'number') { count++; bytes += b.size }
       }
       if (alive) setMediaInfo({ count, bytes })
     })().catch(() => { /* 统计失败静默，不影响主流程 */ })
@@ -476,7 +477,13 @@ function StorageSection() {
 
   const handleRemove = async (id: string, name: string) => {
     if (typeof window !== 'undefined' && !window.confirm(`确定删除材料「${name} 」？相关进度与训练记录将一并清理。`)) return
-    await removeMaterial(id)
+    try { // 删除失败必须可见且不再刷新用量（c024：与材料库/集合页同纪律）
+      await removeMaterial(id)
+    } catch (e) {
+      console.error('[settings] 删除材料失败:', e)
+      window.alert(`删除「${name}」失败：存储写入出错，材料未被删除。请检查磁盘空间后重试。`)
+      return
+    }
     await refreshUsage()
   }
 
@@ -484,7 +491,17 @@ function StorageSection() {
     if (typeof window !== 'undefined' && !window.confirm('确定清空全部数据？材料、学习进度、训练记录与设置都将删除，并恢复为初始示例内容。')) return
     setClearing(true)
     try {
-      await Promise.all([materialsStore.clear(), blobsStore.clear(), recordsStore.clear()])
+      // 三 store 的清空收进单事务（c042）：三个独立 clear() 并行提交时，中途失败
+      // 会留下半清空的库并直接走 reload，seed 逻辑面对「部分残留」状态不可预测。
+      // 只物化各 store 的 key（不物化值），runAtomicOps 跨 store del 一次提交。
+      const [materialKeys, blobKeys, recordKeys] = await Promise.all([
+        materialsStore.allKeys(),
+        blobsStore.allKeys(),
+        recordsStore.allKeys(),
+      ])
+      await runAtomicOps({
+        del: { materials: materialKeys, blobs: blobKeys, records: recordKeys },
+      })
       try {
         if (typeof localStorage !== 'undefined') {
           const drop: string[] = []

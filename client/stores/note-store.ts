@@ -7,7 +7,7 @@
 
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
-import { shiftIndexedRecordsAfterDeletion } from '@/stores/shift-records'
+import { remapIndexedRecords, shiftIndexedRecordsAfterDeletion } from '@/stores/shift-records'
 import type { SentenceNote } from '@/types/note'
 
 const NOTE_PREFIX = RECORD_KEY_PREFIXES.note
@@ -65,4 +65,12 @@ export async function deleteSentenceNote(materialId: string, sentenceIndex: numb
  */
 export async function shiftNotesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
   await shiftIndexedRecordsAfterDeletion(await listNotes(materialId), materialId, deletedIndex, RECORD_KEYS.note)
+}
+
+/**
+ * 整体替换字幕后按映射迁移笔记；对应句已不存在的笔记删除。
+ * @returns 被删除的笔记数
+ */
+export async function remapNotesAfterReplace(materialId: string, mapping: Map<number, number>): Promise<number> {
+  return remapIndexedRecords(await listNotes(materialId), materialId, mapping, RECORD_KEYS.note)
 }

@@ -30,3 +30,35 @@ export async function shiftIndexedRecordsAfterDeletion<T extends { sentenceIndex
     },
   })
 }
+
+/**
+ * 按任意索引映射迁移「{prefix}:{materialId}:{sentenceIndex}」形态的记录族
+ * （整体替换字幕后用；映射由 material-store 按句文本对齐生成）。
+ * 语义：mapping 无该索引 → 删除（对应的句子已不存在）；有 → 移到新索引。
+ * 同样走 runAtomicOps 单事务：替换中途失败不留半迁移状态。
+ * @returns 被删除（未命中映射）的记录数
+ */
+export async function remapIndexedRecords<T extends { sentenceIndex: number }>(
+  entries: T[],
+  materialId: string,
+  mapping: Map<number, number>,
+  keyOf: (materialId: string, sentenceIndex: number) => string,
+): Promise<number> {
+  const del: string[] = []
+  const put: Array<readonly [string, unknown]> = []
+  let dropped = 0
+  for (const e of entries) {
+    const next = mapping.get(e.sentenceIndex)
+    if (next === undefined) {
+      del.push(keyOf(materialId, e.sentenceIndex))
+      dropped++
+      continue
+    }
+    if (next !== e.sentenceIndex) {
+      del.push(keyOf(materialId, e.sentenceIndex))
+      put.push([keyOf(materialId, next), { ...e, sentenceIndex: next }] as const)
+    }
+  }
+  await runAtomicOps({ del: { records: del }, put: { records: put } })
+  return dropped
+}

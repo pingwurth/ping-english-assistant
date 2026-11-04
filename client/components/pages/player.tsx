@@ -18,10 +18,11 @@ import {
   getProgress,
   putMaterialRecord,
   putProgress,
+  remapSentenceReferences,
   shiftSentenceReferences,
   touchMaterial,
 } from '@/stores/material-store'
-import { favoriteSentenceIndexes, setFavorite } from '@/stores/favorite-store'
+import { favoriteSentenceIndexes, toggleFavoriteSentence } from '@/stores/favorite-store'
 import { deleteSentenceNote, listNotes, saveSentenceNote } from '@/stores/note-store'
 import { updateFrequencies } from '@/stores/vocab-store'
 import type { MaterialRecord } from '@/platform/storage/schema'
@@ -82,6 +83,22 @@ function shuffleArray<T>(array: T[]): T[] {
   return shuffled
 }
 
+/** 输入类元素聚焦时键盘快捷键让位（两个 keydown effect 共用的守卫） */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+}
+
+/** 句序号集合按映射迁移（整体替换字幕后内存态跟随持久层；未命中的丢弃） */
+function remapIndexSet(set: Set<number>, mapping: Map<number, number>): Set<number> {
+  const next = new Set<number>()
+  for (const i of set) {
+    const mapped = mapping.get(i)
+    if (mapped !== undefined) next.add(mapped)
+  }
+  return next
+}
+
 function Player() {
   const { materialId = '' } = useParams()
   const navigate = useNavigate()
@@ -126,6 +143,9 @@ function Player() {
   const jumpSentenceRef = useRef<number | null>(null)
   /** 当前句复制按钮的短暂回执（'en' 原文 / 'zh' 译文） */
   const [copiedKind, setCopiedKind] = useState<'en' | 'zh' | null>(null)
+  /** 删句进行中（防重入 + 禁用句级按钮；双击不得把句索引平移两次） */
+  const deletingSentenceRef = useRef(false)
+  const [sentenceBusy, setSentenceBusy] = useState(false)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   /** 复制成功的悬浮提示（fixed 定位锚在触发按钮上方，不受卡片 overflow-hidden 裁剪；id 变化以重放动画） */
   const [copyTip, setCopyTip] = useState<{ id: number; x: number; y: number } | null>(null)
@@ -214,7 +234,11 @@ function Player() {
   // URL 未变化时不会重跑，用户后续手动切句不受影响。
   useEffect(() => {
     const raw = searchParams.get('s')
-    if (raw == null) return
+    if (raw == null) {
+      // 无 ?s 参数的导航清掉上一材料遗留的跳句哨兵：否则旧句序号泄漏进新材料
+      jumpSentenceRef.current = null
+      return
+    }
     const n = Number(raw)
     if (!Number.isInteger(n) || n < 0) return
     jumpSentenceRef.current = n
@@ -249,12 +273,15 @@ function Player() {
     controller.load({ type: mediaType, src: mediaUrl }).then(() => {
       if (cancelled) return
       setDurationMs(controller.getDurationMs() || record.material.durationMs)
-      // 收藏夹跳转（?s=N）：定位到该句句首，不自动播放（高亮已由 jumpSentenceRef 的消费方设置）
+      // 收藏夹跳转（?s=N）：定位到该句句首，不自动播放。有效跳转保留哨兵 —— 由恢复
+      // effect 消费并压制「恢复上次进度」（旧写法在这里就把哨兵清空，恢复 effect 的
+      // 守卫永不可能命中，seekTo(resumePositionMs) 随即覆盖句跳转，深链失效）；
+      // 无效 s 参数就地消费，给进度恢复让路。
       const jump = jumpSentenceRef.current
       if (jump != null) {
         const target = sentences[jump]
         if (target) sp.seekTo(target.startMs)
-        jumpSentenceRef.current = null // 无效 s 参数也消费掉，给进度恢复让路
+        else jumpSentenceRef.current = null
       }
       setMediaReady(true)
     }).catch(() => { /* 加载失败：保持静态展示，控件可用但播放会报错提示 */ })
@@ -291,10 +318,16 @@ function Player() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [materialId, playable, mediaUrl])
 
-  // 媒体 metadata 就绪后恢复上次位置；?s=N 已在 load 回调中优先消费。
+  // 媒体 metadata 就绪后恢复上次位置；?s=N 深链优先 —— 本次导航按句定位，
+  // 历史播放位置作废（消费哨兵，后续 effect 运行不再受其压制）。
   useEffect(() => {
-    if (!mediaReady || resumePositionMs === null) return
-    if (jumpSentenceRef.current !== null) return
+    if (!mediaReady) return
+    if (jumpSentenceRef.current !== null) {
+      jumpSentenceRef.current = null
+      setResumePositionMs(null)
+      return
+    }
+    if (resumePositionMs === null) return
     const player = playerRef.current
     if (!player) return
     player.seekTo(resumePositionMs)
@@ -338,8 +371,7 @@ function Player() {
   const overlayOpen = !!editingSentence || showAiDialog || showTranslateDrawer || noteDrawerIndex != null
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+      if (isEditableTarget(e.target)) return
       if (overlayOpen) return
       const sp = playerRef.current
       if (e.code === 'Space') {
@@ -362,8 +394,7 @@ function Player() {
   // N 键打开当前句笔记抽屉（输入框聚焦时不触发；Esc/遮罩关闭由抽屉自理）
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+      if (isEditableTarget(e.target)) return
       if (overlayOpen) return
       if (e.key === 'n' || e.key === 'N') setNoteDrawerIndex(active)
     }
@@ -427,20 +458,19 @@ function Player() {
     setVolumeState(v)
     playerRef.current?.setVolume(v)
   }
-  const toggleFavorite = async (sentenceIndex: number) => {
-    const has = favSet.has(sentenceIndex)
-    await setFavorite(materialId, sentenceIndex, !has)
-    // 函数式更新（评审 #30）：两次收藏在 IDB 往返窗口内交错时，
-    // 后到者不得用渲染闭包里的旧 favSet 覆盖前者的结果
+  const toggleFavorite = useCallback(async (sentenceIndex: number) => {
+    // 存层读现值翻转并按句串行（2026-11 全仓复审 c039）：不再用渲染闭包里的 has
+    // 决定写什么 —— 双击的两次调用各自翻转一次，UI 与 IndexedDB 始终一致
+    const favorited = await toggleFavoriteSentence(materialId, sentenceIndex)
     setFavSet((prev) => {
-      const nextSet = new Set(prev)
-      if (nextSet.has(sentenceIndex)) nextSet.delete(sentenceIndex)
-      else nextSet.add(sentenceIndex)
-      return nextSet
+      const next = new Set(prev)
+      if (favorited) next.add(sentenceIndex)
+      else next.delete(sentenceIndex)
+      return next
     })
-  }
+  }, [materialId])
 
-  /** 将已解析的字幕数据应用到当前材料：持久化 + 更新生词频率 + 刷新 UI */
+  /** 将已解析的字幕数据应用到当前材料：持久化 + 迁移句级记录 + 更新生词频率 + 刷新 UI */
   const applySubtitleToRecord = useCallback(async (data: SubtitleData) => {
     if (!record) return
     const updatedRecord: MaterialRecord = {
@@ -452,11 +482,28 @@ function Player() {
       subtitleData: data,
     }
     await putMaterialRecord(updatedRecord)
+    // 整体替换句列表：收藏/笔记/听写明细/生词来源句/已播进度按句文本对齐迁移
+    // （旧行为零迁移，重新分句后句级记录静默错位到无关句子 —— 2026-11 全仓复审 c016）
+    const remap = await remapSentenceReferences(materialId, record.subtitleData?.sentences ?? [], data.sentences)
     const allWords = data.sentences.flatMap((s) => s.words)
     await updateFrequencies(allWords, materialId)
+    // 内存态跟随持久层迁移
+    setFavSet((prev) => remapIndexSet(prev, remap.mapping))
+    setNoteMap((prev) => {
+      const next: Record<number, string> = {}
+      for (const [k, v] of Object.entries(prev)) {
+        const mapped = remap.mapping.get(Number(k))
+        if (mapped !== undefined) next[mapped] = v
+      }
+      return next
+    })
+    playedRef.current.indexes = remapIndexSet(playedRef.current.indexes, remap.mapping)
     setRecord(updatedRecord)
     setActive(0)
-  }, [record, materialId])
+    if (remap.droppedRecords > 0) {
+      showErrorBanner(`字幕已替换：${remap.droppedRecords} 条未对齐的句级收藏/笔记/听写记录已清理`)
+    }
+  }, [record, materialId, showErrorBanner])
 
   /** 导入字幕文件：解析后更新 record 并重新装配播放引擎 */
   const handleImportSubtitle = useCallback(async (file: File) => {
@@ -489,66 +536,76 @@ function Player() {
     }
   }, [record, applySubtitleToRecord, showErrorBanner])
 
-  /** 删除句子：移除后重排 index 并持久化；笔记/收藏/播放进度 key 全部跟随平移（被删句自身删除，其后句序号 -1） */
+  /** 删除句子：移除后重排 index 并持久化；笔记/收藏/播放进度 key 全部跟随平移（被删句自身删除，其后句序号 -1）。
+   *  带防重入守卫（2026-11 全仓复审 c036）：删除链跨多个 IDB 事务、耗时几十 ms，
+   *  双击的第二次调用若用陈旧闭包再跑一遍平移，句索引会被双移位（不可逆）。 */
   const handleDeleteSentence = useCallback(async (index: number) => {
     if (!record?.subtitleData) return
-    // ① 先把待落盘的笔记按「位移前」索引落盘：400ms 防抖定时器若不在删句前收口，
-    //    会在平移完成后带着旧索引把笔记写到错误的句子上（或在被删句槽位复活笔记）
-    for (const [i, p] of pendingNotesRef.current) {
-      clearTimeout(p.timer)
-      await saveSentenceNote(materialId, i, p.content)
-    }
-    pendingNotesRef.current.clear()
+    if (deletingSentenceRef.current) return
+    deletingSentenceRef.current = true
+    setSentenceBusy(true)
+    try {
+      // ① 先把待落盘的笔记按「位移前」索引落盘：400ms 防抖定时器若不在删句前收口，
+      //    会在平移完成后带着旧索引把笔记写到错误的句子上（或在被删句槽位复活笔记）
+      for (const [i, p] of pendingNotesRef.current) {
+        clearTimeout(p.timer)
+        await saveSentenceNote(materialId, i, p.content)
+      }
+      pendingNotesRef.current.clear()
 
-    const updated = record.subtitleData.sentences
-      .filter((_, i) => i !== index)
-      .map((s, i) => ({ ...s, index: i }))
-    const data = { ...record.subtitleData, sentences: updated }
-    const updatedRecord: MaterialRecord = {
-      ...record,
-      material: record.material.subtitle
-        ? { ...record.material, subtitle: { ...record.material.subtitle, sentenceCount: updated.length } }
-        : record.material,
-      subtitleData: data,
+      const updated = record.subtitleData.sentences
+        .filter((_, i) => i !== index)
+        .map((s, i) => ({ ...s, index: i }))
+      const data = { ...record.subtitleData, sentences: updated }
+      const updatedRecord: MaterialRecord = {
+        ...record,
+        material: record.material.subtitle
+          ? { ...record.material, subtitle: { ...record.material.subtitle, sentenceCount: updated.length } }
+          : record.material,
+        subtitleData: data,
+      }
+      await putMaterialRecord(updatedRecord)
+      // ② 句序相关持久化记录统一由 store 平移（含进度，防止任何家族漏同步）。
+      const shiftedProgress = await shiftSentenceReferences(materialId, index)
+      await updateFrequencies(updated.flatMap((sentence) => sentence.words), materialId)
+      setFavSet((prev) => {
+        const next = new Set<number>()
+        for (const i of prev) {
+          if (i === index) continue
+          next.add(i > index ? i - 1 : i)
+        }
+        return next
+      })
+      // ③ 已播进度在内存中同步为 store 返回的持久化结果；store 无落盘记录（返回
+      // undefined，如播放不足 PROGRESS_FLUSH_MS 还没写过 progress:）时就地平移内存
+      // 集合——r3 复审回归：原写法在该分支把已播集合清空，脏标记使其后 flush 写不回，
+      // 已播标记永久丢失。
+      if (shiftedProgress) {
+        playedRef.current.indexes = new Set(shiftedProgress.playedSentenceIndexes)
+      } else {
+        const next = new Set<number>()
+        for (const i of playedRef.current.indexes) {
+          if (i === index) continue
+          next.add(i > index ? i - 1 : i)
+        }
+        playedRef.current.indexes = next
+      }
+      setNoteMap((prev) => {
+        const next: Record<number, string> = {}
+        for (const [k, v] of Object.entries(prev)) {
+          const i = Number(k)
+          if (i === index) continue
+          next[i > index ? i - 1 : i] = v
+        }
+        return next
+      })
+      setNoteDrawerIndex((prev) => (prev == null ? prev : prev === index ? null : prev > index ? prev - 1 : prev))
+      setRecord(updatedRecord)
+      setActive((prev) => Math.min(prev, Math.max(0, updated.length - 1)))
+    } finally {
+      deletingSentenceRef.current = false
+      setSentenceBusy(false)
     }
-    await putMaterialRecord(updatedRecord)
-    // ② 句序相关持久化记录统一由 store 平移（含进度，防止任何家族漏同步）。
-    const shiftedProgress = await shiftSentenceReferences(materialId, index)
-    await updateFrequencies(updated.flatMap((sentence) => sentence.words), materialId)
-    setFavSet((prev) => {
-      const next = new Set<number>()
-      for (const i of prev) {
-        if (i === index) continue
-        next.add(i > index ? i - 1 : i)
-      }
-      return next
-    })
-    // ③ 已播进度在内存中同步为 store 返回的持久化结果；store 无落盘记录（返回
-    // undefined，如播放不足 PROGRESS_FLUSH_MS 还没写过 progress:）时就地平移内存
-    // 集合——r3 复审回归：原写法在该分支把已播集合清空，脏标记使其后 flush 写不回，
-    // 已播标记永久丢失。
-    if (shiftedProgress) {
-      playedRef.current.indexes = new Set(shiftedProgress.playedSentenceIndexes)
-    } else {
-      const next = new Set<number>()
-      for (const i of playedRef.current.indexes) {
-        if (i === index) continue
-        next.add(i > index ? i - 1 : i)
-      }
-      playedRef.current.indexes = next
-    }
-    setNoteMap((prev) => {
-      const next: Record<number, string> = {}
-      for (const [k, v] of Object.entries(prev)) {
-        const i = Number(k)
-        if (i === index) continue
-        next[i > index ? i - 1 : i] = v
-      }
-      return next
-    })
-    setNoteDrawerIndex((prev) => (prev == null ? prev : prev === index ? null : prev > index ? prev - 1 : prev))
-    setRecord(updatedRecord)
-    setActive((prev) => Math.min(prev, Math.max(0, updated.length - 1)))
   }, [record, materialId])
 
   /** 纠错/单句翻译保存：更新句子内容并持久化；补译文后同步 isBilingual（播放器据此开放中文模式） */
@@ -575,8 +632,11 @@ function Player() {
       subtitleData: data,
     }
     await putMaterialRecord(updatedRecord)
+    // 单句纠错也改了词表：词频重算与删句/替换路径同纪律，否则 frequency 漂移
+    //（2026-11 全仓复审 c020）
+    await updateFrequencies(sentences.flatMap((s) => s.words), materialId)
     setRecord(updatedRecord)
-  }, [record, showErrorBanner])
+  }, [record, materialId, showErrorBanner])
 
   /** 打开纠错弹窗 */
   const handleEditSentenceOpen = useCallback((index: number, sentence: SubtitleSentence) => {
@@ -608,9 +668,11 @@ function Player() {
       subtitleData: data,
     }
     await putMaterialRecord(updatedRecord)
+    // zh2en 方向会改 textEn/words：词频与编辑/删句路径同纪律重算（c020 同族不变量）
+    await updateFrequencies(data.sentences.flatMap((s) => s.words), materialId)
     setRecord(updatedRecord)
     setMode('bilingual')
-  }, [record])
+  }, [record, materialId])
 
   /** 复制当前句原文/译文：成功后按钮短暂显示对勾回执 + 按钮上方浮出「复制成功」提示；原文带「句子解析：」前缀，粘贴到笔记/AI 时自带上下文 */
   const handleCopySentence = useCallback(async (kind: 'en' | 'zh', text: string, anchor?: HTMLElement | null) => {
@@ -681,7 +743,7 @@ function Player() {
 
   const noted = !!noteMap[safeActive]?.trim()
 
-  return <Shell back><div className="mx-auto flex max-w-[1440px] flex-col px-4 py-6 md:px-8"><div className="mb-6"><div className="flex items-center justify-between gap-3"><p className="text-sm text-muted-foreground">正在学习 · {record.material.mediaType === 'video' ? '视频' : '音频'} · {formatDuration(record.material.durationMs)}</p><Link className="shrink-0" to={`/training/${record.material.id}`} onClick={pauseAllMedia}><Button>进入训练</Button></Link></div><h1 className="truncate font-serif text-2xl font-semibold md:text-3xl" title={record.material.name}>{record.material.name}</h1></div>{errorBanner && <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive" role="alert"><span>{errorBanner}</span><button className="shrink-0 underline-offset-2 hover:underline" onClick={() => setErrorBanner('')}>关闭</button></div>}<div className="grid gap-6 lg:h-[calc(100vh-180px)] lg:grid-cols-[2fr_1fr] lg:overflow-hidden"><div className="flex min-h-0 flex-col gap-4"><div className="relative aspect-video rounded-3xl bg-primary shadow-inner lg:aspect-auto lg:flex-1 lg:min-h-[480px] lg:max-h-[480px]" onMouseMove={handleVideoMouseMove} onMouseLeave={handleVideoMouseLeave} onPointerDown={syncPointerType} onPointerMove={syncPointerType} onClick={handleVideoAreaTap}>{isSeedDemo && <p className="absolute inset-x-6 top-6 z-10 rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs text-primary-foreground/90">演示材料（无音频）——导入真实材料后即可播放音视频</p>}{mediaUrl && record.material.mediaType === 'video' ? <video ref={videoRef} src={mediaUrl} preload="metadata" className="absolute inset-0 h-full w-full rounded-3xl object-contain" /> : <BackgroundCarousel images={shuffledImages} interval={8000} transitionDuration={1000} className="absolute inset-0 rounded-3xl" />}<div className={`absolute inset-x-0 bottom-0 z-20 px-6 pb-4 pt-16 bg-gradient-to-t from-black/60 to-transparent rounded-b-3xl transition-opacity duration-300 ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onMouseEnter={handleControlsMouseEnter} onMouseLeave={handleControlsMouseLeave} onClick={handleOverlayTap}><LiveControlBar key={engineVersion} player={playerRef.current} {...{playing,setPlaying:togglePlay,mode,setMode,loop,setLoop:cycleLoop,sentenceIndex:safeActive,setSentenceIndex:selectSentence,items:sentences,durationMs,onSeek:(ms)=>playerRef.current?.seekTo(ms),rate,onRateCycle:cycleRate,volume,onVolumeChange:handleVolumeChange,disabled:!playable,isBilingual:record.subtitleData ? record.subtitleData.isBilingual : true}} /></div></div><Card ref={currentSentenceRef} className="py-0"><CardContent className="flex items-center py-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1.5"><Button variant="ghost" size="xs" className="-ml-2 gap-0.5 font-semibold uppercase tracking-wider text-primary" aria-expanded={!sentenceCollapsed} aria-label={sentenceCollapsed ? '展开当前句' : '折叠当前句'} title={sentenceCollapsed ? '展开当前句' : '折叠当前句'} onClick={() => setSentenceCollapsed(v => !v)}>当前句<ChevronUp data-icon="inline-end" className={`size-3.5 transition-transform duration-200 ${sentenceCollapsed ? 'rotate-180' : ''}`} /></Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textEn} title="复制原文" aria-label="复制原文" onClick={(e) => void handleCopySentence('en', current?.textEn ?? '', e.currentTarget)}>{copiedKind === 'en' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}原文</Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textZh} title="复制译文" aria-label="复制译文" onClick={(e) => void handleCopySentence('zh', current?.textZh ?? '', e.currentTarget)}>{copiedKind === 'zh' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}译文</Button><Button variant={noted ? 'secondary' : 'outline'} size="xs" disabled={sentences.length === 0} onClick={() => setNoteDrawerIndex(safeActive)} aria-label={noted ? `查看句子 ${safeActive + 1} 的笔记` : `为句子 ${safeActive + 1} 记笔记`}><StickyNote data-icon="inline-start" className={noted ? 'text-primary' : ''} /><span className="hidden sm:inline">{noted ? '查看笔记' : '记笔记'}</span><kbd className="hidden rounded border px-1 text-[10px] font-normal text-muted-foreground sm:inline">N</kbd></Button><Button variant="outline" size="xs" className="ml-auto shrink-0" disabled={sentences.length === 0} onClick={() => void toggleFavorite(safeActive)} aria-pressed={favorited} aria-label={favorited ? '取消收藏当前句' : '收藏当前句'}><Star data-icon="inline-start" className={favorited ? 'fill-primary text-primary' : ''} /><span className="hidden sm:inline">{favorited ? '已收藏' : '收藏'}</span></Button></div><div className={`grid transition-[grid-template-rows] duration-200 ease-out ${sentenceCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}><div className={`min-h-0 overflow-hidden transition-opacity duration-150 ${sentenceCollapsed ? 'opacity-0' : 'opacity-100'}`}><ScrollFade className="mt-1.5 h-[7.5rem]" resetKey={safeActive}>{current ? <>{(mode === 'bilingual' || mode === 'english') && <p className="whitespace-pre-line text-lg leading-relaxed select-text">{current.textEn}</p>}{(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 whitespace-pre-line text-muted-foreground">{current.textZh}</p>}</> : <p className="text-lg leading-relaxed text-muted-foreground">该材料暂无字幕</p>}</ScrollFade></div></div></div></CardContent></Card><WordBubble items={sentences} materialId={record.material.id} selectionContainerRef={currentSentenceRef} />{mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}</div><SubtitleList mode={mode} active={safeActive} onSelect={selectSentence} items={sentences} favoriteIndexes={favSet} noteIndexes={noteIndexes} onOpenNote={setNoteDrawerIndex} onImportSubtitle={handleImportSubtitle} onAiConvert={handleAiConvert} onDeleteSentence={handleDeleteSentence} onEditSentence={handleEditSentenceOpen} onExportSubtitle={handleExportSubtitle} onTranslate={handleTranslate} /></div></div>{copyTip && <div key={copyTip.id} role="status" aria-live="polite" className="animate-copy-tip pointer-events-none fixed z-50 flex items-center gap-1 rounded-full bg-foreground px-2.5 py-1 text-xs font-medium text-background shadow-lg" style={{ left: copyTip.x, top: copyTip.y - 6 }}><Check className="size-3" />复制成功</div>}<AiTranscribeDialog open={showAiDialog} onOpenChange={setShowAiDialog} mediaFile={mediaFile} onSubtitleGenerated={(srt) => void handleAiSubtitleGenerated(srt)} /><SubtitleEditDialog open={!!editingSentence} onOpenChange={(open) => { if (!open) setEditingSentence(null) }} sentence={editingSentence?.sentence ?? null} onSave={(updated) => void handleEditSentenceSave(updated)} prevStartMs={editingSentence ? sentences[editingSentence.index - 1]?.startMs : undefined} nextStartMs={editingSentence ? sentences[editingSentence.index + 1]?.startMs : undefined} /><TranslateDrawer open={showTranslateDrawer} onOpenChange={setShowTranslateDrawer} sentences={sentences} onApplyAll={(updated, direction) => void handleTranslateApplyAll(updated, direction)} /><SentenceNoteDrawer open={noteDrawerIndex != null} target={noteDrawerIndex != null ? (sentences[noteDrawerIndex] ?? null) : null} content={noteDrawerIndex != null ? (noteMap[noteDrawerIndex] ?? '') : ''} onChange={(v) => { if (noteDrawerIndex != null) handleNoteChange(noteDrawerIndex, v) }} onDelete={() => { if (noteDrawerIndex != null) handleNoteDelete(noteDrawerIndex) }} onLocate={() => { if (noteDrawerIndex != null) { selectSentence(noteDrawerIndex); setNoteDrawerIndex(null) } }} onClose={() => setNoteDrawerIndex(null)} /></Shell>
+  return <Shell back><div className="mx-auto flex max-w-[1440px] flex-col px-4 py-6 md:px-8"><div className="mb-6"><div className="flex items-center justify-between gap-3"><p className="text-sm text-muted-foreground">正在学习 · {record.material.mediaType === 'video' ? '视频' : '音频'} · {formatDuration(record.material.durationMs)}</p><Link className="shrink-0" to={`/training/${record.material.id}`} onClick={pauseAllMedia}><Button>进入训练</Button></Link></div><h1 className="truncate font-serif text-2xl font-semibold md:text-3xl" title={record.material.name}>{record.material.name}</h1></div>{errorBanner && <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive" role="alert"><span>{errorBanner}</span><button className="shrink-0 underline-offset-2 hover:underline" onClick={() => setErrorBanner('')}>关闭</button></div>}<div className="grid gap-6 lg:h-[calc(100vh-180px)] lg:grid-cols-[2fr_1fr] lg:overflow-hidden"><div className="flex min-h-0 flex-col gap-4"><div className="relative aspect-video rounded-3xl bg-primary shadow-inner lg:aspect-auto lg:flex-1 lg:min-h-[480px] lg:max-h-[480px]" onMouseMove={handleVideoMouseMove} onMouseLeave={handleVideoMouseLeave} onPointerDown={syncPointerType} onPointerMove={syncPointerType} onClick={handleVideoAreaTap}>{isSeedDemo && <p className="absolute inset-x-6 top-6 z-10 rounded-xl bg-primary-foreground/10 px-3 py-2 text-xs text-primary-foreground/90">演示材料（无音频）——导入真实材料后即可播放音视频</p>}{mediaUrl && record.material.mediaType === 'video' ? <video ref={videoRef} src={mediaUrl} preload="metadata" className="absolute inset-0 h-full w-full rounded-3xl object-contain" /> : <BackgroundCarousel images={shuffledImages} interval={8000} transitionDuration={1000} className="absolute inset-0 rounded-3xl" />}<div className={`absolute inset-x-0 bottom-0 z-20 px-6 pb-4 pt-16 bg-gradient-to-t from-black/60 to-transparent rounded-b-3xl transition-opacity duration-300 ${showControls ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onMouseEnter={handleControlsMouseEnter} onMouseLeave={handleControlsMouseLeave} onClick={handleOverlayTap}><LiveControlBar key={engineVersion} player={playerRef.current} {...{playing,setPlaying:togglePlay,mode,setMode,loop,setLoop:cycleLoop,sentenceIndex:safeActive,setSentenceIndex:selectSentence,items:sentences,durationMs,onSeek:(ms)=>playerRef.current?.seekTo(ms),rate,onRateCycle:cycleRate,volume,onVolumeChange:handleVolumeChange,disabled:!playable,isBilingual:record.subtitleData ? record.subtitleData.isBilingual : true}} /></div></div><Card ref={currentSentenceRef} className="py-0"><CardContent className="flex items-center py-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1.5"><Button variant="ghost" size="xs" className="-ml-2 gap-0.5 font-semibold uppercase tracking-wider text-primary" aria-expanded={!sentenceCollapsed} aria-label={sentenceCollapsed ? '展开当前句' : '折叠当前句'} title={sentenceCollapsed ? '展开当前句' : '折叠当前句'} onClick={() => setSentenceCollapsed(v => !v)}>当前句<ChevronUp data-icon="inline-end" className={`size-3.5 transition-transform duration-200 ${sentenceCollapsed ? 'rotate-180' : ''}`} /></Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textEn} title="复制原文" aria-label="复制原文" onClick={(e) => void handleCopySentence('en', current?.textEn ?? '', e.currentTarget)}>{copiedKind === 'en' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}原文</Button><Button variant="ghost" size="xs" className="text-muted-foreground" disabled={!current?.textZh} title="复制译文" aria-label="复制译文" onClick={(e) => void handleCopySentence('zh', current?.textZh ?? '', e.currentTarget)}>{copiedKind === 'zh' ? <Check data-icon="inline-start" className="text-primary" /> : <Copy data-icon="inline-start" />}译文</Button><Button variant={noted ? 'secondary' : 'outline'} size="xs" disabled={sentences.length === 0} onClick={() => setNoteDrawerIndex(safeActive)} aria-label={noted ? `查看句子 ${safeActive + 1} 的笔记` : `为句子 ${safeActive + 1} 记笔记`}><StickyNote data-icon="inline-start" className={noted ? 'text-primary' : ''} /><span className="hidden sm:inline">{noted ? '查看笔记' : '记笔记'}</span><kbd className="hidden rounded border px-1 text-[10px] font-normal text-muted-foreground sm:inline">N</kbd></Button><Button variant="outline" size="xs" className="ml-auto shrink-0" disabled={sentences.length === 0} onClick={() => void toggleFavorite(safeActive)} aria-pressed={favorited} aria-label={favorited ? '取消收藏当前句' : '收藏当前句'}><Star data-icon="inline-start" className={favorited ? 'fill-primary text-primary' : ''} /><span className="hidden sm:inline">{favorited ? '已收藏' : '收藏'}</span></Button></div><div className={`grid transition-[grid-template-rows] duration-200 ease-out ${sentenceCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}`}><div className={`min-h-0 overflow-hidden transition-opacity duration-150 ${sentenceCollapsed ? 'opacity-0' : 'opacity-100'}`}><ScrollFade className="mt-1.5 h-[7.5rem]" resetKey={safeActive}>{current ? <>{(mode === 'bilingual' || mode === 'english') && <p className="whitespace-pre-line text-lg leading-relaxed select-text">{current.textEn}</p>}{(mode === 'bilingual' || mode === 'chinese') && <p className="mt-1 whitespace-pre-line text-muted-foreground">{current.textZh}</p>}</> : <p className="text-lg leading-relaxed text-muted-foreground">该材料暂无字幕</p>}</ScrollFade></div></div></div></CardContent></Card><WordBubble items={sentences} materialId={record.material.id} selectionContainerRef={currentSentenceRef} />{mediaUrl && record.material.mediaType === 'audio' && <audio ref={audioRef} src={mediaUrl} preload="metadata" className="hidden" />}</div><SubtitleList mode={mode} active={safeActive} onSelect={selectSentence} items={sentences} favoriteIndexes={favSet} noteIndexes={noteIndexes} onOpenNote={setNoteDrawerIndex} onImportSubtitle={handleImportSubtitle} onAiConvert={handleAiConvert} onDeleteSentence={handleDeleteSentence} onEditSentence={handleEditSentenceOpen} onExportSubtitle={handleExportSubtitle} onTranslate={handleTranslate} sentenceBusy={sentenceBusy} /></div></div>{copyTip && <div key={copyTip.id} role="status" aria-live="polite" className="animate-copy-tip pointer-events-none fixed z-50 flex items-center gap-1 rounded-full bg-foreground px-2.5 py-1 text-xs font-medium text-background shadow-lg" style={{ left: copyTip.x, top: copyTip.y - 6 }}><Check className="size-3" />复制成功</div>}<AiTranscribeDialog open={showAiDialog} onOpenChange={setShowAiDialog} mediaFile={mediaFile} onSubtitleGenerated={(srt) => void handleAiSubtitleGenerated(srt)} /><SubtitleEditDialog open={!!editingSentence} onOpenChange={(open) => { if (!open) setEditingSentence(null) }} sentence={editingSentence?.sentence ?? null} onSave={(updated) => void handleEditSentenceSave(updated)} prevStartMs={editingSentence ? sentences[editingSentence.index - 1]?.startMs : undefined} nextStartMs={editingSentence ? sentences[editingSentence.index + 1]?.startMs : undefined} /><TranslateDrawer open={showTranslateDrawer} onOpenChange={setShowTranslateDrawer} sentences={sentences} onApplyAll={(updated, direction) => void handleTranslateApplyAll(updated, direction)} /><SentenceNoteDrawer open={noteDrawerIndex != null} target={noteDrawerIndex != null ? (sentences[noteDrawerIndex] ?? null) : null} content={noteDrawerIndex != null ? (noteMap[noteDrawerIndex] ?? '') : ''} onChange={(v) => { if (noteDrawerIndex != null) handleNoteChange(noteDrawerIndex, v) }} onDelete={() => { if (noteDrawerIndex != null) handleNoteDelete(noteDrawerIndex) }} onLocate={() => { if (noteDrawerIndex != null) { selectSentence(noteDrawerIndex); setNoteDrawerIndex(null) } }} onClose={() => setNoteDrawerIndex(null)} /></Shell>
 }
 
 /**

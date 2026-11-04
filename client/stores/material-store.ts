@@ -20,10 +20,11 @@ import { getPref, removePref } from '@/platform/storage/prefs'
 import { MATERIAL_OWNED_RECORD_PREFIXES, RECORD_KEYS, RECORD_KEY_PREFIXES, type MaterialRecord } from '@/platform/storage/schema'
 import { seedMaterials, seedSentences } from '@/data/seed'
 import { createStore } from '@/stores/store'
-import { shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
-import { shiftNotesAfterDeletion } from '@/stores/note-store'
-import { shiftTrainingRecordsAfterDeletion } from '@/stores/training-record-store'
-import { shiftVocabEntriesAfterDeletion, updateFrequencies } from '@/stores/vocab-store'
+import { remapFavoritesAfterReplace, shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
+import { remapNotesAfterReplace, shiftNotesAfterDeletion } from '@/stores/note-store'
+import { remapTrainingRecordsAfterReplace, shiftTrainingRecordsAfterDeletion } from '@/stores/training-record-store'
+import { remapVocabEntriesAfterReplace, shiftVocabEntriesAfterDeletion, updateFrequencies } from '@/stores/vocab-store'
+import type { SubtitleSentence } from '@/types/subtitle'
 
 export interface MaterialStoreState {
   ready: boolean
@@ -42,9 +43,13 @@ function sortByRecent(a: MaterialRecord, b: MaterialRecord): number {
 }
 
 async function refresh(): Promise<void> {
-  const keys = await materialsStore.allKeys()
-  const loaded = await Promise.all(keys.map((k) => materialsStore.get<MaterialRecord>(k)))
-  const records = loaded.filter((r): r is MaterialRecord => !!r && !!r.material)
+  // 单事务成对读（getAllEntries = getAllKeys+getAll 一次往返）：allKeys+逐键 get 是
+  // N+1 个独立事务、逐条 structured-clone 整份记录（含内嵌字幕）——大库启动卡顿的
+  // 最后一个 N+1 慢路径（2026-11 全仓复审 c057）
+  const entries = await materialsStore.getAllEntries()
+  const records = entries
+    .map(([, v]) => v as MaterialRecord)
+    .filter((r): r is MaterialRecord => !!r && !!r.material)
   records.sort(sortByRecent)
   // collection: 主键前缀区间读：只物化集合自身的值，不再全库物化
   const collectionEntries = await recordsStore.getAllEntriesByPrefix(RECORD_KEY_PREFIXES.collection)
@@ -174,11 +179,68 @@ export async function shiftSentenceReferences(
   return shifted
 }
 
+/** 整体替换字幕（导入/AI 生成）后的句序号迁移结果 */
+export interface SentenceReferenceRemapResult {
+  /** 旧句索引 → 新句索引（未命中的旧句不出现；页面据此迁移内存态） */
+  mapping: Map<number, number>
+  /** 未能对齐而删除的句级记录数（收藏+笔记+听写明细） */
+  droppedRecords: number
+  /** 迁移后的学习进度（无进度记录为 undefined） */
+  progress: LearningProgress | undefined
+}
+
+/**
+ * 整体替换句列表后，按句文本对齐迁移所有按句序号引用的持久化记录
+ * （收藏/笔记/听写明细/生词来源句/已播进度）。
+ * 旧行为是只替换 sentences、句级记录零迁移 —— 重新分句后收藏/笔记/训练历史
+ * 静默错位到无关句子（2026-11 全仓复审 c016）。文本归一后逐句匹配（同文本
+ * 多句按顺序占位）；未命中的句级记录删除、生词来源句置 -1、已播句过滤。
+ */
+export async function remapSentenceReferences(
+  materialId: string,
+  oldSentences: Array<Pick<SubtitleSentence, 'textEn'>>,
+  newSentences: Array<Pick<SubtitleSentence, 'textEn'>>,
+): Promise<SentenceReferenceRemapResult> {
+  const normalize = (t: string): string => t.replace(/\s+/g, ' ').trim().toLowerCase()
+  const candidatesByText = new Map<string, number[]>()
+  newSentences.forEach((s, i) => {
+    const key = normalize(s.textEn)
+    const queue = candidatesByText.get(key)
+    if (queue) queue.push(i)
+    else candidatesByText.set(key, [i])
+  })
+  const mapping = new Map<number, number>()
+  oldSentences.forEach((s, oldIndex) => {
+    const queue = candidatesByText.get(normalize(s.textEn))
+    const next = queue?.shift()
+    if (next !== undefined) mapping.set(oldIndex, next)
+  })
+
+  const [droppedFavorites, droppedNotes, droppedTrainings] = await Promise.all([
+    remapFavoritesAfterReplace(materialId, mapping),
+    remapNotesAfterReplace(materialId, mapping),
+    remapTrainingRecordsAfterReplace(materialId, mapping),
+    remapVocabEntriesAfterReplace(materialId, mapping),
+  ])
+
+  const progress = await getProgress(materialId)
+  let remapped: LearningProgress | undefined
+  if (progress) {
+    remapped = {
+      ...progress,
+      playedSentenceIndexes: progress.playedSentenceIndexes
+        .map((index) => mapping.get(index))
+        .filter((index): index is number => index !== undefined)
+        .sort((a, b) => a - b),
+    }
+    await putProgress(remapped)
+  }
+  return { mapping, droppedRecords: droppedFavorites + droppedNotes + droppedTrainings, progress: remapped }
+}
+
 /** 删除材料：级联清理 material + blob + 相关 records（进度/收藏/笔记/训练记录） */
 export async function removeMaterial(id: string): Promise<void> {
   await initMaterials()
-  await materialsStore.delete(id)
-  await blobsStore.delete(id)
   // MATERIAL_OWNED_RECORD_PREFIXES 是“哪些记录随材料删除”的唯一清单：遍历它派生待删 key，
   // 新增材料属主记录族只需在清单登记（不同前缀的 key 派生策略在此集中映射）。
   //   - training：键不含 materialId，走 materialId 值索引；
@@ -199,8 +261,12 @@ export async function removeMaterial(id: string): Promise<void> {
     }),
   )
   for (const keys of scans) for (const key of keys) ownedKeys.add(key)
-  // 级联删除收进单事务：任一失败整体回滚，不留「删了一半记录」的孤儿状态
-  await runAtomicOps({ del: { records: [...ownedKeys] } })
+  // 级联删除收进单事务：material / blob / records 三 store 一次提交，任一失败整体
+  // 回滚 —— 旧写法 materials.delete 与 blobs.delete 先各自提交，records 事务失败时
+  // 回滚覆盖不了它们，留下「材料没了、孤儿记录永存」的半删状态（2026-11 复审 c037/c023）
+  await runAtomicOps({
+    del: { materials: [id], blobs: [id], records: [...ownedKeys] },
+  })
   // 生词词频撤账：回收该材料对 frequency 的贡献（评审 #19，否则删除材料后词频永久虚高，
   // 违反 types/vocabulary.ts「frequency = materialCounts 各值之和」不变量）
   await updateFrequencies([], id)

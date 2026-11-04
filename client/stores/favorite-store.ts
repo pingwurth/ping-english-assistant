@@ -7,7 +7,7 @@
 
 import { recordsStore } from '@/platform/storage/idb'
 import { RECORD_KEYS, RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
-import { shiftIndexedRecordsAfterDeletion } from '@/stores/shift-records'
+import { remapIndexedRecords, shiftIndexedRecordsAfterDeletion } from '@/stores/shift-records'
 import type { Favorite } from '@/types/progress'
 
 const FAV_PREFIX = RECORD_KEY_PREFIXES.favorite
@@ -39,6 +39,28 @@ export async function setFavorite(materialId: string, sentenceIndex: number, fav
   await recordsStore.put(key, { materialId, sentenceIndex, createdAt: Date.now() } satisfies Favorite)
 }
 
+/** 每句一把串行链：同句的翻转操作排队执行，防止并发读-翻-写交错 */
+const favoriteToggleChains = new Map<string, Promise<unknown>>()
+
+/**
+ * 翻转某句收藏态，返回翻转后的值。
+ * 读现值 → 翻转 → 写回，按 (materialId, sentenceIndex) 串行：双击的两次调用各自
+ * 翻转一次（true→false），UI 与 IndexedDB 始终一致。页面渲染闭包里的旧 favSet
+ * 只用于展示，不再决定写什么（2026-11 全仓复审 c039）。
+ */
+export function toggleFavoriteSentence(materialId: string, sentenceIndex: number): Promise<boolean> {
+  const chainKey = `${materialId}:${sentenceIndex}`
+  const prev = favoriteToggleChains.get(chainKey) ?? Promise.resolve()
+  const run = prev.then(async () => {
+    const existing = await recordsStore.get<Favorite>(RECORD_KEYS.favorite(materialId, sentenceIndex))
+    await setFavorite(materialId, sentenceIndex, !existing)
+    return !existing
+  })
+  // 链上只留"已完成"的哨兵：失败不毒化后续调用，也不向链尾传播
+  favoriteToggleChains.set(chainKey, run.then(() => undefined, () => undefined))
+  return run
+}
+
 /** 该材料已收藏的句序号（升序，供训练范围过滤） */
 export async function favoriteSentenceIndexes(materialId: string): Promise<number[]> {
   const favorites = await listFavorites(materialId)
@@ -52,4 +74,12 @@ export async function favoriteSentenceIndexes(materialId: string): Promise<numbe
  */
 export async function shiftFavoritesAfterDeletion(materialId: string, deletedIndex: number): Promise<void> {
   await shiftIndexedRecordsAfterDeletion(await listFavorites(materialId), materialId, deletedIndex, RECORD_KEYS.favorite)
+}
+
+/**
+ * 整体替换字幕后按映射迁移收藏；对应句已不存在的收藏删除。
+ * @returns 被删除的收藏数
+ */
+export async function remapFavoritesAfterReplace(materialId: string, mapping: Map<number, number>): Promise<number> {
+  return remapIndexedRecords(await listFavorites(materialId), materialId, mapping, RECORD_KEYS.favorite)
 }

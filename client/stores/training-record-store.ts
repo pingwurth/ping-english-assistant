@@ -180,3 +180,33 @@ export async function shiftTrainingRecordsAfterDeletion(materialId: string, dele
   }
   await runAtomicOps({ del: { records: del }, put: { records: put } })
 }
+
+/**
+ * 整体替换字幕后按映射迁移单句听写明细的 sentenceIndex；对应句已不存在的记录删除。
+ * @returns 被删除的训练记录数
+ */
+export async function remapTrainingRecordsAfterReplace(materialId: string, mapping: Map<number, number>): Promise<number> {
+  const entries = await recordsStore.getEntriesByMaterial(materialId)
+  const del: string[] = []
+  const put: Array<readonly [string, unknown]> = []
+  for (const [key, value] of entries) {
+    if (!key.startsWith(RECORD_KEY_PREFIXES.training)) continue
+    const record = value as TrainingRecord | undefined
+    if (!record || record.mode !== 'dictation') continue
+    const detail = record.detail as { sentenceIndex?: unknown } | undefined
+    if (!detail || typeof detail.sentenceIndex !== 'number') continue
+    const next = mapping.get(detail.sentenceIndex)
+    if (next === undefined) {
+      del.push(key)
+      continue
+    }
+    if (next !== detail.sentenceIndex) {
+      put.push([key, {
+        ...record,
+        detail: { ...record.detail, sentenceIndex: next },
+      } satisfies TrainingRecord])
+    }
+  }
+  await runAtomicOps({ del: { records: del }, put: { records: put } })
+  return del.length
+}
