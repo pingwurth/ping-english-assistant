@@ -46,10 +46,11 @@ ping-english-assistant/
 │   ├── lib/                # 工具函数
 │   ├── data/               # 种子数据
 │   └── public/             # 静态资源
-├── server/                 # Python 后端服务
+├── server/                 # 后端服务（Python 推理 ×2 + Node 评分代理）
 │   ├── transcribe_server.py  # faster-whisper 转写服务（端口 8766）
 │   ├── align_server.py       # WhisperX 对齐服务（端口 8765）
-│   ├── start.sh              # 启动脚本
+│   ├── src/                  # Node Fastify 5 SOE 评分代理（端口 8788，azure/tencent/iflytek/mock）
+│   ├── start.sh              # Python 服务启动脚本
 │   └── requirements.txt      # Python 依赖
 ├── page-prototype/         # 原型沙箱（独立 Next.js，设计迭代用）
 ├── docs/                   # 设计文档（中文）
@@ -65,7 +66,7 @@ cd client
 pnpm install          # 安装依赖（使用 pnpm，非 npm）
 pnpm dev              # 启动开发服务器 → http://localhost:3000
 pnpm build            # 生产构建
-pnpm test             # 运行单元测试（Vitest, core/ 和 services/mock/）
+pnpm test             # 运行单元测试（Vitest, core/services/platform/lib/stores/app/api）
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -77,10 +78,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 启动转写服务（CPU 模式）
+# 启动对齐服务（默认模式，CPU；端口 8765）
 ./start.sh
 
-# 启动对齐服务（GPU 模式）
+# 启动转写服务（端口 8766）/ GPU 对齐
+./start.sh --server transcribe
 ./start.sh --server align --device cuda
 
 # 同时启动两个服务
@@ -97,7 +99,7 @@ Next.js App Router 仅作为 SPA shell，所有页面都是 `'use client'` 组�
 
 - `app/page.tsx` → 渲染 `<StudyApp />`
 - `app/[...slug]/page.tsx` → catch-all 路由，同样渲染 `<StudyApp />`
-- `components/study-app.tsx` → `BrowserRouter` + 14 条路由
+- `components/study-app.tsx` → `BrowserRouter` + 16 条具体路由（+ 1 条 404 通配）
 
 ### 六层架构
 
@@ -119,11 +121,11 @@ Core（平台无关纯 TS）→ Platform（浏览器实现）→ Services（AI �
 ### 关键设计决策
 
 - **本地优先**：所有用户数据存储在浏览器 IndexedDB，后端无状态无数据库。首次加载自动注入 4 条种子材料。
-- **服务契约模式**：AI 服务通过接口抽象（`services/contracts.ts`），当前返回 mock 实现，未来通过 `NEXT_PUBLIC_SERVICE_MODE` 环境变量切换真实 API。
+- **服务解析**：AI 服务经 `services/contracts.ts` 抽象（SoeService/MnemonicService）；评分服务由 `getSoeService()` 按 settings.json 的 soe 配置解析（mock 伪评分 ↔ BFF 代理真实评分），助记直接转发 BFF —— 无环境变量开关。
 - **录音链路**：`getUserMedia → MediaRecorder → OfflineAudioContext（16kHz 单声道重采样）→ WAV Blob`，专为 ASR/SOE 兼容性设计。
 - **字幕解析器**：自研 SRT/LRC 双语解析器，零依赖纯 TypeScript，支持行号容错报错和句级时间轴对齐。
 - **播放器 Seek 校准**：seek 后静默旧进度，等待原生 timeupdate 到达实际落点（SEEK_DRIFT_THRESHOLD_MS = 300ms）。
-- **14 条客户端路由**：Library → Import → Player → Training Center → Puzzle/Dictation/Shadowing/Recitation/ReadAloud → Report → Settings → TTS → Transcribe。
+- **16 条客户端路由**：Library → Import → Player → Training Center → Puzzle/Dictation/Shadowing/Recitation/ReadAloud → Report → Settings → TTS → Transcribe → Favorites/Collection → Vocabulary（含生词助记详情）。
 
 ### 服务端
 
@@ -131,6 +133,7 @@ Core（平台无关纯 TS）→ Platform（浏览器实现）→ Services（AI �
 |------|------|------|------|
 | 转写服务 | 8766 | Python FastAPI + faster-whisper | 音频转文字（ASR），支持自动语言检测 |
 | 对齐服务 | 8765 | Python FastAPI + WhisperX | 强制对齐，生成精准词级时间戳 |
+| SOE 评分代理 | 8788 | Node.js Fastify 5 | 发音评分中转（azure/tencent/iflytek，密钥存 server/.env，见 server/README） |
 
 ## 页面路由
 
@@ -149,6 +152,10 @@ Core（平台无关纯 TS）→ Platform（浏览器实现）→ Services（AI �
 | `/training/report` | Report | P9 分析报告（SSE 流式） |
 | `/settings` | SettingsPage | P10 设置（播放/训练、模型配置、存储管理） |
 | `/tts` | TTS | P11 文字转语音 |
+| `/favorites` | Favorites | 收藏句汇总（跳转定位） |
+| `/collection/:collectionId` | CollectionDetail | 材料集详情 |
+| `/vocabulary` | Vocabulary | 生词本（多本管理、词频） |
+| `/vocabulary/mnemonic/:entryId` | MnemonicPage | 生词助记卡（SSE 流式生成） |
 
 ## 设计理念
 
@@ -186,7 +193,7 @@ Core（平台无关纯 TS）→ Platform（浏览器实现）→ Services（AI �
 - **包管理**：pnpm（lockfile 在 `client/pnpm-lock.yaml`）
 - **UI 库**：shadcn/ui base-nova 样式，Lucide 图标，Tailwind CSS 4
 - **状态管理**：自研 `createStore` + `useStore`，无 zustand/Pinia 等外部依赖
-- **测试**：Vitest 4.x，node 环境，仅测试 core/ 和 services/mock/，测试文件位于 `__tests__/` 目录
+- **测试**：Vitest 4.x，node 环境，覆盖 core/services/platform/lib/stores/app/api，测试文件位于 `__tests__/` 目录
 - **代码风格**：函数 < 50 行，文件 < 800 行，不可变模式，无 ESLint/Prettier 配置
 - **文档语言**：代码注释和设计文档使用中文
 

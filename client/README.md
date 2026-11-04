@@ -131,14 +131,15 @@ pnpm test         # 运行 core/ 和 services/mock 的单元测试
 
 ### 服务抽象层
 
-AI 服务（ASR、SOE、TTS、报告生成）通过接口抽象，当前使用 Mock 实现（离线可用）。未来可通过环境变量切换为真实 API：
+AI 服务经 `services/contracts.ts` 抽象（现仅 SoeService 与 MnemonicService；ASR/TTS/报告走 BFF 直连，不经契约层）：
 
 ```typescript
-// services/index.ts
-export function getServices(mode: ServiceMode = 'mock'): AppServices {
-  // 未来：NEXT_PUBLIC_SERVICE_MODE === 'api' ? getApiServices() : getMockServices()
-  return getMockServices()
-}
+// services/index.ts —— getServices() 返回 soe 演示伪评分 + mnemonic BFF 转发
+export function getServices(): AppServices { return getMockServices() }
+
+// 真实评分按 settings.json 的 soe 配置解析（无环境变量开关）：
+//   getSoeService(): provider === 'mock' ? 演示伪评分 : new ApiSoeService()  // BFF 代理
+//   设置拉取失败 → 显式抛 SOE_SETTINGS_UNAVAILABLE，绝不回落伪评分
 ```
 
 ### 录音链路（ADR-5）

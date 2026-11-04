@@ -19,12 +19,9 @@ export interface AsrTranscribeSegment {
 }
 
 /* ── 契约② POST /api/v1/soe/evaluate 发音评分代理 ── */
-
-export interface SoeEvaluateRequest {
-  audio: File | Blob
-  refText: string
-  evalMode: 'sentence'
-}
+/* 请求无独立类型：真实载荷是 multipart FormData（见 services/api/soe.ts 与
+ * app/api/soe/evaluate/route.ts），此前的 SoeEvaluateRequest（audio: File|Blob）
+ * 零引用且误写线格式，2026-11 复审 c088 删除。 */
 
 export interface SoePhonemeScore {
   symbol: string

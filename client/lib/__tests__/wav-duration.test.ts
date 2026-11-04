@@ -68,3 +68,53 @@ describe('parseWavDurationMs（评审 #22）', () => {
     expect(parseWavDurationMs(new ArrayBuffer(10))).toBeNull()
   })
 })
+
+/* ── decodeTtsAudioPayload（2026-11 全仓复审 c046）：
+ *   该函数存在的唯一理由是 Node 8KB 池的 .buffer 陷阱（≤4KB payload 从池分配，
+ *   直接取 .buffer 会带上池内垃圾编码成坏 WAV）—— 抽取注释自称「防再漂移」，
+ *   却没有回归测试锁住这个它要防的 bug。 ── */
+import { decodeTtsAudioPayload } from '../wav-duration'
+
+describe('decodeTtsAudioPayload（c046：小 payload 不得带出 Node 池垃圾）', () => {
+  /** 44 字节标准头 + n 字节 PCM：16kHz mono 16-bit */
+  function wav(pcmBytes: number): string {
+    const buf = Buffer.alloc(44 + pcmBytes)
+    buf.write('RIFF', 0, 'latin1')
+    buf.writeUInt32LE(36 + pcmBytes, 4)
+    buf.write('WAVE', 8, 'latin1')
+    buf.write('fmt ', 12, 'latin1')
+    buf.writeUInt32LE(16, 16)
+    buf.writeUInt16LE(1, 20)
+    buf.writeUInt16LE(1, 22)
+    buf.writeUInt32LE(16000, 24)
+    buf.writeUInt32LE(32000, 28)
+    buf.writeUInt16LE(2, 32)
+    buf.writeUInt16LE(16, 34)
+    buf.write('data', 36, 'latin1')
+    buf.writeUInt32LE(pcmBytes, 40)
+    return buf.toString('base64')
+  }
+
+  it('小 payload（<4KB，Node 池分配）：视图长度精确等于音频字节数', () => {
+    const base64 = wav(1000) // 1044 字节 < 4KB，必然走池
+    const { audioBuffer, durationMs } = decodeTtsAudioPayload(base64)
+    expect(audioBuffer.byteLength).toBe(1044)
+    // 1000 字节 / 32000 B/s = 31.25ms → 31
+    expect(durationMs).toBe(31)
+  })
+
+  it('大 payload（>8KB，独立分配）：同样精确', () => {
+    const base64 = wav(20000)
+    const { audioBuffer, durationMs } = decodeTtsAudioPayload(base64)
+    expect(audioBuffer.byteLength).toBe(20044)
+    expect(durationMs).toBe(625)
+  })
+
+  it('非 WAV 载荷：按 24kHz mono 字节率估算兜底，不抛错不返回 0', () => {
+    const notWav = Buffer.alloc(48000, 0x00).toString('base64') // 1 秒的量级
+    const { audioBuffer, durationMs } = decodeTtsAudioPayload(notWav)
+    expect(audioBuffer.byteLength).toBe(48000)
+    expect(durationMs).toBeGreaterThanOrEqual(999) // ≈1000ms（round 容差 1ms）
+    expect(durationMs).toBeLessThanOrEqual(1001)
+  })
+})

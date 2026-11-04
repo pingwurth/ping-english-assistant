@@ -81,4 +81,4 @@ Path alias `@/*` maps to `client/` root (defined in `tsconfig.json`).
 
 - `page-prototype/` — standalone design sandbox, separate deps, no tests
 - `docs/` — Chinese-language design docs (tech selection, architecture, prototype)
-- `.mimocode/`, `.qoder/` — other AI assistant configs
+- `.qoder/` — other AI assistant config (`.mimocode/` never existed in this repo's history; stale claim removed 2026-11)

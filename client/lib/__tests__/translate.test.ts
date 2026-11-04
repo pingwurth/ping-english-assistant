@@ -71,3 +71,56 @@ describe('translateTexts 并发块池（评审 #50）', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+/* ── translateSrtToBilingual 统一编排（2026-11 全仓复审 c047）：
+ *   a4ced2e 收敛的两份手写编排此前零测试 —— 取消→AbortError、失败→单语降级带
+ *   warning、onDegraded 漏翻接线都无护栏。 ── */
+
+import { translateSrtToBilingual } from '../translate'
+
+const SRT = [
+  '1', '00:00:00,000 --> 00:00:02,000', 'Hello there.', '',
+  '2', '00:00:02,000 --> 00:00:04,000', 'General Kenobi.', '',
+].join('\n')
+
+describe('translateSrtToBilingual（c047）', () => {
+  it('成功路径：合并出双语 SRT（译文上屏为 textZh）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { texts: string[] }
+      return new Response(JSON.stringify({ translations: body.texts.map((t) => `译(${t})`) }), { status: 200 })
+    }))
+    const out = await translateSrtToBilingual(SRT, undefined, undefined)
+    expect(out.srt).toContain('Hello there.')
+    expect(out.srt).toContain('译(Hello there.)')
+    expect(out.warning).toBeUndefined()
+  })
+
+  it('非取消失败：降级保留单语并带 warning，不抛出', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'boom' }), { status: 500 })))
+    const out = await translateSrtToBilingual(SRT, undefined, undefined)
+    expect(out.srt).toBe(SRT)
+    expect(out.warning).toContain('翻译失败')
+    expect(out.warning).toContain('保留单语')
+  })
+
+  it('用户取消：统一抛 DOMException AbortError 而不是降级', async () => {
+    const ac = new AbortController()
+    ac.abort() // 调用方先取消：translateTexts 在首个块前抛 AbortError
+    await expect(translateSrtToBilingual(SRT, undefined, ac.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+  })
+
+  it('上游部分漏翻回填：onDegraded 接线产出 warning', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { texts: string[] }
+      // 第二条漏翻（译文为空串触发原文回填）
+      const translations = body.texts.map((t, i) => (i === 1 ? '' : `译(${t})`))
+      return new Response(JSON.stringify({ translations, filledWithSource: 1 }), { status: 200 })
+    }))
+    const out = await translateSrtToBilingual(SRT, undefined, undefined)
+    expect(out.warning).toContain('漏翻 1/2')
+    // 漏翻句保留原文
+    expect(out.srt).toContain('General Kenobi.')
+  })
+})
