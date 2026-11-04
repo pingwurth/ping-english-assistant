@@ -114,6 +114,22 @@ describe('fetchLlmConfigs 状态机（c005/c001）', () => {
     await retry
   })
 
+  it('非 force 在途 → invalidate → 非 force 调用：不合流旧代际,必起新请求（五轮复审 c004）', async () => {
+    const { fetchMock, calls } = deferredFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const stale = fetchLlmConfigs() // 保存前发起(旧代际,非 force)
+    invalidateLlmConfigsCache()     // 保存
+    const fresh = fetchLlmConfigs() // 保存后挂载的 hook(load() 非 force)——不得合流旧代际
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    calls()[0]!.resolve({ configs: [] })
+    calls()[1]!.resolve({ configs: [{ id: 'saved' }] })
+    expect(((await fresh).configs as Array<{ id: string }>).length).toBe(1)
+    // 旧代际响应不落缓存:后续非 force 命中新代际
+    expect(((await fetchLlmConfigs()).configs as Array<{ id: string }>).length).toBe(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await stale
+  })
+
   it('已 settle 的当前代际缓存：force 拒绝（强制重取）,非 force 命中', async () => {
     const { fetchMock, calls } = deferredFetch()
     vi.stubGlobal('fetch', fetchMock)

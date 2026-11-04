@@ -33,8 +33,13 @@ export function fetchLlmConfigs(force = false): Promise<LlmConfigsResponse> {
   const request: Promise<LlmConfigsResponse> = fetch('/api/settings/llm-configs')
     .then((r) => r.json() as Promise<LlmConfigsResponse>)
     .catch((err) => {
-      // 失败清缓存（下次启用/挂载重试）；不得抹掉已被更新的请求顶替的引用
-      if (llmConfigsRequest === request) llmConfigsRequest = null
+      // 失败清缓存（下次启用/挂载重试）；不得抹掉已被更新的请求顶替的引用。
+      // fetching 同步复位（五轮复审 c003）：catch 先置 null 会让 finally 的持有者
+      // 校验永假——失败路径的复位不能依赖 finally
+      if (llmConfigsRequest === request) {
+        llmConfigsRequest = null
+        llmConfigsFetching = false
+      }
       throw err
     })
     .finally(() => {

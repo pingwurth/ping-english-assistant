@@ -579,12 +579,20 @@ function Player() {
     setSentenceBusy(true)
     try {
       // ① 先把待落盘的笔记按「位移前」索引落盘：400ms 防抖定时器若不在删句前收口，
-      //    会在平移完成后带着旧索引把笔记写到错误的句子上（或在被删句槽位复活笔记）
-      for (const [i, p] of pendingNotesRef.current) {
-        clearTimeout(p.timer)
-        await saveSentenceNote(materialId, i, p.content)
+      //    会在平移完成后带着旧索引把笔记写到错误的句子上（或在被删句槽位复活笔记）。
+      //    收口失败（quota/DB）→ 诚实报错并中止删句（五轮复审 c001：与导入路径同款；
+      //    DB 未动、索引不被平移，不能静默成 unhandled rejection）
+      try {
+        for (const [i, p] of pendingNotesRef.current) {
+          clearTimeout(p.timer)
+          await saveSentenceNote(materialId, i, p.content)
+        }
+        pendingNotesRef.current.clear()
+      } catch (e) {
+        console.error('[player] 删句前笔记收口失败:', e)
+        showErrorBanner('笔记保存失败（存储空间不足？），已取消删句，请清理空间后重试')
+        return
       }
-      pendingNotesRef.current.clear()
 
       const updated = record.subtitleData.sentences
         .filter((_, i) => i !== index)
@@ -639,7 +647,7 @@ function Player() {
       deletingSentenceRef.current = false
       setSentenceBusy(false)
     }
-  }, [record, materialId])
+  }, [record, materialId, showErrorBanner])
 
   /** 纠错/单句翻译保存：更新句子内容并持久化；补译文后同步 isBilingual（播放器据此开放中文模式） */
   const handleEditSentenceSave = useCallback(async (updated: SubtitleSentence) => {

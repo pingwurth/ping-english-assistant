@@ -128,6 +128,10 @@ describe('replaceSubtitleData（原子替换 + 五族迁移）', () => {
   })
 })
 
+// 已知限制（五轮复审 c002）：vitest node 环境无 indexedDB,本文件全部跑 runAtomicOps
+// 的内存回退分支——钉住的是「共享的 del 先于 put 发出」这一决策;真实 IDB 分支
+// (单 readwrite 事务内 os.delete→os.put)未被执行。fake-indexeddb 已在 devDependencies,
+// 接线进 vitest 属测试基建升级,暂未立项。
 describe('replaceSubtitleData 次序敏感场景（四轮复审 c014）', () => {
   it('双句互换且两侧都有收藏/笔记：del 与 put 同键交叉,交换 del/put 次序即丢记录', async () => {
     // 句 0↔1 互换（文本互换）,两句各有收藏与笔记 —— mapping 0→1、1→0,
