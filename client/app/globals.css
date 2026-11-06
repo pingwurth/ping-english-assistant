@@ -30,6 +30,7 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-ink: var(--ink);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -47,6 +48,9 @@
 
 :root {
   color-scheme: light;
+  /* 墨蓝 ink：唯一的强调色（纸墨世界的墨水）。只做状态色——正在播放句、
+     收藏星、播放态；chrome（按钮/表面）保持黑白灰，不抢内容。 */
+  --ink: oklch(0.44 0.11 255);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -83,6 +87,8 @@
 
 .dark {
   color-scheme: dark;
+  /* 暗色下墨蓝提亮，保证与深底 ≥4.5:1 对比度 */
+  --ink: oklch(0.72 0.09 240);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -119,6 +125,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
+    --ink: oklch(0.72 0.09 240);
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);
