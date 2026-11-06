@@ -3,6 +3,8 @@
  * 点击切换开始/停止，文案"开始录音/停止录音"。
  */
 
+import { Mic, Square } from 'lucide-react'
+
 function RecordButton({ recording, setRecording }: { recording:boolean; setRecording:(v:boolean)=>void }) {
   const label = recording ? '停止录音' : '开始录音'
   return (
@@ -10,9 +12,9 @@ function RecordButton({ recording, setRecording }: { recording:boolean; setRecor
       type="button"
       aria-label={label}
       onClick={() => setRecording(!recording)}
-      className={`flex size-32 flex-col items-center justify-center rounded-full border-8 transition-all ${recording ? 'border-destructive/20 bg-destructive text-destructive-foreground' : 'border-primary/15 bg-primary text-primary-foreground'}`}
+      className={`flex size-32 flex-col items-center justify-center rounded-full border-4 transition-colors ${recording ? 'border-destructive/20 bg-destructive text-destructive-foreground' : 'border-primary/15 bg-primary text-primary-foreground'}`}
     >
-      <span className="text-3xl">{recording ? '■' : '●'}</span>
+      {recording ? <Square className="size-6 fill-current" /> : <Mic className="size-7" />}
       <span className="mt-1 text-sm">{label}</span>
     </button>
   )

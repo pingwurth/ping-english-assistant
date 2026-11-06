@@ -160,7 +160,7 @@ function Recitation() {
       <div className="mx-auto max-w-3xl px-4 py-8 md:px-8">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm text-muted-foreground">SPEAKING PRACTICE</p>
+            <p className="text-sm text-muted-foreground">口语练习</p>
             <h1 className="font-serif text-3xl font-semibold">全文背诵</h1>
           </div>
           <div className="flex gap-2" role="group" aria-label="提示模式">

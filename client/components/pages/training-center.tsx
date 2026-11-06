@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
-import { Heart } from 'lucide-react'
+import { AudioLines, BookOpen, Heart, Mic, PenLine, Puzzle, type LucideIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
-import { Shell, PageIntro } from '@/components/shared/shell'
+import { Shell } from '@/components/shared/shell'
 import { getMaterialRecord } from '@/stores/material-store'
 import { recordsStore } from '@/platform/storage/idb'
 import { getLatestTrainingRecordsByMaterial } from '@/stores/training-record-store'
@@ -14,12 +14,12 @@ import { RECORD_KEY_PREFIXES } from '@/platform/storage/schema'
 import type { TrainingMode, TrainingRecord } from '@/types/training'
 
 /** fullTextOnly：影子跟读/全文背诵始终按全文出题，选中「收藏句」时置灰 */
-const MODES: Array<{ to: string; mode: TrainingMode; title: string; desc: string; icon: string; fullTextOnly?: boolean }> = [
-  { to: '/training/puzzle', mode: 'puzzle', title: '九宫格', desc: '选词拼句 · 巩固句型结构', icon: '▦' },
-  { to: '/training/dictation', mode: 'dictation', title: '单句听写', desc: '听音写句 · 提升听辨能力', icon: '✎' },
-  { to: '/training/read-aloud', mode: 'read-aloud', title: '跟读评分', desc: '逐句跟读 · AI 发音评分', icon: '◉' },
-  { to: '/training/shadowing', mode: 'shadowing', title: '影子跟读', desc: '全文同步跟读 · 转写对比', icon: '◌', fullTextOnly: true },
-  { to: '/training/recitation', mode: 'recitation', title: '全文背诵', desc: '背诵全文 · 转写对比', icon: '▤', fullTextOnly: true },
+const MODES: Array<{ to: string; mode: TrainingMode; title: string; desc: string; icon: LucideIcon; fullTextOnly?: boolean }> = [
+  { to: '/training/puzzle', mode: 'puzzle', title: '九宫格', desc: '选词拼句 · 巩固句型结构', icon: Puzzle },
+  { to: '/training/dictation', mode: 'dictation', title: '单句听写', desc: '听音写句 · 提升听辨能力', icon: PenLine },
+  { to: '/training/read-aloud', mode: 'read-aloud', title: '跟读评分', desc: '逐句跟读 · AI 发音评分', icon: Mic },
+  { to: '/training/shadowing', mode: 'shadowing', title: '影子跟读', desc: '全文同步跟读 · 转写对比', icon: AudioLines, fullTextOnly: true },
+  { to: '/training/recitation', mode: 'recitation', title: '全文背诵', desc: '背诵全文 · 转写对比', icon: BookOpen, fullTextOnly: true },
 ]
 
 /** 各模式"上次成绩"文案（读 records 中该材料最新一条 train: 记录） */
@@ -75,7 +75,10 @@ function TrainingCenter() {
   return (
     <Shell back>
       <div className="mx-auto max-w-3xl px-4 py-10 md:px-8">
-        <PageIntro title="选择训练模式" eyebrow="TRAINING CENTER" />
+        <div className="mb-8">
+          <p className="text-sm text-muted-foreground">训练中心</p>
+          <h1 className="font-serif text-3xl font-semibold tracking-tight md:text-4xl">选择训练模式</h1>
+        </div>
         <Card className="mb-6">
           <CardContent className="flex flex-col gap-3 p-5">
             <span className="text-muted-foreground">材料：{record.material.name}</span>
@@ -90,7 +93,7 @@ function TrainingCenter() {
                     disabled={o.disabled}
                     title={o.title}
                     aria-pressed={scope === o.id}
-                    className={`rounded-md px-2.5 py-1 text-sm transition-colors disabled:opacity-40 ${scope === o.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    className={`rounded-md px-2.5 py-1 text-sm transition-colors disabled:opacity-40 ${scope === o.id ? 'bg-ink text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
                   >
                     {o.label}
                   </button>
@@ -107,7 +110,7 @@ function TrainingCenter() {
             const locked = favoritesScope && !!m.fullTextOnly
             const body = (
               <CardContent className="flex items-center gap-4 p-5">
-                <span className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-xl text-primary">{m.icon}</span>
+                <span className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-ink/10 text-ink"><m.icon className="size-5" /></span>
                 <div className="flex-1">
                   <CardTitle className="text-lg">{m.title}</CardTitle>
                   <CardDescription>{m.desc}</CardDescription>
@@ -119,7 +122,7 @@ function TrainingCenter() {
             )
             return locked
               ? <Card key={m.to} className="opacity-50">{body}</Card>
-              : <Link to={m.to} key={m.to}><Card className="transition-colors hover:border-primary">{body}</Card></Link>
+              : <Link to={m.to} key={m.to}><Card className="transition-colors hover:border-ink/40">{body}</Card></Link>
           })}
         </div>
       </div>

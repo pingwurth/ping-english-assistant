@@ -21,7 +21,7 @@ import type { MaterialRecord } from '@/platform/storage/schema'
 /** 训练页外壳：页头 + 逐句真实进度（current = 已完成句数，0-based 游标） */
 function TrainingSessionShell({ eyebrow, title, current, total, children }: { eyebrow: string; title: string; current: number; total: number; children: React.ReactNode }) {
   const pct = total > 0 ? Math.round((current / total) * 100) : 0
-  return <Shell back><div className="mx-auto max-w-3xl px-4 py-8 md:px-8"><div className="mb-8 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">{eyebrow}</p><h1 className="font-serif text-3xl font-semibold">{title}</h1></div><Badge>{total ? `${Math.min(current + 1, total)} / ${total}` : '0 / 0'}</Badge></div><Progress value={pct} className="mb-8" />{children}</div></Shell>
+  return <Shell back><div className="mx-auto max-w-3xl px-4 py-8 md:px-8"><div className="mb-8 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">{eyebrow}</p><h1 className="font-serif text-3xl font-semibold">{title}</h1></div><Badge variant="outline" className="tabular-nums">{total ? `${Math.min(current + 1, total)} / ${total}` : '0 / 0'}</Badge></div><Progress value={pct} className="mb-8" />{children}</div></Shell>
 }
 
 /** 完成小结浮层：fixed 全屏遮罩 + 居中 Card（复用现有组件，不引 dialog） */

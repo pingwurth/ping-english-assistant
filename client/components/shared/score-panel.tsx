@@ -27,7 +27,7 @@ function ScorePanel({ result, className }: { result: SoeEvaluateResponse; classN
   return (
     <Card className={cn('w-full bg-primary/5', className)}>
       <CardContent className="p-5">
-        <p className="font-serif text-3xl font-semibold text-primary">综合 {result.total} 分</p>
+        <p className="font-serif text-3xl font-semibold text-ink">综合 {result.total} 分</p>
         <div className="mt-4 flex flex-col gap-3 text-left">
           {dims.map((d) => (
             <Progress key={d.label} value={d.value}>

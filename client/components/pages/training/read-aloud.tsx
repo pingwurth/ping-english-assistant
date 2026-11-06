@@ -176,7 +176,7 @@ function ReadAloud() {
           </div>
 
           {phase === 'scoring' ? (
-            <div className="flex size-32 flex-col items-center justify-center rounded-full border-8 border-primary/15 bg-muted text-muted-foreground">
+            <div className="flex size-32 flex-col items-center justify-center rounded-full border-4 border-primary/15 bg-muted text-muted-foreground">
               <Loader2 className="size-7 animate-spin" />
               <span className="mt-1 text-sm">评分中…</span>
             </div>
@@ -197,7 +197,7 @@ function ReadAloud() {
           {/* 录音回听：出分后保留本句录音可回放（与报告页回听一致的交互） */}
           {phase === 'scored' && recordingUrl && (
             <div className="flex w-full flex-col items-start">
-              <p className="text-xs font-semibold uppercase tracking-wider text-primary">▶ 回听我的录音</p>
+              <p className="text-xs font-medium text-ink">回听我的录音</p>
               <audio ref={playbackAudioRef} controls src={recordingUrl} preload="metadata" className="mt-2 w-full" />
             </div>
           )}

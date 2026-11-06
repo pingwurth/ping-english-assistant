@@ -18,7 +18,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Headphones, Loader2, Pause, Play, RotateCcw, Square } from 'lucide-react'
+import { Circle, Headphones, Loader2, Pause, Play, RotateCcw, Square } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -109,8 +109,8 @@ function LivePlayProgress({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">{paused ? '⏸ 已暂停' : '▶ 播放中'} {formatDuration(playMs)} / {formatDuration(durationMs)}</span>
-        <span className={`font-mono ${paused ? 'text-muted-foreground' : 'text-destructive'}`}>{paused ? '⏸ 录音已暂停' : `● 录音中 ${formatDuration(recMs)}`}</span>
+        <span className="flex items-center gap-1.5 text-muted-foreground">{paused ? <Pause className="size-3.5" /> : <Play className="size-3.5 fill-current" />}{paused ? '已暂停' : '播放中'}<span className="tabular-nums">{formatDuration(playMs)} / {formatDuration(durationMs)}</span></span>
+        <span className={`flex items-center gap-1.5 font-mono tabular-nums ${paused ? 'text-muted-foreground' : 'text-destructive'}`}>{paused ? <><Pause className="size-3.5" />录音已暂停</> : <><Circle className="size-2.5 fill-current" />录音中 {formatDuration(recMs)}</>}</span>
       </div>
       <Progress value={pct} />
     </div>
@@ -303,10 +303,10 @@ function Shadowing() {
       <div className="mx-auto max-w-3xl px-4 py-8 md:px-8">
         <div className="mb-8 flex items-center justify-between">
           <div>
-            <p className="text-sm text-muted-foreground">SPEAKING PRACTICE</p>
+            <p className="text-sm text-muted-foreground">口语练习</p>
             <h1 className="font-serif text-3xl font-semibold">影子跟读</h1>
           </div>
-          {phase === 'recording' && <Badge variant="destructive">{paused ? '⏸ 已暂停' : '● 录音中'}</Badge>}
+          {phase === 'recording' && <Badge variant="destructive" className="gap-1.5">{paused ? <><Pause className="size-3" />已暂停</> : <><Circle className="size-2.5 fill-current" />录音中</>}</Badge>}
         </div>
 
         {phase === 'intro' && (
@@ -327,7 +327,7 @@ function Shadowing() {
             </Card>
             <Card>
               <CardContent className="flex flex-col gap-3 p-6 md:p-8">
-                <p className="text-xs font-semibold uppercase tracking-wider text-primary">原文（可提前预读）</p>
+                <p className="text-xs font-medium text-ink">原文（可提前预读）</p>
                 <OriginalTextCard sentences={sentences} activeIdx={-1} />
               </CardContent>
             </Card>

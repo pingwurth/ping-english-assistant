@@ -141,7 +141,7 @@ function RecordingReview({ recordingUrl, transcript, error, diffTokens, onRetry,
     <>
       <Card>
         <CardContent className="flex flex-col gap-3 p-6">
-          <p className="text-xs font-semibold uppercase tracking-wider text-primary">▶ 回放录音</p>
+          <p className="text-xs font-medium text-ink">回放录音</p>
           {recordingUrl
             ? <audio ref={playbackRef} controls src={recordingUrl} preload="metadata" className="w-full" />
             : <p className="text-sm text-muted-foreground">未录到音频。</p>}
@@ -150,7 +150,7 @@ function RecordingReview({ recordingUrl, transcript, error, diffTokens, onRetry,
 
       <Card>
         <CardContent className="flex flex-col gap-2 p-6">
-          <p className="text-xs font-semibold uppercase tracking-wider text-primary">录音转文字</p>
+          <p className="text-xs font-medium text-ink">录音转文字</p>
           {error ? (
             <>
               <p className="text-sm text-destructive">{error}</p>
@@ -166,7 +166,7 @@ function RecordingReview({ recordingUrl, transcript, error, diffTokens, onRetry,
 
       <Card>
         <CardContent className="flex flex-col gap-3 p-6">
-          <p className="text-xs font-semibold uppercase tracking-wider text-primary">与原文对比</p>
+          <p className="text-xs font-medium text-ink">与原文对比</p>
           {diffTokens.length > 0 && <SpeechDiffTokens tokens={diffTokens} />}
           {transcript && diffTokens.every((t) => t.type === 'correct') && (
             <p className="text-sm font-medium text-green-600 dark:text-green-400">太棒了——逐词全部读对！</p>

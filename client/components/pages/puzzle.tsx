@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CircleHelp, Play } from 'lucide-react'
+import { ArrowRight, CircleHelp, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { SessionSummaryOverlay, SummaryStat, TrainingSessionShell, useTrainingMaterial } from '@/components/shared/training-session-shell'
@@ -197,7 +197,7 @@ function Puzzle() {
         {/* 拼句区：展示已选词 */}
         <div className="min-h-16 rounded-xl border-2 border-dashed p-3 text-lg leading-relaxed">
           {selected.map((word, i) => (
-            <span key={`${word}-${i}`} className="mr-2 inline-block rounded-md bg-primary/10 px-2 py-1 text-primary">{word}</span>
+            <span key={`${word}-${i}`} className="mr-2 inline-block rounded-md bg-ink/10 px-2 py-1 text-ink">{word}</span>
           ))}
           {!selected.length && <span className="text-muted-foreground">点击下方正确的词…</span>}
         </div>
@@ -215,10 +215,10 @@ function Puzzle() {
                   onClick={() => onGridPick(i)}
                   disabled={resolved}
                   className={[
-                    'flex h-14 items-center justify-center rounded-xl border text-base font-medium transition-all',
-                    'hover:border-primary/60 hover:bg-primary/5 active:scale-95',
+                    'flex h-14 items-center justify-center rounded-xl border text-base font-medium transition-colors',
+                    'hover:border-ink/40 hover:bg-ink/5 active:scale-95',
                     'disabled:opacity-50 disabled:cursor-not-allowed',
-                    isAnswer ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary/30' : 'border-border bg-card',
+                    isAnswer ? 'border-ink bg-ink/10 text-ink ring-2 ring-ink/30' : 'border-border bg-card',
                     isShaking ? 'animate-shake' : '',
                     isHinting ? 'animate-hint-glow' : '',
                   ].filter(Boolean).join(' ')}
@@ -247,7 +247,7 @@ function Puzzle() {
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={playSegment} disabled={!playable}>重听</Button>
             <Button variant="outline" onClick={onNext}>
-              {session.cursor === session.queue.length - 1 ? '查看小结' : '下一句 →'}
+              {session.cursor === session.queue.length - 1 ? '查看小结' : <>下一句<ArrowRight data-icon="inline-end" /></>}
             </Button>
           </div>
         )}
