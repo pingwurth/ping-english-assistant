@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import 'katex/dist/katex.min.css'
 import { parseNoteMarkdown, tokenizeInline, type InlineToken, type NoteBlock, type NoteListItem } from '@/core/markdown/note-markdown'
 import { getNoteImage, parseNoteImageRef } from '@/stores/note-image-store'
+import { ImageLightbox } from '@/components/shared/image-lightbox'
 
 type KatexModule = (typeof import('katex'))['default']
 
@@ -69,6 +70,7 @@ function NoteImage({ src, alt }: { src: string; alt: string }) {
   // 初值读缓存：已渲染过的图（如双栏预览先挂载过）直接出图，不再走 IDB
   const [url, setUrl] = useState<string | null>(() => (ref ? objectUrlCache.get(ref.blobKey) ?? null : null))
   const [failed, setFailed] = useState(false)
+  const [zoomOpen, setZoomOpen] = useState(false)
   const blobKey = ref?.blobKey ?? null
   useEffect(() => {
     if (!ref || url) return
@@ -90,14 +92,17 @@ function NoteImage({ src, alt }: { src: string; alt: string }) {
   if (failed) return <span className="my-1 inline-flex items-center gap-1 rounded-lg border border-dashed px-2 py-1 text-xs text-muted-foreground">图片已失效{alt ? `（${alt}）` : ''}</span>
   if (!url) return <span className="my-1 inline-block h-16 w-40 animate-pulse rounded-lg bg-muted" aria-label="图片加载中" />
   return (
-    <img
-      src={url}
-      alt={alt}
-      title="点击查看大图"
-      loading="lazy"
-      className="my-1 block max-h-[60vh] w-auto max-w-full cursor-zoom-in rounded-xl border"
-      onClick={() => { window.open(url, '_blank') }}
-    />
+    <>
+      <img
+        src={url}
+        alt={alt}
+        title="点击查看大图（支持缩放）"
+        loading="lazy"
+        className="my-1 block max-h-[60vh] w-auto max-w-full cursor-zoom-in rounded-xl border"
+        onClick={() => setZoomOpen(true)}
+      />
+      {zoomOpen && <ImageLightbox src={url} alt={alt} onClose={() => setZoomOpen(false)} />}
+    </>
   )
 }
 
