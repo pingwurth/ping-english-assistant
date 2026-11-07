@@ -58,8 +58,14 @@ describe('removeMaterial 级联删除', () => {
     await recordsStore.put(RECORD_KEYS.training('r3'), makeTrain('r3', 'm-1'))
     await recordsStore.put(RECORD_KEYS.collection('c1'), { id: 'c1', name: '集合', createdAt: 1 } satisfies MaterialCollection)
     await recordsStore.put(RECORD_KEYS.vocabEntry('v1'), { word: 'apple' })
+    // 笔记图片（blobs store 的 noteimg: 前缀族）：m-1 的随材料级联删除，m-10 的保留
+    await blobsStore.put('noteimg:m-1:img-1', new Blob(['a']))
+    await blobsStore.put('noteimg:m-10:img-1', new Blob(['b']))
 
     await ms.removeMaterial('m-1')
+
+    expect(await blobsStore.get('noteimg:m-1:img-1')).toBeUndefined()
+    expect(await blobsStore.get('noteimg:m-10:img-1')).toBeDefined()
 
     // 材料与媒体：只删 m-1
     expect(await materialsStore.get('m-1')).toBeUndefined()

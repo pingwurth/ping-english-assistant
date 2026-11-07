@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import 'katex/dist/katex.min.css'
 import { parseNoteMarkdown, tokenizeInline, type InlineToken, type NoteBlock, type NoteListItem } from '@/core/markdown/note-markdown'
+import { getNoteImage, parseNoteImageRef } from '@/stores/note-image-store'
 
 type KatexModule = (typeof import('katex'))['default']
 
@@ -35,6 +36,71 @@ function MathFallback({ text, display }: { text: string; display?: boolean }) {
   return <code className="rounded-md bg-muted px-1 py-0.5 font-mono text-[0.85em]">{src}</code>
 }
 
+/* ─── 笔记图片渲染 ───────────────────────────────────────────
+ * idb://noteimg/ 引用 → blobs store 取 Blob → objectURL。会话级 LRU 缓存让
+ * 同图重复渲染（滚动重挂载/编辑预览双份）不再读 IDB；外链 src 一律按纯文本
+ * 处理（离线优先，且不给外部资源/注入面）。 */
+
+/** blobKey → objectURL（Map 迭代序即 LRU 序：命中移尾、超限逐出最旧并 revoke） */
+const objectUrlCache = new Map<string, string>()
+const OBJECT_URL_CACHE_MAX = 80
+
+function cachedObjectUrl(key: string, blob: Blob): string {
+  const hit = objectUrlCache.get(key)
+  if (hit !== undefined) {
+    objectUrlCache.delete(key)
+    objectUrlCache.set(key, hit)
+    return hit
+  }
+  const url = URL.createObjectURL(blob)
+  objectUrlCache.set(key, url)
+  if (objectUrlCache.size > OBJECT_URL_CACHE_MAX) {
+    const oldest = objectUrlCache.keys().next().value
+    if (oldest !== undefined) {
+      URL.revokeObjectURL(objectUrlCache.get(oldest)!)
+      objectUrlCache.delete(oldest)
+    }
+  }
+  return url
+}
+
+function NoteImage({ src, alt }: { src: string; alt: string }) {
+  const ref = parseNoteImageRef(src)
+  // 初值读缓存：已渲染过的图（如双栏预览先挂载过）直接出图，不再走 IDB
+  const [url, setUrl] = useState<string | null>(() => (ref ? objectUrlCache.get(ref.blobKey) ?? null : null))
+  const [failed, setFailed] = useState(false)
+  const blobKey = ref?.blobKey ?? null
+  useEffect(() => {
+    if (!ref || url) return
+    let alive = true
+    getNoteImage(ref.materialId, ref.imageId)
+      .then((blob) => {
+        if (!alive) return
+        if (blob) setUrl(cachedObjectUrl(ref.blobKey, blob))
+        else setFailed(true)
+      })
+      .catch(() => { if (alive) setFailed(true) })
+    return () => { alive = false }
+    // blobKey 为原始值：引用文本不变不重取；url 置位后守卫直接短路。
+    // eslint 不在仓内；ref 每次渲染都是新对象，不能进依赖
+  }, [blobKey, url])
+
+  // 非本应用引用（外链等）：不加载，退化为可读文本
+  if (!ref) return <span className="rounded-md bg-muted px-1 py-0.5 text-[0.85em] text-muted-foreground">{alt || src}</span>
+  if (failed) return <span className="my-1 inline-flex items-center gap-1 rounded-lg border border-dashed px-2 py-1 text-xs text-muted-foreground">图片已失效{alt ? `（${alt}）` : ''}</span>
+  if (!url) return <span className="my-1 inline-block h-16 w-40 animate-pulse rounded-lg bg-muted" aria-label="图片加载中" />
+  return (
+    <img
+      src={url}
+      alt={alt}
+      title="点击查看大图"
+      loading="lazy"
+      className="my-1 block max-h-[60vh] w-auto max-w-full cursor-zoom-in rounded-xl border"
+      onClick={() => { window.open(url, '_blank') }}
+    />
+  )
+}
+
 function Inline({ tokens, katex }: { tokens: InlineToken[]; katex: KatexModule | null }) {
   return (
     <>
@@ -51,6 +117,7 @@ function Inline({ tokens, katex }: { tokens: InlineToken[]; katex: KatexModule |
               ? <span key={i} className="my-1 block overflow-x-auto" dangerouslySetInnerHTML={{ __html: html }} />
               : <span key={i} dangerouslySetInnerHTML={{ __html: html }} />
           }
+          case 'image': return <NoteImage key={i} src={t.src} alt={t.alt} />
           default: return <span key={i}>{t.text}</span>
         }
       })}

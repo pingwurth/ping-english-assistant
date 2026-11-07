@@ -127,9 +127,39 @@ describe('parseBackupJson media 清单', () => {
     ])
   })
 
-  it('完整备份形态（media + formatVersion 1）在当前版本可解析（钉死不 bump 版本契约）', () => {
-    const r = parseBackupJson(validBackupJson({ media: [{ id: 'm1', size: 1 }] }))
+  it('完整备份形态（media + formatVersion 1）在当前版本可解析（钉死向前兼容契约）', () => {
+    const r = parseBackupJson(validBackupJson({ formatVersion: 1, media: [{ id: 'm1', size: 1 }] }))
     expect(r).toEqual({ ok: true, backup: expect.objectContaining({ formatVersion: 1 }) })
+  })
+})
+
+describe('parseBackupJson noteImages 清单', () => {
+  it('v1 备份（无 noteImages 字段）→ 空数组', () => {
+    const r = parseBackupJson(validBackupJson({ formatVersion: 1, media: [{ id: 'm1', size: 1 }] }))
+    if (!r.ok) throw new Error(r.error)
+    expect(r.backup.noteImages).toEqual([])
+  })
+
+  it('非数组给出可读错误', () => {
+    expect(parseBackupJson(validBackupJson({ noteImages: 'x' }))).toEqual({ ok: false, error: '备份的 noteImages 字段不正确' })
+  })
+
+  it('合法条目解析成功，mime 缺省填空；非 noteimg: 前缀键/坏 size 剔除、按键去重', () => {
+    const r = parseBackupJson(validBackupJson({
+      noteImages: [
+        { key: 'noteimg:m1:a', mime: 'image/webp', size: 10 },
+        { key: 'noteimg:m1:b', size: 20 },
+        { key: 'media:m1', size: 30 },
+        { key: 'noteimg:m1:a', mime: 'image/png', size: 99 },
+        { key: 'noteimg:m1:c', size: -1 },
+        { key: 'noteimg:m1:d' },
+      ],
+    }))
+    if (!r.ok) throw new Error(r.error)
+    expect(r.backup.noteImages).toEqual([
+      { key: 'noteimg:m1:a', mime: 'image/webp', size: 10 },
+      { key: 'noteimg:m1:b', mime: '', size: 20 },
+    ])
   })
 })
 

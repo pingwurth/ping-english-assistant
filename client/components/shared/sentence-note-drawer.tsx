@@ -8,16 +8,19 @@
  * 行为：内容受控（调用方负责持久化，抽屉本身不落盘）；打开期间锚定目标句不随播放切走；
  *       Esc / 点遮罩 / 完成 关闭；双栏下编辑/预览滚动按百分比互同步（先滚的一侧持有同步权，
  *       静止 120ms 释放，对端回声被吞——无反馈循环）；
- *       Markdown 支持 **粗** ==高亮== `码` $公式$ - 列表（缩进嵌套）> 引用 | 表格 --- 分割线 ::: center 居中；
+ *       Markdown 支持 **粗** ==高亮== `码` $公式$ - 列表（缩进嵌套）> 引用 | 表格 --- 分割线 ::: center 居中
+ *       ![图片]（工具条按钮 / 直接粘贴 / 拖入文件；压缩后存本地 IDB，随完整备份导出）；
  *       编辑器列表行回车自动续行（继承缩进与前缀，空项回车退出），Tab / Shift+Tab 整行缩进 / 回退一级。
  */
 
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from 'react'
-import { AlignCenter, Bold, Check, Code, Columns2, Highlighter, List, Minus, PanelLeft, PanelRight, Pencil, Play, Sigma, StickyNote, Table as TableIcon, Trash2, X } from 'lucide-react'
+import { AlignCenter, Bold, Check, Code, Columns2, Highlighter, Image as ImageIcon, List, Minus, PanelLeft, PanelRight, Pencil, Play, Sigma, StickyNote, Table as TableIcon, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownText } from '@/components/shared/markdown-text'
 import { enclosingCenter } from '@/core/markdown/note-markdown'
+import { compressImage } from '@/platform/image/compress-image'
+import { noteImageRef, putNoteImage } from '@/stores/note-image-store'
 import { formatDuration } from '@/components/shared/player-parts'
 import type { SubtitleSentence } from '@/types/subtitle'
 
@@ -72,21 +75,32 @@ function contentWidthOf(el: HTMLDivElement | null): number {
 
 /**
  * 工具条 + 受控 textarea；wrapSelection 是 toggle：选区已带效果（记号紧贴选区外侧，
- * 或选区自身完整含记号）则去记号取消，否则包裹；insertBlock 在光标处插整块（表格）。
+ * 或选区自身完整含记号）则去记号取消，否则包裹；insertBlock 在光标处插整块（表格/图片）。
+ * 图片插入（按钮/粘贴/拖拽共用）：compressImage 压缩 → blobs store 入库 → 光标处插
+ * `![alt](idb://noteimg/…)` 引用；压缩/入库是异步的，拼接须用 valueRef 里的最新内容，
+ * 否则闭包 value 是点击时的旧值，期间的键入会被吞。
  * 工具条 mousedown 阻止默认：焦点不离开编辑器——否则失焦状态下受控赋值会重置滚动位置
  * （跳顶/跳底），且 wrapSelection/insertBlock 里仍备份恢复 scrollTop 作保险。
  * 键盘增强见 onKeyDown：列表回车续行 / 空项退出 / Tab 整行缩进（IME 组合中不拦截）。
  */
-function NoteEditor({ value, onChange, inputRef, onInputScroll }: {
+function NoteEditor({ value, onChange, inputRef, onInputScroll, materialId }: {
   value: string
   onChange: (v: string) => void
   /** 编辑器 textarea 的外部 ref（滚动同步需要反向设置编辑器滚动位置） */
   inputRef?: React.RefObject<HTMLTextAreaElement | null>
   /** textarea 滚动回调（抽屉用于百分比同步到预览区） */
   onInputScroll?: (el: HTMLTextAreaElement) => void
+  /** 图片归属材料（noteimg 键按材料隔离，随材料删除级联） */
+  materialId: string
 }) {
   const localRef = useRef<HTMLTextAreaElement | null>(null)
   const ref = inputRef ?? localRef
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [imgBusy, setImgBusy] = useState(false)
+  const [imgError, setImgError] = useState<string | null>(null)
+  // 异步插入的安全镜像：图片压缩/入库完成时读最新内容（见上）
+  const valueRef = useRef(value)
+  valueRef.current = value
   const wrapSelection = (before: string, after = before) => {
     const el = ref.current
     if (!el) return
@@ -109,21 +123,45 @@ function NoteEditor({ value, onChange, inputRef, onInputScroll }: {
     const cs = s + before.length
     requestAnimationFrame(() => { el.focus(); el.setSelectionRange(cs, cs + sel.length); el.scrollTop = st })
   }
-  const insertBlock = (text: string) => {
+  const insertBlock = (text: string, base: string = value) => {
     const el = ref.current
     if (!el) return
     const { selectionStart: s, selectionEnd: e } = el
     const st = el.scrollTop
-    const before = value.slice(0, s)
+    const before = base.slice(0, s)
     // 光标（选区）之后的内容必须拼回，否则插入即截断；行尾原有的 \n 与插入块自带的
     // 收尾 \n 会叠成空行（连续两空行 → spacer），故吃掉开头一个
-    const after = value.slice(e).replace(/^\n/, '')
+    const after = base.slice(e).replace(/^\n/, '')
     const prefix = before && !before.endsWith('\n') ? '\n\n' : ''
     const next = before + prefix + text + '\n' + after
     onChange(next)
     // 光标落在插入块末尾、后续内容之前
     const caret = before.length + prefix.length + text.length + 1
     requestAnimationFrame(() => { el.focus(); el.setSelectionRange(caret, caret); el.scrollTop = st })
+  }
+
+  /** 图片入库 + 插入引用（按钮/粘贴/拖拽共用）；失败在工具条状态位短提示，不打断书写 */
+  const insertImages = async (files: ReadonlyArray<File>) => {
+    const images = files.filter((f) => f.type.startsWith('image/'))
+    if (images.length === 0 || imgBusy) return
+    setImgBusy(true)
+    setImgError(null)
+    try {
+      const marks: string[] = []
+      for (const f of images) {
+        const blob = await compressImage(f)
+        const imageId = await putNoteImage(materialId, blob)
+        // alt 取文件名（去扩展名、去 [] 记号字符），无名/清空后回落「图片」
+        const alt = f.name.replace(/\.[^.]*$/, '').replace(/[[\]]/g, '').trim() || '图片'
+        marks.push(`![${alt}](${noteImageRef(materialId, imageId)})`)
+      }
+      insertBlock(marks.join('\n\n'), valueRef.current)
+    } catch (e) {
+      setImgError(e instanceof Error ? e.message : '图片插入失败')
+      setTimeout(() => setImgError(null), 4000)
+    } finally {
+      setImgBusy(false)
+    }
   }
   /**
    * 键盘增强（IME 组合中不拦——回车是确认候选词；缩进单位与解析器一致：2 空格一级）：
@@ -193,6 +231,22 @@ function NoteEditor({ value, onChange, inputRef, onInputScroll }: {
         <Button
           variant="ghost"
           size="icon-xs"
+          aria-label="插入图片"
+          title="插入图片（也可直接粘贴或拖入图片文件）"
+          disabled={imgBusy}
+          onClick={() => fileInputRef.current?.click()}
+        ><ImageIcon /></Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => { void insertImages(Array.from(e.target.files ?? [])); e.target.value = '' }}
+        />
+        <Button
+          variant="ghost"
+          size="icon-xs"
           aria-label="居中"
           title="居中：选中文本包裹 ::: center 容器；已在容器内则取消居中；未选中插入模板"
           onClick={() => {
@@ -215,8 +269,12 @@ function NoteEditor({ value, onChange, inputRef, onInputScroll }: {
             else insertBlock(CENTER_SNIPPET)
           }}
         ><AlignCenter /></Button>
-        <span className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground/70">
-          {value.trim() ? <><Check className="size-3 text-primary" aria-hidden />自动保存</> : 'Markdown'}
+        <span className="ml-auto flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground/70" role="status">
+          {imgError
+            ? <span className="truncate text-destructive" title={imgError}>{imgError}</span>
+            : imgBusy
+              ? <span className="whitespace-nowrap">正在处理图片…</span>
+              : value.trim() ? <><Check className="size-3 shrink-0 text-primary" aria-hidden />自动保存</> : 'Markdown'}
         </span>
       </div>
       <Textarea
@@ -225,6 +283,16 @@ function NoteEditor({ value, onChange, inputRef, onInputScroll }: {
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
         onScroll={(e) => onInputScroll?.(e.currentTarget)}
+        onPaste={(e) => {
+          // 粘贴图片文件：截图工作流的主路径；纯文本粘贴保持原生行为
+          const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'))
+          if (files.length > 0) { e.preventDefault(); void insertImages(files) }
+        }}
+        onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }}
+        onDrop={(e) => {
+          const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
+          if (files.length > 0) { e.preventDefault(); void insertImages(files) }
+        }}
         placeholder={MD_PLACEHOLDER}
         aria-label="笔记内容（Markdown）"
         className="min-h-0 flex-1 resize-none text-sm leading-relaxed"
@@ -237,7 +305,7 @@ function NoteEditor({ value, onChange, inputRef, onInputScroll }: {
  * 句子笔记抽屉。open 与 target 由调用方控制；onChange 每次按键触发（调用方本地即时更新 + 节流持久化），
  * onDelete 由底部按钮触发（清空内容 + 关闭由调用方决定，这里只上报）。
  */
-function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocate, onClose }: {
+function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocate, onClose, materialId }: {
   open: boolean
   /** 锚定的目标句；open 期间不随播放切句变化 */
   target: SubtitleSentence | null
@@ -247,6 +315,8 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
   /** 定位此句：跳转播放并关闭抽屉 */
   onLocate: () => void
   onClose: () => void
+  /** 图片归属材料（noteimg 键按材料隔离） */
+  materialId: string
 }) {
   // 视图三态（仅编辑 / 双栏 / 仅预览）；每次弹出按内容定初态，打开期间的手动切换会话内保留，不落盘
   const [mode, setMode] = useState<NoteViewMode>('split')
@@ -390,7 +460,7 @@ function SentenceNoteDrawer({ open, target, content, onChange, onDelete, onLocat
           </div>
 
           <div className={`flex min-h-0 flex-1 ${narrow ? 'flex-col' : 'flex-row'}`}>
-            {mode !== 'preview' && <NoteEditor value={content} onChange={onChange} inputRef={editorScrollRef} onInputScroll={(el) => syncScroll('editor', el)} />}
+            {mode !== 'preview' && <NoteEditor value={content} onChange={onChange} inputRef={editorScrollRef} onInputScroll={(el) => syncScroll('editor', el)} materialId={materialId} />}
 
             {mode === 'split' && !narrow && (
               <div

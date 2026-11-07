@@ -53,12 +53,54 @@ describe('tokenizeInline 行内记号', () => {
   it('行内码里的 $ 不当公式（位置在前的记号先消费）', () => {
     expect(tokenizeInline('`$x$`')).toEqual([{ type: 'code', text: '$x$' }])
   })
+
+  it('图片 ![alt](src) 切分为 image 记号（alt 可空，src 原样透传）', () => {
+    expect(tokenizeInline('![截图](idb://noteimg/m-1/abc)')).toEqual([{ type: 'image', alt: '截图', src: 'idb://noteimg/m-1/abc' }])
+    expect(tokenizeInline('![](idb://noteimg/m-1/abc)')).toEqual([{ type: 'image', alt: '', src: 'idb://noteimg/m-1/abc' }])
+  })
+
+  it('图片与文本/粗体混排按顺序切分', () => {
+    expect(tokenizeInline('看这张 **重点** ![图](idb://noteimg/m/x) 之后')).toEqual([
+      { type: 'text', text: '看这张 ' },
+      { type: 'bold', text: '重点' },
+      { type: 'text', text: ' ' },
+      { type: 'image', alt: '图', src: 'idb://noteimg/m/x' },
+      { type: 'text', text: ' 之后' },
+    ])
+  })
+
+  it('alt 含 * 不被斜体截断（图片优先于 * 消费）', () => {
+    expect(tokenizeInline('![a*b](idb://noteimg/m/x)')).toEqual([{ type: 'image', alt: 'a*b', src: 'idb://noteimg/m/x' }])
+  })
+
+  it('src 含空格/括号不匹配，保持纯文本', () => {
+    expect(tokenizeInline('![a](some src)')).toEqual([{ type: 'text', text: '![a](some src)' }])
+    expect(tokenizeInline('![a](x(y))')).toEqual([{ type: 'text', text: '![a](x(y))' }])
+    // 前缀本身是合法引用、后面跟孤儿括号：图片记号 + 余文
+    expect(tokenizeInline('![a](x)y)')).toEqual([
+      { type: 'image', alt: 'a', src: 'x' },
+      { type: 'text', text: 'y)' },
+    ])
+  })
 })
 
 describe('parseNoteMarkdown 块级解析', () => {
   it('空串返回空数组', () => {
     expect(parseNoteMarkdown('')).toEqual([])
     expect(parseNoteMarkdown('   \n  ')).toEqual([])
+  })
+
+  it('独立成行的图片落在段落里（单个 image 记号）', () => {
+    expect(parseNoteMarkdown('![截图](idb://noteimg/m-1/abc)')).toEqual([
+      { type: 'paragraph', inline: [{ type: 'image', alt: '截图', src: 'idb://noteimg/m-1/abc' }] },
+    ])
+  })
+
+  it('空行分隔的多张图片各成段落', () => {
+    expect(parseNoteMarkdown('![a](idb://noteimg/m/1)\n\n![b](idb://noteimg/m/2)')).toEqual([
+      { type: 'paragraph', inline: [{ type: 'image', alt: 'a', src: 'idb://noteimg/m/1' }] },
+      { type: 'paragraph', inline: [{ type: 'image', alt: 'b', src: 'idb://noteimg/m/2' }] },
+    ])
   })
 
   it('标题三级', () => {

@@ -22,6 +22,7 @@ import { seedMaterials, seedSentences } from '@/data/seed'
 import { createStore } from '@/stores/store'
 import { planFavoritesRemap, shiftFavoritesAfterDeletion } from '@/stores/favorite-store'
 import { planNotesRemap, shiftNotesAfterDeletion } from '@/stores/note-store'
+import { listNoteImageKeys, sweepNoteImages } from '@/stores/note-image-store'
 import { planTrainingRecordsRemap, shiftTrainingRecordsAfterDeletion } from '@/stores/training-record-store'
 import { patchEntries as patchVocabEntries, planVocabEntriesRemap, shiftVocabEntriesAfterDeletion, updateFrequencies } from '@/stores/vocab-store'
 import type { SubtitleSentence } from '@/types/subtitle'
@@ -166,6 +167,8 @@ export async function shiftSentenceReferences(
     shiftTrainingRecordsAfterDeletion(materialId, deletedIndex),
     shiftVocabEntriesAfterDeletion(materialId, deletedIndex),
   ])
+  // 被删句笔记的图片孤儿回收：失败只留无害孤儿（下个回收点重试），不影响删句结果
+  try { await sweepNoteImages(materialId) } catch { /* 见上 */ }
 
   const progress = await getProgress(materialId)
   if (!progress) return undefined
@@ -276,6 +279,8 @@ export async function replaceSubtitleData(record: MaterialRecord, data: Subtitle
   })
 
   patchRecord(updatedRecord)
+  // 未对齐而删除的笔记可能持有图片引用：孤儿回收（失败只留无害孤儿，不影响替换结果）
+  try { await sweepNoteImages(materialId) } catch { /* 见上 */ }
   if (vocabPlan.entries.length > 0) patchVocabEntries(vocabPlan.entries)
   return {
     mapping,
@@ -285,7 +290,7 @@ export async function replaceSubtitleData(record: MaterialRecord, data: Subtitle
   }
 }
 
-/** 删除材料：级联清理 material + blob + 相关 records（进度/收藏/笔记/训练记录） */
+/** 删除材料：级联清理 material + blob + 笔记图片 + 相关 records（进度/收藏/笔记/训练记录） */
 export async function removeMaterial(id: string): Promise<void> {
   await initMaterials()
   // MATERIAL_OWNED_RECORD_PREFIXES 是“哪些记录随材料删除”的唯一清单：遍历它派生待删 key，
@@ -294,8 +299,10 @@ export async function removeMaterial(id: string): Promise<void> {
   //   - progress：精确键 progress:{id}（无尾分隔符，必须精确匹配否则 m-1 会命中 m-10）；
   //   - favorite/note：键本身含 materialId，用带尾部分隔符的前缀区间（天然排除 m-1 / m-10）。
   const ownedKeys = new Set<string>()
-  const scans = await Promise.all(
-    MATERIAL_OWNED_RECORD_PREFIXES.map(async (prefix) => {
+  // 笔记图片键单独收集（blobs store 的 noteimg:{id}: 前缀族；纯键扫描不物化图片值）
+  const [noteImageKeys, ...scans] = await Promise.all([
+    listNoteImageKeys(id),
+    ...MATERIAL_OWNED_RECORD_PREFIXES.map(async (prefix) => {
       if (prefix === RECORD_KEY_PREFIXES.training) {
         return (await recordsStore.getEntriesByMaterial(id))
           .filter(([key]) => key.startsWith(prefix))
@@ -306,13 +313,13 @@ export async function removeMaterial(id: string): Promise<void> {
       }
       return (await recordsStore.getAllEntriesByPrefix(`${prefix}${id}:`)).map(([key]) => key)
     }),
-  )
+  ])
   for (const keys of scans) for (const key of keys) ownedKeys.add(key)
-  // 级联删除收进单事务：material / blob / records 三 store 一次提交，任一失败整体
-  // 回滚 —— 旧写法 materials.delete 与 blobs.delete 先各自提交，records 事务失败时
-  // 回滚覆盖不了它们，留下「材料没了、孤儿记录永存」的半删状态（2026-11 复审 c037/c023）
+  // 级联删除收进单事务：material / blob（媒体 + 笔记图片）/ records 三 store 一次提交，
+  // 任一失败整体回滚 —— 旧写法 materials.delete 与 blobs.delete 先各自提交，records
+  // 事务失败时回滚覆盖不了它们，留下「材料没了、孤儿记录永存」的半删状态（2026-11 复审 c037/c023）
   await runAtomicOps({
-    del: { materials: [id], blobs: [id], records: [...ownedKeys] },
+    del: { materials: [id], blobs: [id, ...noteImageKeys], records: [...ownedKeys] },
   })
   // 生词词频撤账：回收该材料对 frequency 的贡献（评审 #19，否则删除材料后词频永久虚高，
   // 违反 types/vocabulary.ts「frequency = materialCounts 各值之和」不变量）

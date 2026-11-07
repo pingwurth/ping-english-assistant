@@ -27,6 +27,8 @@ export type InlineToken =
   | { type: 'mark'; text: string }
   | { type: 'code'; text: string }
   | { type: 'math'; text: string; display: boolean }
+  /** 图片 ![alt](src)：src 只透传，是否渲染由渲染侧决定（仅本应用 idb://noteimg/ 引用） */
+  | { type: 'image'; alt: string; src: string }
 
 /** 列表项：内容 + 子项（行首缩进产生嵌套，2 空格 / 1 tab 计一级） */
 export type NoteListItem = { inline: InlineToken[]; children: NoteListItem[] }
@@ -45,18 +47,23 @@ export type NoteBlock =
   | { type: 'center'; blocks: NoteBlock[] }
 
 /**
- * 行内记号切分：**粗** / *斜* / ==高亮== / `码` / $公式$
- * （先匹配到的先消费，** 优先于 *，$$ 优先于 $）
+ * 行内记号切分：![图] / **粗** / *斜* / ==高亮== / `码` / $公式$
+ * （先匹配到的先消费，图片优先于 *（alt 可含 *），** 优先于 *，$$ 优先于 $）
  */
 export function tokenizeInline(text: string): InlineToken[] {
   const out: InlineToken[] = []
-  const re = /(\*\*[^*]+\*\*|==[^=]+==|`[^`]+`|\*[^*]+\*|\$\$[^$]+\$\$|\$[^$\s](?:[^$]*[^$\s])?\$(?!\d))/g
+  const re = /(!\[[^\]\n]*\]\([^()\s]*\)|\*\*[^*]+\*\*|==[^=]+==|`[^`]+`|\*[^*]+\*|\$\$[^$]+\$\$|\$[^$\s](?:[^$]*[^$\s])?\$(?!\d))/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(text))) {
     if (m.index > last) out.push({ type: 'text', text: text.slice(last, m.index) })
     const tok = m[0]
-    if (tok.startsWith('**')) out.push({ type: 'bold', text: tok.slice(2, -2) })
+    if (tok.startsWith('![')) {
+      // 形态由正则保证：![alt](src)，alt 无 ] 与换行、src 无空白与括号
+      const im = /^!\[([^\]]*)\]\(([^()\s]*)\)$/.exec(tok)!
+      out.push({ type: 'image', alt: im[1]!, src: im[2]! })
+    }
+    else if (tok.startsWith('**')) out.push({ type: 'bold', text: tok.slice(2, -2) })
     else if (tok.startsWith('==')) out.push({ type: 'mark', text: tok.slice(2, -2) })
     else if (tok.startsWith('`')) out.push({ type: 'code', text: tok.slice(1, -1) })
     else if (tok.startsWith('$$')) out.push({ type: 'math', text: tok.slice(2, -2), display: true })

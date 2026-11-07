@@ -307,6 +307,12 @@ export interface KvStore {
    * 前缀必须带尾部分隔符（`fav:m-1:`），字典序天然排除 m-10 的键。
    */
   getAllEntriesByPrefix(prefix: string): Promise<Array<[string, unknown]>>
+  /**
+   * 主键前缀区间的纯键版（同上字典序区间）：只需要键的清理/对账场景
+   * （如 blobs store 里删图片、扫孤儿）用它，不必为拿键物化整个值
+   * （blobs 的值是多 MB 媒体）。
+   */
+  getAllKeysByPrefix(prefix: string): Promise<string[]>
 }
 
 function makeStore(store: StoreName): KvStore {
@@ -347,6 +353,13 @@ function makeStore(store: StoreName): KvStore {
       useMemory
         ? Promise.resolve([...mem(store).entries()].filter(([k]) => k.startsWith(prefix)))
         : wrapRead(entriesSnapshot(store, IDBKeyRange.bound(prefix, prefix + '\uffff')), [] as Array<[string, unknown]>),
+    getAllKeysByPrefix: (prefix) =>
+      useMemory
+        ? Promise.resolve([...mem(store).keys()].filter((k) => k.startsWith(prefix)))
+        : wrapRead(
+          tx<IDBValidKey[]>(store, 'readonly', os => os.getAllKeys(IDBKeyRange.bound(prefix, prefix + '\uffff'))).then(ks => ks.map(String)),
+          [] as string[],
+        ),
   }
 }
 

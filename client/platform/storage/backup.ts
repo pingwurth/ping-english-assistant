@@ -10,11 +10,14 @@
  *    tts:/transcribe: 临时产物永远不会进包。
  */
 
-import { BACKUP_APP_ID, BACKUP_FORMAT_VERSION, parseBackupJson, planImport, type ImportStrategy, type MediaManifestEntry, type ParsedBackup } from '@/core/backup/backup-format'
+import { BACKUP_APP_ID, BACKUP_FORMAT_VERSION, parseBackupJson, planImport, type ImportStrategy, type MediaManifestEntry, type NoteImageManifestEntry, type ParsedBackup } from '@/core/backup/backup-format'
 import { createZipWriter, crc32, indexZip, readEntry, type RangeReader, type ZipEntryInfo, type ZipIndex } from '@/core/backup/zip'
 import { blobsStore, estimateUsage, materialsStore, putAllAtomic, recordsStore } from '@/platform/storage/idb'
 import { exportAllPrefs, stagePrefs, type StagedPrefs } from '@/platform/storage/prefs'
 import type { MaterialRecord } from '@/platform/storage/schema'
+
+/** 笔记图片在 zip 内的条目名（noteImage.key 即 blobs store 键 noteimg:{materialId}:{imageId}） */
+const noteImageEntryName = (key: string) => `noteimg/${key}`
 
 export interface ImportSummary {
   materialsWritten: number
@@ -23,10 +26,10 @@ export interface ImportSummary {
   recordsSkipped: number
   prefsWritten: number
   prefsSkipped: number
-  /** 仅 zip 导入有值（轻量 JSON 导入恒 0）：按冲突策略实际写入/跳过的媒体数 */
+  /** 仅 zip 导入有值（轻量 JSON 导入恒 0）：按冲突策略实际写入/跳过的媒体数（含笔记图片） */
   mediaWritten: number
   mediaSkipped: number
-  /** 清单里有、zip 里没有对应条目的媒体数（对应材料导入后需单独补传媒体） */
+  /** 清单里有、zip 里没有对应条目的媒体/笔记图片数（对应材料导入后需单独补传媒体） */
   mediaMissing: number
 }
 
@@ -123,8 +126,8 @@ export async function buildBackup(): Promise<{ filename: string; json: string }>
 }
 
 /**
- * 组装完整备份 zip（含媒体）。内存有界：sink 定期把已完成分片合并为 Blob（浏览器落盘），
- * JS 堆峰值 ≈ 单个最大媒体文件 + 32MB 合并缓冲。
+ * 组装完整备份 zip（含媒体与笔记图片）。内存有界：sink 定期把已完成分片合并为 Blob
+ * （浏览器落盘），JS 堆峰值 ≈ 单个最大媒体文件 + 32MB 合并缓冲。
  */
 export async function buildFullBackupZip(): Promise<{ filename: string; blob: Blob }> {
   const parts = await collectBackupParts()
@@ -149,6 +152,13 @@ export async function buildFullBackupZip(): Promise<{ filename: string; blob: Bl
       },
     })
   })
+  // 笔记图片（blobs store 的 noteimg: 前缀族；与材料媒体、tts:/transcribe: 临时键不同形）
+  const imageEntries = await blobsStore.getAllEntriesByPrefix('noteimg:')
+  const images: Array<{ key: string; blob: Blob; entry: NoteImageManifestEntry }> = []
+  for (const [key, value] of imageEntries) {
+    if (!(value instanceof Blob)) continue
+    images.push({ key, blob: value, entry: { key, mime: value.type || 'image/webp', size: value.size } })
+  }
 
   const payload = {
     app: BACKUP_APP_ID,
@@ -156,6 +166,7 @@ export async function buildFullBackupZip(): Promise<{ filename: string; blob: Bl
     exportedAt: Date.now(),
     ...parts,
     media: collected.map((c) => c.entry),
+    noteImages: images.map((c) => c.entry),
   }
 
   let chunks: BlobPart[] = []
@@ -172,6 +183,10 @@ export async function buildFullBackupZip(): Promise<{ filename: string; blob: Bl
     // 流式写入：媒体分块喂 writer（增量 CRC + data descriptor），峰值堆 ≈ 单块 + 32MB sink，
     // 不再把整个文件（数百 MB 视频）一次性读进 JS 堆
     await writer.addStream(`media/${c.id}`, c.blob.size, blobChunks(c.blob))
+  }
+  for (const c of images) {
+    // 笔记图片同款流式（单张压缩后几百 KB，但数量可多，逐张过 writer 保持内存有界）
+    await writer.addStream(noteImageEntryName(c.key), c.blob.size, blobChunks(c.blob))
   }
   writer.finish()
   return { filename: fullBackupFilename(), blob: new Blob(chunks, { type: 'application/zip' }) }
@@ -308,7 +323,7 @@ async function verifyStoreEntryCrc(file: Blob, info: ZipEntryInfo, name: string)
   if (crc !== info.crc32) throw new Error(`备份 zip 已损坏（${name} 校验失败）`)
 }
 
-/** 打开完整备份 zip：索引 + 解析 backup.json + 媒体预检（预览与正式导入共用） */
+/** 打开完整备份 zip：索引 + 解析 backup.json + 媒体预检（预览与正式导入共用；含笔记图片） */
 async function openBackupZip(file: Blob): Promise<{ reader: RangeReader; index: ZipIndex; parsed: ParsedBackup; mediaBytes: number; mediaMissing: number }> {
   const reader = readerFromBlob(file)
   const index = await indexZip(reader)
@@ -316,9 +331,10 @@ async function openBackupZip(file: Blob): Promise<{ reader: RangeReader; index: 
   if (!jsonEntry) throw new Error('备份 zip 中缺少 backup.json，不是本应用导出的完整备份')
   const parsed = parseBackupJson(new TextDecoder().decode(await readEntry(reader, jsonEntry)))
   if (!parsed.ok) throw new Error(parsed.error)
-  const media = parsed.backup.media
+  const { media, noteImages } = parsed.backup
   const mediaMissing = media.filter((m) => !index.byName.has(`media/${m.id}`)).length
-  const mediaBytes = media.reduce((sum, m) => sum + m.size, 0)
+    + noteImages.filter((n) => !index.byName.has(noteImageEntryName(n.key))).length
+  const mediaBytes = media.reduce((sum, m) => sum + m.size, 0) + noteImages.reduce((sum, n) => sum + n.size, 0)
   return { reader, index, parsed: parsed.backup, mediaBytes, mediaMissing }
 }
 
@@ -338,9 +354,13 @@ export async function importZipBackup(file: Blob, strategy: ImportStrategy): Pro
   // 媒体合并计划（与材料/记录同一策略；blobs store 里的 tts:/transcribe: 键与 material id 不可能同形，无碰撞）
   const existingBlobKeys = new Set(await blobsStore.allKeys())
   const mediaPlan = planImport(parsed.media.map((m) => ({ key: m.id, value: m })), existingBlobKeys, strategy)
+  // 笔记图片同款计划（键为 noteimg: 前缀族，与 material id / tts: 键不同形，无碰撞）
+  const imagePlan = planImport(parsed.noteImages.map((n) => ({ key: n.key, value: n })), existingBlobKeys, strategy)
 
   // 配额预检：按 zip 中央目录的实际大小估算（×1.2 余量，同导入页写入前检查）
-  const plannedBytes = mediaPlan.toWrite.reduce((sum, e) => sum + (index.byName.get(`media/${e.key}`)?.uncompressedSize ?? e.value.size), 0)
+  const entryBytes = (name: string, fallback: number) => index.byName.get(name)?.uncompressedSize ?? fallback
+  const plannedBytes = mediaPlan.toWrite.reduce((sum, e) => sum + entryBytes(`media/${e.key}`, e.value.size), 0)
+    + imagePlan.toWrite.reduce((sum, e) => sum + entryBytes(noteImageEntryName(e.key), e.value.size), 0)
   const { usage, quota } = await estimateUsage()
   if (quota > 0 && usage + plannedBytes * 1.2 > quota) {
     throw new Error(`存储空间不足：需写入约 ${Math.round(plannedBytes / 1048576)} MB 媒体，请先清理空间或改用轻量备份导入`)
@@ -349,19 +369,23 @@ export async function importZipBackup(file: Blob, strategy: ImportStrategy): Pro
   // 完整性预检 + Blob 构造全部发生在任何 IDB 写入之前；deflate 条目 readEntry 内已校验 CRC。
   // 随后 materials/records/blobs 走同一个 IndexedDB 事务，任一写失败整体回滚。
   const mediaWrites: Array<[string, Blob]> = []
-  let mediaMissing = missingInIndex
-  for (const e of mediaPlan.toWrite) {
-    const info = index.byName.get(`media/${e.key}`)
-    if (!info) continue // openBackupZip 已统计缺失条目；这里不做重复计数
-    const mime = e.value.mime || (e.value.mediaType === 'video' ? 'video/mp4' : 'audio/mpeg')
+  const pushZipBlob = async (key: string, info: ZipEntryInfo | undefined, mime: string, name: string): Promise<void> => {
+    if (!info) return // openBackupZip 已统计缺失条目；这里不做重复计数
     if (info.method === 0) {
-      await verifyStoreEntryCrc(file, info, `media/${e.key}`)
-      mediaWrites.push([e.key, file.slice(info.dataOffset, info.dataOffset + info.uncompressedSize, mime)])
+      await verifyStoreEntryCrc(file, info, name)
+      mediaWrites.push([key, file.slice(info.dataOffset, info.dataOffset + info.uncompressedSize, mime)])
     } else {
-      mediaWrites.push([e.key, new Blob([await readEntry(reader, info)], { type: mime })])
+      mediaWrites.push([key, new Blob([await readEntry(reader, info)], { type: mime })])
     }
   }
+  for (const e of mediaPlan.toWrite) {
+    const mime = e.value.mime || (e.value.mediaType === 'video' ? 'video/mp4' : 'audio/mpeg')
+    await pushZipBlob(e.key, index.byName.get(`media/${e.key}`), mime, `media/${e.key}`)
+  }
+  for (const e of imagePlan.toWrite) {
+    await pushZipBlob(e.key, index.byName.get(noteImageEntryName(e.key)), e.value.mime || 'image/webp', noteImageEntryName(e.key))
+  }
 
-  const base = await applyParsedBackup(parsed, strategy, mediaWrites, mediaPlan.skipped)
-  return { ...base, mediaWritten: mediaWrites.length, mediaMissing }
+  const base = await applyParsedBackup(parsed, strategy, mediaWrites, mediaPlan.skipped + imagePlan.skipped)
+  return { ...base, mediaWritten: mediaWrites.length, mediaMissing: missingInIndex }
 }
